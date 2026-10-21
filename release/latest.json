@@ -1,6 +1,6 @@
 {
- "version": 47,
- "label": "надёжная проверка обновлений",
- "notes": "Проверка обновлений работает надёжнее и каждые полчаса. Плюс всё из версий 44–46: ускорение роликов, пауза перед анимацией, 5 тем и копилка удачных сценариев.",
+ "version": 48,
+ "label": "ещё одно исправление выкладки в Instagram",
+ "notes": "Исправлена выкладка рилсов в Instagram (ошибка «video_url is required»).",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

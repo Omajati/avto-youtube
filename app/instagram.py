@@ -103,6 +103,29 @@ def caption(extras: dict) -> str:
     return text[:2200]
 
 
+def _create_container(url: str, params: dict) -> str:
+    """Creates the Reel container for a file sent from this computer. Instagram reads the fields from the address
+    line (in the form body it may miss upload_type and ask for a video link instead); as a last try only the
+    required fields are sent."""
+    tries = [{"params": params}, {"data": params},
+             {"params": {k: v for k, v in params.items() if k not in ("is_ai_generated", "share_to_feed")}}]
+    last = None
+    for kw in tries:
+        try:
+            r = net.request("Instagram", "POST", url, tries=2, timeout=120, **kw)
+        except UserError as e:
+            if "video_url" not in str(e):
+                raise
+            last = e
+            continue
+        cid = r.json().get("id")
+        if not cid:
+            raise UserError(f"Instagram не создал рилс: {r.text[:300]}")
+        return cid
+    raise UserError("Instagram не принимает загрузку видео прямо с компьютера для этого подключения. "
+                    f"Напишите об этом, приложив текст ошибки: {last}")
+
+
 def publish(video: Path, text: str, say=None) -> dict:
     """Publishes a Reel. Returns {"media_id", "url"}."""
     s = _refresh_ig(load_settings())
@@ -115,8 +138,7 @@ def publish(video: Path, text: str, say=None) -> dict:
               "access_token": token}
     if s.get("ig_ai_label", True):
         params["is_ai_generated"] = "true"
-    r = net.request("Instagram", "POST", f"{base}/{uid}/media", data=params, tries=2, timeout=120)
-    cid = r.json().get("id")
+    cid = _create_container(f"{base}/{uid}/media", params)
     if not cid:
         raise UserError(f"Instagram не создал рилс: {r.text[:300]}")
     say("загружаю видео")
@@ -140,7 +162,7 @@ def publish(video: Path, text: str, say=None) -> dict:
             raise UserError("Instagram слишком долго обрабатывает видео. Попробуйте ещё раз позже.")
     say("публикую")
     r = net.request("Instagram", "POST", f"{base}/{uid}/media_publish", tries=2, timeout=120,
-                    data={"creation_id": cid, "access_token": token})
+                    params={"creation_id": cid, "access_token": token})
     mid = r.json().get("id")
     if not mid:
         raise UserError(f"Instagram не опубликовал рилс: {r.text[:300]}")
