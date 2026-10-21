@@ -92,6 +92,7 @@ DEFAULTS = {
     "fx_mode": "light",
     # Instagram Reels
     "ig_token": "", "ig_user_id": "", "ig_username": "", "ig_page": "", "ig_token_time": 0.0,
+    "ig_login": "",  # "instagram" when connected through «API setup with Instagram login» (no Facebook page)
     "ig_auto": False, "ig_ai_label": True,
     "char_reference": True,
     "sfx_volume": 0.5,

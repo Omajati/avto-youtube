@@ -9,12 +9,15 @@ from .config import load_settings, save_settings
 from .net import UserError
 
 GRAPH = "https://graph.facebook.com/v26.0"
+IG_GRAPH = "https://graph.instagram.com"  # accounts connected through «API setup with Instagram login»
 RUPLOAD = "https://rupload.facebook.com/ig-api-upload/v26.0"
 
 
 def connect(app_id: str, app_secret: str, user_token: str) -> dict:
     """Turns a short user token from the Graph API Explorer into a lasting one and finds the Instagram account."""
     app_id, app_secret, user_token = (app_id or "").strip(), (app_secret or "").strip(), (user_token or "").strip()
+    if user_token.startswith("IG"):
+        return _connect_ig(app_secret, user_token)
     if not (app_id and app_secret and user_token):
         raise UserError("Заполните все три поля: App ID, App Secret и токен из Graph API Explorer.")
     try:
@@ -37,6 +40,44 @@ def connect(app_id: str, app_secret: str, user_token: str) -> dict:
             return {"username": ig.get("username", ""), "page": p.get("name", "")}
     raise UserError("Не нашёл Instagram-аккаунт. Проверьте, что аккаунт Instagram профессиональный и привязан к "
                     "странице Facebook, и что при создании токена вы отметили эту страницу и все разрешения из инструкции.")
+
+
+def _connect_ig(app_secret: str, token: str) -> dict:
+    """A token made on the «API setup with Instagram login» page (starts with IG): no Facebook page is needed."""
+    if app_secret:
+        try:  # a short token becomes a 60-day one; tokens from that page usually are long already
+            r = net.request("Instagram", "GET", f"{IG_GRAPH}/access_token", tries=1, timeout=60, params={
+                "grant_type": "ig_exchange_token", "client_secret": app_secret, "access_token": token}).json()
+            token = r.get("access_token") or token
+        except UserError:
+            pass
+    try:
+        me = net.request("Instagram", "GET", f"{IG_GRAPH}/me", tries=2, timeout=60,
+                         params={"fields": "user_id,username", "access_token": token}).json()
+    except UserError as e:
+        raise UserError("Instagram не принял маркер. Сгенерируйте его заново на странице «Настройка API для входа в "
+                        f"Instagram» (кнопка «Сгенерировать маркер» рядом с аккаунтом) и вставьте целиком. Ответ: {e}")
+    uid = str(me.get("user_id") or me.get("id") or "")
+    if not uid:
+        raise UserError(f"Instagram не прислал номер аккаунта: {str(me)[:200]}")
+    save_settings({"ig_token": token, "ig_user_id": uid, "ig_username": me.get("username", ""), "ig_page": "",
+                   "ig_login": "instagram", "ig_token_time": time.time()})
+    return {"username": me.get("username", ""), "page": ""}
+
+
+def _refresh_ig(s: dict) -> dict:
+    """Instagram-login tokens live 60 days; each refresh gives 60 more, so regular use never lets them expire."""
+    if s.get("ig_login") != "instagram" or time.time() - float(s.get("ig_token_time") or 0) < 7 * 86400:
+        return s
+    try:
+        r = net.request("Instagram", "GET", f"{IG_GRAPH}/refresh_access_token", tries=2, timeout=60,
+                        params={"grant_type": "ig_refresh_token", "access_token": s["ig_token"]}).json()
+        if r.get("access_token"):
+            save_settings({"ig_token": r["access_token"], "ig_token_time": time.time()})
+            return load_settings()
+    except UserError:
+        pass
+    return s
 
 
 def _auth(s=None):
@@ -62,14 +103,15 @@ def caption(extras: dict) -> str:
 
 def publish(video: Path, text: str, say=None) -> dict:
     """Publishes a Reel. Returns {"media_id", "url"}."""
-    s = load_settings()
+    s = _refresh_ig(load_settings())
     token, uid = _auth(s)
     say = say or (lambda msg: None)
+    base = IG_GRAPH if s.get("ig_login") == "instagram" else GRAPH
     params = {"media_type": "REELS", "upload_type": "resumable", "caption": text, "share_to_feed": "true",
               "access_token": token}
     if s.get("ig_ai_label", True):
         params["is_ai_generated"] = "true"
-    r = net.request("Instagram", "POST", f"{GRAPH}/{uid}/media", data=params, tries=2, timeout=120)
+    r = net.request("Instagram", "POST", f"{base}/{uid}/media", data=params, tries=2, timeout=120)
     cid = r.json().get("id")
     if not cid:
         raise UserError(f"Instagram не создал рилс: {r.text[:300]}")
@@ -83,7 +125,7 @@ def publish(video: Path, text: str, say=None) -> dict:
     deadline = time.time() + 15 * 60
     while True:
         time.sleep(15)
-        st = net.request("Instagram", "GET", f"{GRAPH}/{cid}", tries=3, timeout=60,
+        st = net.request("Instagram", "GET", f"{base}/{cid}", tries=3, timeout=60,
                          params={"fields": "status_code,status", "access_token": token}).json()
         code = st.get("status_code")
         if code == "FINISHED":
@@ -93,14 +135,14 @@ def publish(video: Path, text: str, say=None) -> dict:
         if time.time() > deadline:
             raise UserError("Instagram слишком долго обрабатывает видео. Попробуйте ещё раз позже.")
     say("публикую")
-    r = net.request("Instagram", "POST", f"{GRAPH}/{uid}/media_publish", tries=2, timeout=120,
+    r = net.request("Instagram", "POST", f"{base}/{uid}/media_publish", tries=2, timeout=120,
                     data={"creation_id": cid, "access_token": token})
     mid = r.json().get("id")
     if not mid:
         raise UserError(f"Instagram не опубликовал рилс: {r.text[:300]}")
     url = ""
     try:
-        url = net.request("Instagram", "GET", f"{GRAPH}/{mid}", tries=2, timeout=60,
+        url = net.request("Instagram", "GET", f"{base}/{mid}", tries=2, timeout=60,
                           params={"fields": "permalink", "access_token": token}).json().get("permalink", "")
     except UserError:
         pass

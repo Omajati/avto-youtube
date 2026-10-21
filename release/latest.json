@@ -1,6 +1,6 @@
 {
- "version": 41,
- "label": "раздел «Предметы»",
- "notes": "Новый раздел «Предметы»: товары и вещи с фото, которые появляются в кадре точно как на фото. Их можно выбрать при создании ролика и отметить в проекте.",
+ "version": 42,
+ "label": "Instagram без страницы Facebook",
+ "notes": "Instagram подключается проще: без страницы Facebook, маркером со страницы «Настройка API для входа в Instagram».",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
