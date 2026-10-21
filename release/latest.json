@@ -1,6 +1,6 @@
 {
- "version": 50,
- "label": "загрузка видео в Instagram",
- "notes": "Instagram: видео загружается ключом пользователя, а не ключом страницы (ошибка ProcessingFailedError). Нужно один раз подключить Instagram заново.",
+ "version": 51,
+ "label": "обложка для Instagram",
+ "notes": "Instagram: рилс получает обложку программы (первым кадром на долю секунды).",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

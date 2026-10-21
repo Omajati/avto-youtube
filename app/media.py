@@ -253,6 +253,23 @@ def thumbnail(img: Path, out: Path, vertical: bool = False):
     run(["-i", img, "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}", out], "Обложка")
 
 
+def prepend_cover(video: Path, cover: Path, out: Path, seconds: float = 0.1):
+    """Puts the cover picture in front of a vertical video for a split second. Instagram takes a Reel's cover
+    from a frame of the video (a separate picture is accepted only as a public web link), so the first frame
+    becomes the cover; viewers barely notice it."""
+    p = subprocess.run([ffmpeg(), "-hide_banner", "-i", str(video)], capture_output=True, text=True)
+    m = re.search(r"Video:.*?([\d.]+) fps", p.stderr)
+    fps = float(m.group(1)) if m else 30.0
+    fit = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,format=yuv420p"
+    aud = "aformat=sample_rates=48000:channel_layouts=stereo"
+    run(["-i", video, "-loop", 1, "-framerate", f"{fps:g}", "-t", seconds, "-i", cover,
+         "-f", "lavfi", "-t", seconds, "-i", "anullsrc=r=48000:cl=stereo",
+         "-filter_complex", f"[1:v]{fit}[c];[0:v]{fit}[v];[2:a]{aud}[ca];[0:a]{aud}[va];"
+                            f"[c][ca][v][va]concat=n=2:v=1:a=1[ov][oa]",
+         "-map", "[ov]", "-map", "[oa]", "-r", f"{fps:g}", "-c:v", "libx264", "-preset", "veryfast", "-crf", 18,
+         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out], "Обложка для Instagram")
+
+
 # ---- Demo mode (checks the installation without any API keys) ----
 
 def demo_image(out: Path, idx: int, vertical: bool):

@@ -153,8 +153,9 @@ def _upload(base: str, uid: str, params: dict, tokens: list, data: bytes, say) -
     raise last
 
 
-def publish(video: Path, text: str, say=None) -> dict:
-    """Publishes a Reel. Returns {"media_id", "url"}."""
+def publish(video: Path, text: str, say=None, cover: bool = False) -> dict:
+    """Publishes a Reel. cover: the video starts with a cover frame, which then becomes the Reel's cover.
+    Returns {"media_id", "url"}."""
     s = _refresh_ig(load_settings())
     token, uid = _auth(s)
     say = say or (lambda msg: None)
@@ -169,6 +170,8 @@ def publish(video: Path, text: str, say=None) -> dict:
     params = {"media_type": "REELS", "upload_type": "resumable", "caption": text, "share_to_feed": "true"}
     if s.get("ig_ai_label", True):
         params["is_ai_generated"] = "true"
+    if cover:
+        params["thumb_offset"] = "0"
     tokens = [t for t in dict.fromkeys([s.get("ig_user_token"), token]) if t]
     cid, token = _upload(base, uid, params, tokens, video.read_bytes(), say)
     say("Instagram обрабатывает видео")

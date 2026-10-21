@@ -4,7 +4,7 @@ import json
 import threading
 import time
 
-from . import db, instagram, pipeline, projects, youtube
+from . import db, instagram, media, pipeline, projects, thumb, youtube
 from .net import UserError
 
 _one_at_a_time = threading.Lock()
@@ -168,13 +168,44 @@ def start_instagram(jid: str):
     threading.Thread(target=_run_instagram, args=(jid, file), daemon=True).start()
 
 
+def _with_cover(jid, file):
+    """The Reel with the program's cover as its first frame; the plain file if there is no cover."""
+    d = pipeline.job_dir(jid)
+    vertical = ((db.get(jid) or {}).get("options") or {}).get("format") == "short"
+    cover = d / "output" / "thumbnail.jpg"
+    if not vertical or file.name != "video.mp4":
+        # A long video's thumbnail is wide: its Reel (the Short) gets a vertical copy of it.
+        src, cover = d / "images" / "thumbnail_src.png", d / "output" / "ig_cover.jpg"
+        if not src.exists():
+            return file
+        opts = pipeline.read_json(d / "thumb.json", {}) or {}
+        extras = pipeline.read_json(d / "extras.json", {}) or {}
+        thumb.render(src, cover, opts.get("text", extras.get("thumbnail_text", "")), opts.get("side", "left"), True)
+    if not cover.exists():
+        return file
+    _set(jid, "instagram", step="ставлю обложку")
+    out = d / "output" / "ig_upload.mp4"
+    try:
+        media.prepend_cover(file, cover, out)
+    except UserError as e:
+        _log(jid, f"Instagram: обложку поставить не вышло, выкладываю без неё — {e}")
+        return file
+    return out
+
+
 def _run_instagram(jid, file):
     try:
         with _one_at_a_time:
             extras = pipeline.read_json(pipeline.job_dir(jid) / "extras.json", {}) or {}
             _set(jid, "instagram", status="uploading", step="готовлю")
             _log(jid, "Instagram: выкладываю рилс…")
-            r = instagram.publish(file, instagram.caption(extras), say=lambda m: _set(jid, "instagram", step=m))
+            send = _with_cover(jid, file)
+            try:
+                r = instagram.publish(send, instagram.caption(extras), say=lambda m: _set(jid, "instagram", step=m),
+                                      cover=send != file)
+            finally:
+                if send != file:
+                    send.unlink(missing_ok=True)
             _set(jid, "instagram", status="done", step="", media_id=r["media_id"], url=r["url"], uploaded_at=time.time(),
                  username=instagram.load_settings().get("ig_username", ""))
             _log(jid, f"Instagram: готово, {r['url']}")
