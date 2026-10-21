@@ -404,6 +404,7 @@ def plan_line(proj: dict, num: int) -> str:
 CHAR_DIR = DATA_DIR / "characters"
 CHAR_FIELDS = {"name": "", "name_en": "", "role": "", "description_ru": "", "appearance": "", "personality": "",
                "extra_ru": "",
+               "speech_ru": "",       # how the character talks: manner, pet words, sample lines (Russian)
                "voice_id": "", "voice_name": "",  # the character's own ElevenLabs voice for its lines        # the owner's additions for some scenes: other clothes, details (Russian)
                "style": "",           # picture style of the portrait (English, from IMAGE_STYLES or the owner's own)
                "style_project": ""}   # older characters: the project whose style the portrait was drawn in

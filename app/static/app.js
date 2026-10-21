@@ -397,6 +397,8 @@ async function renderChars() {
     <textarea class="c-desc">${esc(c.description_ru)}</textarea>
     <label class="f">Дополнения для сцен <span class="hint">Необязательно. Другая одежда, вещи, детали, которые можно добавлять в некоторых сценах, например: «зимой — тёплая куртка и шапка», «в офисе — костюм». Основная внешность при этом не меняется.</span></label>
     <textarea class="c-extra" rows="2">${esc(c.extra_ru || "")}</textarea>
+    <label class="f">Манера речи <span class="hint">Необязательно. Как говорит персонаж: тон, любимые словечки, присказки, 2–3 примера фраз. Сценарист будет писать его реплики и рассказ именно так.</span></label>
+    <textarea class="c-speech" rows="4" placeholder="Например: говорит спокойно и с ухмылкой, коротко. Словечки: «блин», «короче», «бабло». Фразы: «Вёз я вчера одного…», «Ладно, поехали дальше.»">${esc(c.speech_ru || "")}</textarea>
     <label class="f">Голос персонажа <span class="hint">Если выбрать, персонаж будет сам говорить своим голосом: сценарий напишет ему реплики, а озвучка прочитает их этим голосом. Без голоса его слова пересказывает рассказчик.</span></label>
     <div class="row" style="gap:6px;flex-wrap:nowrap"><select class="c-voice"><option value="">Без своего голоса</option>${c.voice_id ? `<option value="${esc(c.voice_id)}" selected>${esc(c.voice_name || c.voice_id)}</option>` : ""}</select>
       <button class="sm c-vprev" type="button">▶</button></div>
@@ -412,7 +414,7 @@ async function renderChars() {
     </div></div>`;
   box.innerHTML = (list.length ? `<div class="clist">${list.map(c => `<div class="citem">
       ${charIcon(c, 72)}<div class="grow"><b>${esc(c.name)}</b> <span class="muted small">${esc(c.role)}</span>
-      <div class="small">${esc(c.description_ru)}</div>${c.appearance ? `<div class="en">${esc(c.appearance)}</div>` : ""}${c.extra_ru ? `<div class="small" style="margin-top:2px">➕ Дополнения для сцен: ${esc(c.extra_ru)}</div>` : ""}<div class="small" style="margin-top:2px">${c.voice_id ? `🗣 Свой голос: ${esc(c.voice_name || c.voice_id)}` : `<span class="muted">🗣 Своего голоса нет, его слова пересказывает рассказчик</span>`}</div><div class="small muted" style="margin-top:2px">${styleDesc(oldStyle(c)).replace("Выбрано", "Стиль портрета")}</div>
+      <div class="small">${esc(c.description_ru)}</div>${c.appearance ? `<div class="en">${esc(c.appearance)}</div>` : ""}${c.extra_ru ? `<div class="small" style="margin-top:2px">➕ Дополнения для сцен: ${esc(c.extra_ru)}</div>` : ""}${c.speech_ru ? `<div class="small" style="margin-top:2px">💬 Манера речи: ${esc(c.speech_ru)}</div>` : ""}<div class="small" style="margin-top:2px">${c.voice_id ? `🗣 Свой голос: ${esc(c.voice_name || c.voice_id)}` : `<span class="muted">🗣 Своего голоса нет, его слова пересказывает рассказчик</span>`}</div><div class="small muted" style="margin-top:2px">${styleDesc(oldStyle(c)).replace("Выбрано", "Стиль портрета")}</div>
       <div class="row" style="margin-top:6px;gap:6px"><button class="sm c-edit" data-cid="${c.id}">Изменить</button>
         <label class="btn sm" style="cursor:pointer">📤 ${c.has_portrait ? "Заменить портрет" : "Загрузить портрет"}<input type="file" accept="image/*" class="c-qfile" data-cid="${c.id}" style="display:none"></label>
         <button class="sm c-qdraw" data-cid="${c.id}">🎨 Нарисовать портрет</button>
@@ -448,7 +450,7 @@ async function renderChars() {
     root.querySelector(".c-save").onclick = async e => {
       e.target.disabled = true;
       const files = [...(root.querySelector(".c-newfile")?.files || [])];
-      const body = { name: val(".c-name"), role: val(".c-role"), description_ru: val(".c-desc"), extra_ru: val(".c-extra"), style: val(".c-style"), ...voiceVal(), ...(cid ? { appearance: val(".c-app") } : {}) };
+      const body = { name: val(".c-name"), role: val(".c-role"), description_ru: val(".c-desc"), extra_ru: val(".c-extra"), speech_ru: val(".c-speech"), style: val(".c-style"), ...voiceVal(), ...(cid ? { appearance: val(".c-app") } : {}) };
       try {
         let c = await api(`/api/characters${cid ? "/" + cid : ""}`, { json: { ...body, later: !cid && files.length > 0 } });
         if (!cid && files.length) {
@@ -466,7 +468,7 @@ async function renderChars() {
     root.querySelector(".c-desc-btn").onclick = async e => {
       e.target.disabled = true;
       toast("Смотрю на фото и описываю внешность…");
-      await api(`/api/characters/${cid}`, { json: { name: val(".c-name"), role: val(".c-role"), description_ru: val(".c-desc"), extra_ru: val(".c-extra"), style: val(".c-style"), ...voiceVal(), describe: true } })
+      await api(`/api/characters/${cid}`, { json: { name: val(".c-name"), role: val(".c-role"), description_ru: val(".c-desc"), extra_ru: val(".c-extra"), speech_ru: val(".c-speech"), style: val(".c-style"), ...voiceVal(), describe: true } })
         .then(c => c.warning ? toast(c.warning, true) : toast("Описание обновлено по фото")).catch(err => toast(err.message, true));
       renderChars();
     };

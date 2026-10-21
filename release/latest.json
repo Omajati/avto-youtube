@@ -1,6 +1,6 @@
 {
- "version": 51,
- "label": "обложка для Instagram",
- "notes": "Instagram: рилс получает обложку программы (первым кадром на долю секунды).",
+ "version": 52,
+ "label": "манера речи персонажей",
+ "notes": "Персонажи: новое поле «Манера речи», сценарист пишет реплики и рассказ в этой манере.",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

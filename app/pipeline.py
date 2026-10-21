@@ -520,7 +520,11 @@ class Ctx:
         lines = "\n".join(f"- {self.char_name(ch)} ({ch.get('role') or 'recurring character'}): "
                           f"{ch.get('personality', '')} Looks: {ch.get('appearance', '')}"
                           + (f" Owner's additions, use them when they fit the scene (may be in Russian): {ch['extra_ru']}"
-                             if ch.get("extra_ru") else "") for ch in self.characters)
+                             if ch.get("extra_ru") else "")
+                          + (f" MANNER OF SPEECH, write every line of this character (the whole narration when this character is the "
+                             f"host or narrator) exactly in this manner, with these "
+                             f"words and turns of phrase; sample lines show the style, do not copy them word for word "
+                             f"(in Russian): {ch['speech_ru']}" if ch.get("speech_ru") else "") for ch in self.characters)
         return ("\n\nRECURRING CHARACTERS OF THIS CHANNEL (the owner chose them for this video):\n" + lines + "\n"
                 "- Build the video around these characters and use exactly these names. If the story is fiction "
                 "(a tale, a myth, a made-up story), they are its main characters. If the story is real, never insert "
