@@ -10,6 +10,8 @@ from .net import UserError
 
 GRAPH = "https://graph.facebook.com/v26.0"
 IG_GRAPH = "https://graph.instagram.com"  # accounts connected through «API setup with Instagram login»
+# Publishing needs a versioned address there: without a version Instagram ignores upload_type=resumable.
+IG_VERSION = "v24.0"
 RUPLOAD = "https://rupload.facebook.com/ig-api-upload/v26.0"
 
 
@@ -106,7 +108,9 @@ def publish(video: Path, text: str, say=None) -> dict:
     s = _refresh_ig(load_settings())
     token, uid = _auth(s)
     say = say or (lambda msg: None)
-    base = IG_GRAPH if s.get("ig_login") == "instagram" else GRAPH
+    ig_login = s.get("ig_login") == "instagram"
+    base = f"{IG_GRAPH}/{IG_VERSION}" if ig_login else GRAPH
+    rupload = f"https://rupload.facebook.com/ig-api-upload/{IG_VERSION}" if ig_login else RUPLOAD
     params = {"media_type": "REELS", "upload_type": "resumable", "caption": text, "share_to_feed": "true",
               "access_token": token}
     if s.get("ig_ai_label", True):
@@ -117,7 +121,7 @@ def publish(video: Path, text: str, say=None) -> dict:
         raise UserError(f"Instagram не создал рилс: {r.text[:300]}")
     say("загружаю видео")
     data = video.read_bytes()
-    up = net.request("Instagram", "POST", f"{RUPLOAD}/{cid}", content=data, tries=3, timeout=900, headers={
+    up = net.request("Instagram", "POST", f"{rupload}/{cid}", content=data, tries=3, timeout=900, headers={
         "Authorization": f"OAuth {token}", "offset": "0", "file_size": str(len(data))})
     if not (up.json() or {}).get("success"):
         raise UserError(f"Instagram не принял файл: {up.text[:300]}")

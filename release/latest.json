@@ -1,6 +1,6 @@
 {
- "version": 42,
- "label": "Instagram без страницы Facebook",
- "notes": "Instagram подключается проще: без страницы Facebook, маркером со страницы «Настройка API для входа в Instagram».",
+ "version": 43,
+ "label": "исправлена выкладка в Instagram",
+ "notes": "Исправлена выкладка рилсов в Instagram при подключении маркером Instagram (ошибка «video_url is required»).",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
