@@ -225,7 +225,7 @@ def create_job(data: dict = Body(...)):
                 for i, r in enumerate(projects.list_refs(c["id"])):
                     shutil.copy(r, jd / "chars" / f"{c['id']}_ref{i}.png")
                     refs.append(f"chars/{c['id']}_ref{i}.png")
-                snap.append({k: c.get(k, "") for k in ("id", "name", "name_en", "role", "appearance", "personality", "extra_ru", "speech_ru", "voice_id", "voice_name")}
+                snap.append({k: c.get(k, "") for k in ("id", "name", "name_en", "role", "description_ru", "appearance", "personality", "extra_ru", "speech_ru", "voice_id", "voice_name")}
                             | {"portrait": f"chars/{c['id']}.png" if src.exists() else "", "refs": refs})
             pipeline.write_json(jd / "characters.json", snap)
         if items:

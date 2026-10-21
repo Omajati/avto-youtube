@@ -519,7 +519,9 @@ class Ctx:
         if not self.characters:
             return ""
         lines = "\n".join(f"- {self.char_name(ch)} ({ch.get('role') or 'recurring character'}): "
-                          f"{ch.get('personality', '')} Looks: {ch.get('appearance', '')}"
+                          + (f"Owner's description, the main source about who this character is and what he talks "
+                             f"about (Russian): {ch['description_ru']} " if (ch.get("description_ru") or "").strip() else "")
+                          + f"{ch.get('personality', '')} Looks: {ch.get('appearance', '')}"
                           + (f" Owner's additions, use them when they fit the scene (may be in Russian): {ch['extra_ru']}"
                              if ch.get("extra_ru") else "")
                           + (f" MANNER OF SPEECH, write every line of this character (the whole narration when this character is the "
@@ -718,6 +720,10 @@ class Ctx:
                 "the viewer, his humour. Use several of his pet words in every script and build sentences the way he "
                 "talks. A neutral, polite or textbook narrator voice is a failure. Do not copy the sample lines word "
                 "for word; write new lines in the same manner. His slang is allowed and wanted, but no hard swearing.")
+        if prompt_file == "01_ideas.txt":
+            text += ("\nTopics come from this character's world as the owner described him: everyday, relatable things "
+                     "any viewer knows from their own life and that fit his job and life as described, seen through his eyes and told as his bitter truth or as a lie he exposes. "
+                     "No textbook science, history lessons or trivia quizzes: a fact is only a tool for his point.")
         if prompt_file == "04_review.txt":
             text += ("\nAdd the criterion voice: does the script sound like this character (10) or like a neutral "
                      "narrator (at most 4)? Below 7 means revised_script must be rewritten in his voice. "
@@ -743,7 +749,7 @@ class Ctx:
 
 GOLDEN_STAGES = ("01_ideas.txt", "02_outline.txt", "03_script.txt", "04_review.txt", "07_short.txt")
 GOLDEN_IN_PROMPT = 6
-VOICE_STAGES = ("02_outline.txt", "03_script.txt", "04_review.txt", "07_short.txt")
+VOICE_STAGES = ("01_ideas.txt", "02_outline.txt", "03_script.txt", "04_review.txt", "07_short.txt")
 
 
 def ideas_count(settings: dict) -> int:
