@@ -236,6 +236,9 @@ def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = 
         return (f"Reference image {start} shows" if n == 1 else f"Reference images {start}-{start + n - 1} show")
 
     parts = [f"Create a new illustration: {prompt}"]
+    if vertical:
+        parts.append("The result is a tall vertical 9:16 picture that fills the whole frame, whatever the shape of "
+                     "the reference images; no white or empty margins.")
     n = 1
     if place:
         parts.append(f"{which(n, 1)} the PLACE where this happens: keep exactly the same location, layout, colours, "

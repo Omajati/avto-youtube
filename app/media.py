@@ -69,6 +69,35 @@ def to_png(raw: bytes, out: Path):
         tmp.unlink(missing_ok=True)
 
 
+def trim_borders(path: Path, min_frac: float = 0.015):
+    """Cuts off plain white margins around a generated picture; the video then fills the frame with
+    the picture itself. Pictures without such margins stay as they are."""
+    from PIL import Image, ImageChops
+    try:
+        im = Image.open(path).convert("RGB")
+    except OSError:
+        return False
+    w, h = im.size
+    for bg in ((255, 255, 255),):
+        corners = [im.getpixel(p) for p in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))]
+        # The margin colour must be in at least two corners, otherwise it is part of the picture.
+        if sum(max(abs(a - b) for a, b in zip(px, bg)) < 24 for px in corners) < 2:
+            continue
+        diff = ImageChops.difference(im, Image.new("RGB", im.size, bg)).convert("L").point(lambda v: 255 if v > 28 else 0)
+        box = diff.getbbox()
+        if not box:
+            return False
+        l, t, r, b = box
+        cut = (l / w, t / h, (w - r) / w, (h - b) / h)
+        # Margins come in pairs (left and right, or top and bottom); white on one side only is snow or sky.
+        paired = min(cut[0], cut[2]) >= min_frac or min(cut[1], cut[3]) >= min_frac
+        if not paired or (r - l) < w * 0.4 or (b - t) < h * 0.4:
+            continue
+        im.crop(box).save(path)
+        return True
+    return False
+
+
 def to_wav(src: Path, out: Path):
     tmp = out.with_suffix(".tmp.wav")
     run(["-i", src, "-ar", 44100, "-ac", 1, "-c:a", "pcm_s16le", tmp], "Звук")

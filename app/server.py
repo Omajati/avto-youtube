@@ -194,6 +194,7 @@ def create_job(data: dict = Body(...)):
                       else proj.get("anim_mode") or s.get("anim_mode", "off")),
         "anim_short": bool(data.get("anim_short", proj.get("anim_short", s.get("anim_short")))),
         "anim_count": animate.clamp_count(data.get("anim_count") or proj.get("anim_count") or animate.COUNT_DEFAULT),
+        "anim_pause": bool(data.get("anim_pause", proj.get("anim_pause", False))),
         "fx_mode": data.get("fx_mode") if data.get("fx_mode") in effects.MODES else proj.get("fx_mode") or s.get("fx_mode", "light"),
         "short_seconds": _short_seconds(data.get("short_seconds") or proj.get("short_seconds")),
         "music_mode": data.get("music_mode") if data.get("music_mode") in musiclib.MODES else proj.get("music_mode") or "library",
@@ -293,6 +294,7 @@ def job_detail(jid: str):
         "fx_mode": pipeline.fx_mode(j),
         "project": projects.get(j["options"].get("project_id", "")) or None,
         "anim": {"mode": pipeline.anim_options(j)[0], "short": pipeline.anim_options(j)[1],
+                 "waiting": pipeline.needs_anim_choice(j), "suggest": pipeline.anim_suggest(jid, j),
                  "count": pipeline.anim_count(j), "scenes": pipeline.anim_scenes(j),
                  "files": sorted(p.name for p in (d / "anim").glob("*.mp4")) if (d / "anim").exists() else []},
         "upload": uploader.state(jid),
@@ -422,13 +424,16 @@ def job_animation(jid: str, data: dict = Body(...)):
     quote = pipeline.anim_quote(jid, mode, bool(data.get("short")), count, custom)
     if quote["new"] and not data.get("confirm"):
         return {"ok": False, "confirm": True, **quote}
+    waiting = pipeline.needs_anim_choice(j)
     opts = dict(j["options"], anim_mode=mode, anim_short=bool(data.get("short")), anim_count=count, anim_scenes=custom)
+    if waiting:
+        opts["anim_picked"] = True  # the owner chose the scenes during the pause: go on with the video
     db.update(jid, options=opts)
     d = pipeline.job_dir(jid)
     for rel in ("animate.json", "video.json", "short_video.json", "output/video.mp4", "output/short.mp4",
                 "clips", "clips_short"):
         pipeline._remove(d, rel)
-    if j["status"] in ("done", "error", "paused"):
+    if j["status"] in ("done", "error", "paused") or waiting:
         db.update(jid, status="queued", error="")
         worker.wake()
     return {"ok": True}

@@ -1280,6 +1280,17 @@ def _location_plates(c: Ctx, scenes_by_kind: list) -> dict:
     return plates
 
 
+# Image models sometimes draw a vertical picture as a smaller one on white paper; this asks for the whole frame.
+FULL_BLEED = ("Full-bleed image filling the entire frame edge to edge: no white borders, no margins, no frame, "
+              "no letterbox bars, not a photo or poster on a background")
+
+
+def _wrong_shape(path: Path) -> bool:
+    from PIL import Image
+    with Image.open(path) as im:
+        return im.width > im.height * 0.8
+
+
 def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallback: Path = None, refs: list = None,
                 place: Path = None, items: list = None):
     if out.exists():
@@ -1288,11 +1299,22 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
         media.demo_image(out, idx, vertical)
         return
     style = c.settings.get("image_style", "")
-    full = f"{prompt.strip().rstrip('.')}. {style}"
+    full = f"{prompt.strip().rstrip('.')}. {style}. {FULL_BLEED}"
     if refs or place or items:
         try:
             raw = images.generate_with_reference(c.settings, full, refs or [], vertical, place=place, items=items)
             media.to_png(raw, out)
+            media.trim_borders(out)
+            if vertical and _wrong_shape(out):
+                # The editing model sometimes keeps the shape of a reference photo: one more try, then the
+                # picture is cropped to fill the frame.
+                c.log(f"Картинка {idx + 1}: получилась горизонтальной, рисую ещё раз вертикально…")
+                c.add_usage("image_cost", images.REFERENCE_PRICE)
+                balance.record("fal", images.REFERENCE_PRICE)
+                raw = images.generate_with_reference(c.settings, "Tall vertical 9:16 portrait composition. " + full,
+                                                     refs or [], vertical, place=place, items=items)
+                media.to_png(raw, out)
+                media.trim_borders(out)
             c.add_usage("images", 1)
             c.add_usage("image_cost", images.REFERENCE_PRICE)
             balance.record("fal", images.REFERENCE_PRICE)
@@ -1316,6 +1338,7 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
                 return
             raise
     media.to_png(raw, out)
+    media.trim_borders(out)
     c.add_usage("images", 1)
     c.add_usage("image_cost", images.price_per_image(c.settings))
     balance.record(c.settings.get("image_provider") or "fal", images.price_per_image(c.settings))
@@ -1459,6 +1482,21 @@ def anim_scenes(job_or_opts) -> list:
     return [int(i) for i in (opts.get("anim_scenes") or []) if str(i).lstrip("-").isdigit()]
 
 
+def needs_anim_choice(job: dict) -> bool:
+    """The owner asked to stop before animation and has not chosen the scenes yet."""
+    opts = job.get("options", {})
+    return job.get("status") == "review" and bool(opts.get("anim_pause")) and not opts.get("anim_picked")
+
+
+def anim_suggest(jid: str, job: dict) -> list:
+    """Scenes the program would animate by itself: shown checked during the pause, the owner adds or removes."""
+    if not needs_anim_choice(job):
+        return []
+    scenes = (read_json(job_dir(jid) / "scenes.json") or {}).get("scenes") or []
+    mode = anim_options(job)[0]
+    return animate.pick(mode, scenes, anim_count(job), anim_scenes(job)) if scenes else []
+
+
 def anim_short_pick(short_scenes: list, mode: str, count: int) -> list:
     """Short: the first scenes, never more than `count` (all of them only in the "all" mode)."""
     if mode == "off":
@@ -1490,6 +1528,9 @@ def anim_quote(jid: str, mode: str, anim_short: bool, count: int = animate.COUNT
 
 def st_animate(c: Ctx):
     job = db.get(c.id) or {"options": c.opts}
+    if job["options"].get("anim_pause") and not job["options"].get("anim_picked"):
+        raise StopForReview("⏸ Картинки и озвучка готовы. Отметьте в шаге «Анимация» сцены, которые нужно оживить, "
+                            "и нажмите «Оживить выбранные и продолжить».")
     mode, anim_short = anim_options(job)
     count = anim_count(job)
     scenes = c.data("scenes")["scenes"]
