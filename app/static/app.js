@@ -1172,10 +1172,10 @@ function renderStages(d) {
     const [kind, idx] = b.dataset.regen.split(":");
     const current = kind === "thumbnail" ? d.stages.extras.thumbnail_prompt
       : (kind === "short" ? d.stages.short_script.scenes : d.stages.scenes.scenes)[+idx].prompt;
-    const p = prompt(kind === "thumbnail" ? "Описание картинки для превью (по-английски). Можно оставить как есть или поправить:"
-      : "Описание картинки (по-английски). Можно оставить как есть или поправить. Картинка будет нарисована заново, и видео пересоберётся:", current);
-    if (p === null) return;
-    await api(`/api/jobs/${j.id}/image`, { json: { kind, index: +idx, prompt: p } }).then(() => toast("Картинка будет перерисована")).catch(e => toast(e.message, true));
+    const fix = prompt("Что исправить на картинке? Напишите по-русски, например: «женщина сидит сзади, а не за рулём». Оставьте пустым, чтобы просто перерисовать." + (kind === "thumbnail" ? "" : " Видео потом пересоберётся."), "");
+    if (fix === null) return;
+    toast(fix.trim() ? "Исправляю описание и перерисовываю…" : "Перерисовываю…");
+    await api(`/api/jobs/${j.id}/image`, { json: { kind, index: +idx, prompt: current, fix_ru: fix } }).then(() => toast("Картинка будет перерисована")).catch(e => toast(e.message, true));
     lastStagesKey = "";
   });
   el.querySelectorAll("[data-subs]").forEach(b => b.onclick = async () => {

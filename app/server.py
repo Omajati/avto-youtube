@@ -369,12 +369,28 @@ def job_script(jid: str, data: dict = Body(...)):
     return {"ok": True}
 
 
+def _fix_prompt(prompt: str, fix_ru: str) -> str:
+    """The owner says in Russian what is wrong with a picture; the English description is corrected for him."""
+    system = "You edit prompts for an image model. Answer only with JSON."
+    user = ("Here is the English description of a picture and the owner's correction in Russian. Rewrite the "
+            "description so the picture follows the correction exactly. Keep everything else (people's looks, place, "
+            "light, camera) unchanged. State positions and actions explicitly, the image model takes words literally. "
+            f"Do not mention any art style.\n\nDESCRIPTION:\n{prompt}\n\nCORRECTION (Russian):\n{fix_ru}")
+    r = llm.call_json(load_settings(), system, user, {"type": "object", "properties": {"prompt": {"type": "string"}}},
+                      {}, 2000)
+    return (r.get("prompt") or "").strip() or prompt
+
+
 @app.post("/api/jobs/{jid}/image")
 def job_image(jid: str, data: dict = Body(...)):
     j = _job_or_404(jid)
     if j["status"] == "running":
         raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
-    pipeline.regenerate_image(jid, data.get("kind", "scene"), int(data["index"]), (data.get("prompt") or "").strip() or None)
+    prompt = (data.get("prompt") or "").strip() or None
+    fix = (data.get("fix_ru") or "").strip()
+    if fix and prompt:
+        prompt = _fix_prompt(prompt, fix)
+    pipeline.regenerate_image(jid, data.get("kind", "scene"), int(data["index"]), prompt)
     if j["status"] in ("done", "error", "paused"):
         db.update(jid, status="queued", error="")
         worker.wake()

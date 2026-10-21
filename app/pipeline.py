@@ -764,6 +764,14 @@ class Ctx:
 
 GOLDEN_STAGES = ("01_ideas.txt", "02_outline.txt", "03_script.txt", "04_review.txt", "07_short.txt")
 GOLDEN_IN_PROMPT = 6
+POSITIONS_RULE = (
+    "\n\nPOSITIONS (the image model gets each prompt alone and guesses where people are): in every prompt say "
+    "exactly where each person is and what they do there, in the subject part, not only in the location text. "
+    "In a vehicle always name the seat: \"the woman sits in the REAR passenger seat\", \"the driver at the wheel\". "
+    "A person alone in a car is drawn behind the wheel unless told otherwise, so for a passenger frame the shot "
+    "from the front seats looking back at the rear seat, keep the steering wheel out of the passenger's part of "
+    "the picture and write \"she is not driving\". The same for a counter, a desk or a stage: who stands behind "
+    "it and who in front.")
 OWNER_FIRST = ("\n\nPRIORITY: the channel niche above and the characters' descriptions and manner of speech are the "
                "owner's own rules. Where they differ from the general rules of this prompt (topics, tone, audience, "
                "structure, how the narrator talks), the owner's rules win.")
@@ -1133,7 +1141,7 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
             if any(ch.get("speaker") for ch in part):
                 fx += ("\n\nFragments marked [Name says] are lines spoken by that character: show that character "
                        "speaking or reacting, close enough to read the face.")
-            r = c.ask("05_scenes.txt", SCHEMA_PROMPTS, 32000, extra=fx, title=title, characters=chars,
+            r = c.ask("05_scenes.txt", SCHEMA_PROMPTS, 32000, extra=fx + POSITIONS_RULE, title=title, characters=chars,
                       locations=locs, chunks=listing, orientation=orientation)
         by_index = {p.get("index"): p for p in r.get("prompts", [])}
         for i, ch in enumerate(part):
