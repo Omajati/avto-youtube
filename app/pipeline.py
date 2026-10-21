@@ -394,7 +394,8 @@ SCHEMA_PROMPTS = {
         "index": {"type": "integer"}, "prompt": {"type": "string"}, "prompt_ru": {"type": "string"},
         "location": {"type": "string"},
         "effect": {"type": "string", "enum": effects.EFFECTS}, "sfx": {"type": "string", "enum": effects.SFX},
-        "characters": {"type": "array", "items": {"type": "string"}}}}}},
+        "characters": {"type": "array", "items": {"type": "string"}},
+        "items": {"type": "array", "items": {"type": "string"}}}}}},
 }
 
 SCHEMA_EXTRAS = {
@@ -455,6 +456,7 @@ class Ctx:
                 self.settings[k] = float(self.project[k])
         self.lang = self.opts.get("language") or self.project.get("language") or "en"
         self.characters = read_json(self.dir / "characters.json", []) or []
+        self.items = read_json(self.dir / "items.json", []) or []
         host = self.host()
         if host:  # the hero tells the whole video in his own voice
             self.settings["elevenlabs_voice_id"] = host["voice_id"]
@@ -526,6 +528,21 @@ class Ctx:
                 "story, reacts to it and appears in some pictures (introduce them naturally, keep facts true).\n"
                 "- In image prompts always describe them with their exact look. Change clothes or details only "
                 "where the owner's additions or the story clearly ask for it, and write that change into the prompt.")
+
+    def item_block(self) -> str:
+        if not self.items:
+            return ""
+        lines = "\n".join(f"- {self.char_name(it)}" + (f" ({it['kind']})" if it.get("kind") else "")
+                          + f": {it.get('appearance', '')}"
+                          + (f" Owner's notes, follow them (may be in Russian): {it['extra_ru']}" if it.get("extra_ru") else "")
+                          for it in self.items)
+        return ("\n\nITEMS AND PRODUCTS FOR THIS VIDEO (the owner chose them, they have exact reference photos):\n"
+                + lines + "\n"
+                "- Let these items appear in the story and in several pictures where they fit naturally: used, held, "
+                "worn, standing in the scene. Call them by exactly these names; never invent other brands or models "
+                "of the same kind.\n"
+                "- In image prompts describe every such item with its exact look above; never change its shape, colours, "
+                "logo or labels.")
 
     def host(self):
         """In "host" mode the first chosen character with a voice tells the whole video himself."""
@@ -668,7 +685,7 @@ class Ctx:
                   + (SHORT_OVERRIDE.format(seconds=self.short_seconds, words=self.words) if self.short_format else "")
                   + (KIDS_OVERRIDE if self.project.get("made_for_kids")
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
-                  + self.char_block() + self.dialogue_block() + self.series_block() + self.examples_block()
+                  + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
                   + self.lessons_block())
         user = fill(load_prompt(prompt_file), niche=self.niche, minutes=max(1, int(self.minutes)), words=self.words,
                     words_min=int(self.words * 0.9), words_max=int(self.words * 1.1), **values) + extra
@@ -980,6 +997,11 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
             fx += (f"\n\nIn field characters list which of the channel's recurring characters ({names}) are visible "
                    "in the picture, using exactly these names; otherwise an empty list." if names else
                    "\n\nLeave the field characters as an empty list.")
+            inames = ", ".join(c.char_name(it) for it in c.items)
+            fx += (f"\n\nIn field items list which of the chosen items ({inames}) are visible in the picture, using "
+                   "exactly these names; otherwise an empty list. Show these items in the pictures where the narration "
+                   "mentions or uses them, and in a few other fitting scenes, described with their exact look." if inames
+                   else "\n\nLeave the field items as an empty list.")
             fx += ("\n\nEvery fragment comes with [camera: ...]: build that picture exactly from this camera angle and "
                    "begin the prompt with it. Even inside one location the angle changes from picture to picture, so "
                    "the same room is seen from new sides: first person, over the shoulder, close-up, from above. "
@@ -1007,6 +1029,7 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
                 "prompt_ru": (p or {}).get("prompt_ru", ""),
                 "motion": media.MOTIONS[(start + i) % len(media.MOTIONS)],
                 "characters": visible,
+                "items": list((p or {}).get("items") or []),
                 "location": (p or {}).get("location", ""),
                 **({"speaker": ch["speaker"]} if ch.get("speaker") else {}),
                 "effect": (p or {}).get("effect", "none"),
@@ -1192,6 +1215,26 @@ def _refs_for(c: Ctx, scene: dict) -> list:
     return out[:images.MAX_REFERENCE_IMAGES]
 
 
+def _item_refs_for(c: Ctx, scene: dict) -> list:
+    """Photos of the chosen items visible in this scene: one reference sheet per item."""
+    if not c.items or not c.settings.get("fal_key"):
+        return []
+    names = {n.strip().lower() for n in scene.get("items") or []}
+    out = []
+    for it in c.items:
+        if {it.get("name", "").lower(), it.get("name_en", "").lower()} & names:
+            paths = [c.dir / x for x in it.get("photos") or []]
+            paths = [p for p in paths if p.exists()]
+            if paths:
+                out.append(paths)
+    return out[:images.MAX_ITEM_IMAGES]
+
+
+def _thumb_items(c: Ctx, prompt: str) -> list:
+    named = [n for it in c.items for n in (it.get("name", ""), it.get("name_en", "")) if n and n.lower() in prompt.lower()]
+    return _item_refs_for(c, {"items": named})
+
+
 def _thumb_refs(c: Ctx, prompt: str) -> list:
     """The thumbnail shows the channel's own hero: the characters named in its prompt, else the host or the first one."""
     names = [n for ch in c.characters for n in (ch.get("name", ""), ch.get("name_en", "")) if n]
@@ -1238,7 +1281,7 @@ def _location_plates(c: Ctx, scenes_by_kind: list) -> dict:
 
 
 def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallback: Path = None, refs: list = None,
-                place: Path = None):
+                place: Path = None, items: list = None):
     if out.exists():
         return
     if c.demo:
@@ -1246,9 +1289,9 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
         return
     style = c.settings.get("image_style", "")
     full = f"{prompt.strip().rstrip('.')}. {style}"
-    if refs or place:
+    if refs or place or items:
         try:
-            raw = images.generate_with_reference(c.settings, full, refs or [], vertical, place=place)
+            raw = images.generate_with_reference(c.settings, full, refs or [], vertical, place=place, items=items)
             media.to_png(raw, out)
             c.add_usage("images", 1)
             c.add_usage("image_cost", images.REFERENCE_PRICE)
@@ -1313,6 +1356,9 @@ def st_images(c: Ctx):
     if short:
         jobs += [(sc["prompt"], img / f"short_{i:03d}.png", True, i) for i, sc in enumerate(short["scenes"])]
         refs.update({img / f"short_{i:03d}.png": _refs_for(c, sc) for i, sc in enumerate(short["scenes"])})
+    item_refs = {img / f"scene_{i:03d}.png": _item_refs_for(c, sc) for i, sc in enumerate(scenes)}
+    if short:
+        item_refs.update({img / f"short_{i:03d}.png": _item_refs_for(c, sc) for i, sc in enumerate(short["scenes"])})
     places = {}
     if _same_place(c):
         kinds = [(scenes, c.vertical)] + ([(short["scenes"], True)] if short else [])
@@ -1326,6 +1372,7 @@ def st_images(c: Ctx):
     if extras.get("thumbnail_prompt"):
         jobs.append((extras["thumbnail_prompt"], img / "thumbnail_src.png", c.vertical, 999))
         refs[img / "thumbnail_src.png"] = _thumb_refs(c, extras["thumbnail_prompt"])
+        item_refs[img / "thumbnail_src.png"] = _thumb_items(c, extras["thumbnail_prompt"])
     todo = [j for j in jobs if not j[1].exists()]
     c.log(f"Генерирую картинки: {len(todo)} из {len(jobs)} (сервис: "
           f"{images.PROVIDERS.get(c.settings['image_provider'], {}).get('name', '')})…")
@@ -1336,7 +1383,8 @@ def st_images(c: Ctx):
         c.check()
         prompt, out, vertical, idx = j
         try:
-            _make_image(c, prompt, out, vertical, idx, refs=refs.get(out), place=places.get(out))
+            _make_image(c, prompt, out, vertical, idx, refs=refs.get(out), place=places.get(out),
+                        items=item_refs.get(out))
         except UserError as e:
             if "ключ" in str(e) or "денег" in str(e) or "лимит" in str(e):
                 raise

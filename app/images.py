@@ -187,7 +187,8 @@ def _openai(key, model, prompt, vertical, quality="medium"):
 
 
 REFERENCE_MODEL = "fal-ai/nano-banana/edit"
-MAX_REFERENCE_IMAGES = 3  # the editing model works best with up to 3 pictures: one per character
+MAX_REFERENCE_IMAGES = 3  # the editing model works best with a few pictures: one per character
+MAX_ITEM_IMAGES = 2  # and one per item, on top of the characters
 REFERENCE_PRICE = 0.04  # approximate USD per image
 
 
@@ -209,46 +210,54 @@ def _sheet(paths: list):
 
 
 def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = False, square: bool = False,
-                            place=None) -> bytes:
-    """A new picture where the characters look like their portraits (fal.ai, image editing model)."""
+                            place=None, items: list = None) -> bytes:
+    """A new picture where the characters look like their portraits and the items like their photos
+    (fal.ai, image editing model). Order of the pictures: the place, one sheet per character, one per item."""
     from PIL import Image
     import io
     key = settings.get("fal_key")
     if not key:
         raise UserError("Для картинок по портрету нужен ключ fal.ai (Настройки → Картинки).")
+    refs = list(refs[:MAX_REFERENCE_IMAGES])
+    items = list((items or [])[:MAX_ITEM_IMAGES])
+    pics = ([place] if place else []) + refs + items
     urls = []
-    items = list(refs[:MAX_REFERENCE_IMAGES])
-    if place:
-        items = [place] + items  # the place goes first, then one sheet per character
-    for item in items:
-        # A list is several photos of one character (front, side, back...): they go in as one reference sheet.
-        im = _sheet(item) if isinstance(item, (list, tuple)) else Image.open(item).convert("RGB")
+    for pic in pics:
+        # A list is several photos of one character or item (front, side, back...): they go in as one sheet.
+        im = _sheet(pic) if isinstance(pic, (list, tuple)) else Image.open(pic).convert("RGB")
         im.thumbnail((1536, 1536))
         buf = io.BytesIO()
         im.save(buf, "JPEG", quality=90)
         urls.append("data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode())
-    if place and not refs:
-        text = (f"Create a new illustration: {prompt} The reference image shows the PLACE where this happens: keep "
-                "exactly the same location, layout, colours, furniture, objects and light, seen from the camera angle "
-                "and distance described; move the camera freely as described and never copy the viewpoint of the "
-                "reference picture. Add the people and action described. No text, no letters, no watermark.")
-    elif place:
-        text = (f"Create a new illustration: {prompt} The FIRST reference image shows the PLACE where this happens: "
-                "keep exactly the same location, layout, colours, furniture, objects and light, seen from the camera "
-                "angle and distance described; move the camera freely as described and never copy the viewpoint of "
-                "the reference picture. The other reference image(s) show the character(s): they must look "
-                "exactly like them (same face, hair, age, build, typical clothing); a reference can be a sheet with "
-                "several photos of one character from different sides, draw each character only once and do not copy "
-                "their reference pose or background. No text, no letters, no watermark.")
-    else:
-        text = None
+
+    def which(start, n):
+        if len(pics) == 1:
+            return "The reference image shows"
+        return (f"Reference image {start} shows" if n == 1 else f"Reference images {start}-{start + n - 1} show")
+
+    parts = [f"Create a new illustration: {prompt}"]
+    n = 1
+    if place:
+        parts.append(f"{which(n, 1)} the PLACE where this happens: keep exactly the same location, layout, colours, "
+                     "furniture, objects and light, seen from the camera angle and distance described; move the camera "
+                     "freely as described and never copy the viewpoint of the reference picture."
+                     + ("" if refs or items else " Add the people and action described."))
+        n += 1
+    if refs:
+        parts.append(f"{which(n, len(refs))} the character(s): they must look exactly like them (same face, hair, age, "
+                     "build and typical clothing). A reference can be a sheet with several photos of one character from "
+                     "different sides (front, profile, back, details): use all of them so every detail stays the same. "
+                     "Draw each character only once and do not copy their reference pose or background.")
+        n += len(refs)
+    if items:
+        parts.append(f"{which(n, len(items))} the exact item(s) or product(s) that appear in the scene: reproduce them "
+                     "exactly as in the photos (same shape, proportions, colours, materials, logo, labels and text on "
+                     "them), at a realistic size, placed and used as described. A reference can be a sheet with several "
+                     "photos of one item from different sides. Draw each item only once and do not copy the photo's "
+                     "background.")
+    parts.append("No text, no letters, no watermark" + (" apart from what is printed on the items themselves." if items else "."))
     body = {
-        "prompt": text or (f"Create a new illustration: {prompt} The character(s) in the scene must look exactly like the "
-                   "person(s) in the reference image(s): same face, hair, age, build and typical clothing. "
-                   "A reference image can be a sheet with several photos of the same character from different sides "
-                   "(front, profile, back, details): use all of them so every detail, including the back and "
-                   "accessories, stays the same. Draw the character only once. "
-                   "Do not copy the reference background or pose. No text, no letters, no watermark."),
+        "prompt": " ".join(parts),
         "image_urls": urls,
         "num_images": 1,
         "aspect_ratio": "1:1" if square else "9:16" if vertical else "16:9",

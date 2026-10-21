@@ -17,7 +17,7 @@ BACKUP_DIR = Path.home() / "Desktop" / "Авто ютуб — резерв"
 # If macOS doesn't let the program write to the Desktop, copies go next to the program instead.
 FALLBACK_DIR = DATA_DIR.parent / "Авто ютуб — резерв"
 KEEP = 15
-INCLUDE = ["settings.json", "niche_templates.json", "projects", "characters", "prompts", "youtube", "sfx", "music"]
+INCLUDE = ["settings.json", "niche_templates.json", "projects", "characters", "items", "prompts", "youtube", "sfx", "music"]
 
 
 def make(reason: str = "") -> Path:

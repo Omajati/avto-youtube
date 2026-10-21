@@ -61,6 +61,7 @@ async function route() {
     else if (page === "settings") await viewSettings(id);
     else if (page === "projects") await viewProjects(id);
     else if (page === "characters") await viewCharacters();
+    else if (page === "items") await viewItems();
     else if (page === "prompts") await viewPrompts(id);
     else if (page === "music") await viewMusic();
     else if (page === "help") viewHelp();
@@ -74,7 +75,7 @@ window.addEventListener("hashchange", route);
 
 // ------------------------------------------------------------------ unsaved input survives leaving the page
 // Everything typed on a page is kept per page address until it is saved, so switching tabs loses nothing.
-const DRAFT_PAGES = ["new", "projects", "settings", "characters", "prompts"];
+const DRAFT_PAGES = ["new", "projects", "settings", "characters", "items", "prompts"];
 function draftKey() { return "ay_draft:" + (location.hash || "#/jobs"); }
 function draftOn() { return DRAFT_PAGES.includes((location.hash || "#/jobs").split("/")[1]); }
 function draftFields() {
@@ -140,7 +141,7 @@ function draftRestore() {
 }
 
 // ------------------------------------------------------------------ recent pages as tabs
-const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", projects: "📁", characters: "🧑‍🎨", settings: "⚙️", prompts: "📝", music: "🎵", help: "❓", balance: "💰" };
+const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", projects: "📁", characters: "🧑‍🎨", items: "📦", settings: "⚙️", prompts: "📝", music: "🎵", help: "❓", balance: "💰" };
 function getTabs() { try { return JSON.parse(lsGet("ay_tabs", "[]")) || []; } catch (e) { return []; } }
 function rememberTab() {
   const hash = location.hash || "#/jobs";
@@ -188,7 +189,7 @@ async function viewNew() {
       <button class="pcard ${curProj ? "" : "on"}" data-proj=""><div class="pic">⚙️</div><div><b>Без проекта</b><div class="muted small">общие настройки</div></div></button>
       ${projs.map(p => `<button class="pcard ${p.id === curProj ? "on" : ""}" data-proj="${p.id}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${p.language === "ru" ? "русский" : "английский"}</div></div></button>`).join("")}
     </div>
-    <div id="charsel"></div><input type="hidden" id="fmtv" value="long"><input type="hidden" id="charsv" value="">
+    <div id="charsel"></div><div id="itemsel"></div><input type="hidden" id="fmtv" value="long"><input type="hidden" id="charsv" value=""><input type="hidden" id="itemsv" value="">
     <label class="f">Формат</label>
     <div class="pgrid" style="margin-bottom:4px">
       <button class="pcard on" data-fmt="long"><div class="pic">🎬</div><div><b>Видео + шортс</b><div class="muted small">длинное видео, шортс по желанию</div></div></button>
@@ -269,6 +270,8 @@ async function viewNew() {
   $("#fmtv").addEventListener("change", () => setFmt($("#fmtv").value));
   const syncChars = () => { $("#charsv").value = [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char).join(","); };
   $("#charsv").addEventListener("change", () => { const want = new Set($("#charsv").value.split(",")); main.querySelectorAll("[data-char]").forEach(b => b.classList.toggle("on", want.has(b.dataset.char))); });
+  const syncItems = () => { $("#itemsv").value = [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item).join(","); };
+  $("#itemsv").addEventListener("change", () => { const want = new Set($("#itemsv").value.split(",")); main.querySelectorAll("[data-item]").forEach(b => b.classList.toggle("on", want.has(b.dataset.item))); });
   const applyProj = () => {
     const p = projs.find(x => x.id === curProj);
     main.querySelectorAll("[data-proj]").forEach(b => b.classList.toggle("on", b.dataset.proj === curProj));
@@ -300,6 +303,9 @@ async function viewNew() {
     const want = new Set(p ? p.characters || [] : []);
     $("#charsel").querySelectorAll("[data-char]").forEach(b => b.classList.toggle("on", want.has(b.dataset.char)));
     syncChars();
+    const wantI = new Set(p ? p.items || [] : []);
+    $("#itemsel").querySelectorAll("[data-item]").forEach(b => b.classList.toggle("on", wantI.has(b.dataset.item)));
+    syncItems();
     $("#fx").value = p ? p.fx_mode || "light" : (s.fx_mode || "light");
     if (p && p.format === "short") $("#subs-v").checked = p.subs_short;
   };
@@ -309,13 +315,18 @@ async function viewNew() {
     ${allChars.length ? `<div class="row">${allChars.map(c => `<button class="cbtn" data-char="${c.id}" title="${esc(c.role)}">${charIcon(c, 48)}<span>${esc(c.name)}</span></button>`).join("")}</div>`
       : `<p class="muted small" style="margin:0">Персонажей пока нет. Их можно добавить в разделе «Персонажи» слева.</p>`}`;
   $("#charsel").querySelectorAll("[data-char]").forEach(b => b.onclick = () => { b.classList.toggle("on"); syncChars(); main.dispatchEvent(new Event("input")); });
+  const allItems = await api("/api/items").catch(() => []);
+  $("#itemsel").innerHTML = `<label class="f">Предметы в ролике <span class="hint">Товары и вещи, которые должны появиться в кадре точно как на ваших фото. Предметы проекта отмечаются сами. <a href="#/items">Добавить предмет</a></span></label>
+    ${allItems.length ? `<div class="row">${allItems.map(it => `<button class="cbtn" data-item="${it.id}" title="${esc(it.kind)}">${itemIcon(it, 48)}<span>${esc(it.name)}</span></button>`).join("")}</div>`
+      : `<p class="muted small" style="margin:0">Предметов пока нет. Их можно добавить в разделе «Предметы» слева.</p>`}`;
+  $("#itemsel").querySelectorAll("[data-item]").forEach(b => b.onclick = () => { b.classList.toggle("on"); syncItems(); main.dispatchEvent(new Event("input")); });
   if (curProj) applyProj();
   if ($("#chan")) $("#chan").onchange = () => {
     const c = yt.channels.find(x => x.id === $("#chan").value);
     $("#niche").value = (c && c.profile.niche) || s.niche;
   };
   $("#go").onclick = async () => {
-    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan")?.value || "", subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char) } });
+    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan")?.value || "", subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
     draftClear(); toast("Запущено"); location.hash = jobs.length === 1 ? `#/job/${jobs[0].id}` : "#/jobs";
   };
   $("#demo").onclick = async () => {
@@ -516,6 +527,114 @@ async function viewCharacters() {
   await renderChars();
 }
 
+// ------------------------------------------------------------------ items
+function itemIcon(it, size = 56) {
+  return it.has_photo
+    ? `<img class="cicon iicon" style="width:${size}px;height:${size}px" src="/itemphotos/${it.id}.png?v=${Date.now()}">`
+    : `<div class="cicon iicon" style="width:${size}px;height:${size}px;font-size:${size / 2.4}px">📦</div>`;
+}
+
+async function renderItems() {
+  const box = $("#items");
+  const list = await api("/api/items");
+  const form = (it = {}) => `<div class="cform" data-iid="${it.id || ""}">
+    <div class="grid2"><div>
+      <label class="f">Название</label><input type="text" class="i-name" value="${esc(it.name)}" placeholder="Например: Бритва Philips S5000">
+    </div><div>
+      <label class="f">Что это <span class="hint">товар, техника, игрушка, упаковка…</span></label><input type="text" class="i-kind" value="${esc(it.kind)}">
+    </div></div>
+    <label class="f">Описание по-русски <span class="hint">Что это за вещь и как ей пользуются. Как она выглядит, программа опишет сама строго по фото.</span></label>
+    <textarea class="i-desc">${esc(it.description_ru)}</textarea>
+    <label class="f">Как показывать в кадре <span class="hint">Необязательно. Например: «всегда в руке героя», «стоит на столе логотипом к зрителю», «показывать в коробке».</span></label>
+    <textarea class="i-extra" rows="2">${esc(it.extra_ru || "")}</textarea>
+    ${it.id ? "" : `<label class="f">Фото предмета <span class="hint">Можно выбрать сразу несколько (до 9): спереди, сбоку, сзади, упаковка, логотип крупно. Первое станет главным фото. Лучше на однотонном фоне.</span></label><input type="file" accept="image/*" multiple class="i-newfile">`}
+    ${it.id ? `<label class="f">Описание для картинок (по-английски) <span class="hint">Составлено автоматически по фото, можно поправить</span></label><textarea class="i-app">${esc(it.appearance)}</textarea>` : ""}
+    <div class="row" style="margin-top:10px">
+      <button class="primary sm i-save">${it.id ? "Сохранить" : "Добавить предмет"}</button>
+      ${it.id ? `<button class="sm i-desc-btn">🔍 Описать по фото</button><span class="grow"></span><button class="sm danger i-del">Удалить</button>` : ""}
+    </div></div>`;
+  box.innerHTML = (list.length ? `<div class="clist">${list.map(it => `<div class="citem">
+      ${itemIcon(it, 72)}<div class="grow"><b>${esc(it.name)}</b> <span class="muted small">${esc(it.kind)}</span>
+      <div class="small">${esc(it.description_ru)}</div>${it.appearance ? `<div class="en">${esc(it.appearance)}</div>` : ""}${it.extra_ru ? `<div class="small" style="margin-top:2px">🎬 В кадре: ${esc(it.extra_ru)}</div>` : ""}
+      ${it.has_photo ? "" : `<div class="small" style="margin-top:2px;color:var(--bad, #b91c1c)">Нет фото: без него предмет рисуется только по описанию и может отличаться.</div>`}
+      <div class="row" style="margin-top:6px;gap:6px"><button class="sm i-edit" data-iid="${it.id}">Изменить</button>
+        <label class="btn sm" style="cursor:pointer">📤 ${it.has_photo ? "Заменить главное фото" : "Загрузить фото"}<input type="file" accept="image/*" class="i-qfile" data-iid="${it.id}" style="display:none"></label>
+        <label class="btn sm" style="cursor:pointer">📷 Фото с разных сторон (${(it.refs || []).length}/8)<input type="file" accept="image/*" multiple class="i-refs" data-iid="${it.id}" style="display:none"></label></div>
+      ${(it.refs || []).length ? `<div class="refstrip">${it.refs.map(r => `<div class="ref"><img src="/itemrefs/${it.id}/${r}?v=${Date.now()}">
+        <b data-rmain="${it.id}/${r}" title="Сделать главным фото">★</b><b data-rdel="${it.id}/${r}" title="Удалить фото">×</b></div>`).join("")}</div>` : ""}
+      </div></div>`).join("")}</div>` : `<p class="muted">Предметов пока нет.</p>`)
+    + `<h3>Новый предмет</h3>` + form();
+  const bind = (root) => {
+    const iid = root.dataset.iid;
+    const val = cls => root.querySelector(cls)?.value ?? "";
+    const body = () => ({ name: val(".i-name"), kind: val(".i-kind"), description_ru: val(".i-desc"), extra_ru: val(".i-extra"), ...(iid ? { appearance: val(".i-app") } : {}) });
+    root.querySelector(".i-save").onclick = async e => {
+      e.target.disabled = true;
+      const files = [...(root.querySelector(".i-newfile")?.files || [])];
+      try {
+        let it = await api(`/api/items${iid ? "/" + iid : ""}`, { json: { ...body(), later: !iid && files.length > 0 } });
+        if (!iid && files.length) {
+          for (const [i, f] of files.slice(0, 9).entries())
+            await api(`/api/items/${it.id}/${i ? "refs" : "upload"}`, { method: "POST", body: f });
+          toast("Фото загружены, описываю предмет по фото…");
+          it = await api(`/api/items/${it.id}`, { json: { ...body(), describe: true } });
+        }
+        draftClear(); if (it.warning) toast(it.warning, true); else toast("Предмет сохранён");
+      } catch (err) { toast(err.message, true); }
+      renderItems();
+    };
+    if (!iid) return;
+    root.querySelector(".i-desc-btn").onclick = async e => {
+      e.target.disabled = true;
+      toast("Смотрю на фото и описываю предмет…");
+      const { appearance, ...rest } = body();
+      await api(`/api/items/${iid}`, { json: { ...rest, describe: true } })
+        .then(it => it.warning ? toast(it.warning, true) : toast("Описание обновлено по фото")).catch(err => toast(err.message, true));
+      renderItems();
+    };
+    root.querySelector(".i-del").onclick = async () => {
+      if (!confirm("Удалить предмет?")) return;
+      await api(`/api/items/${iid}`, { method: "DELETE" }); renderItems();
+    };
+  };
+  box.querySelectorAll(".cform").forEach(bind);
+  box.querySelectorAll(".i-qfile").forEach(inp => inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    await api(`/api/items/${inp.dataset.iid}/upload`, { method: "POST", body: f }).then(() => toast("Фото загружено")).catch(err => toast(err.message, true));
+    renderItems();
+  });
+  box.querySelectorAll(".i-refs").forEach(inp => inp.onchange = async () => {
+    const files = [...inp.files]; if (!files.length) return;
+    toast(`Загружаю фото: ${files.length}…`);
+    for (const f of files) {
+      const ok = await api(`/api/items/${inp.dataset.iid}/refs`, { method: "POST", body: f }).then(() => true).catch(err => { toast(err.message, true); return false; });
+      if (!ok) break;
+    }
+    toast("Фото добавлены. Нажмите «Изменить» → «Описать по фото», чтобы описание учло новые фото.");
+    renderItems();
+  });
+  box.querySelectorAll("[data-rdel]").forEach(x => x.onclick = async () => {
+    if (!confirm("Удалить это фото?")) return;
+    await api(`/api/items/${x.dataset.rdel.replace("/", "/refs/")}`, { method: "DELETE" }); renderItems();
+  });
+  box.querySelectorAll("[data-rmain]").forEach(x => x.onclick = async () => {
+    await api(`/api/items/${x.dataset.rmain.replace("/", "/refs/")}/main`, { method: "POST" }).then(() => toast("Главное фото заменено")).catch(err => toast(err.message, true));
+    renderItems();
+  });
+  box.querySelectorAll(".i-edit").forEach(b => b.onclick = () => {
+    const it = list.find(x => x.id === b.dataset.iid);
+    b.closest(".citem").outerHTML = `<div class="citem">${itemIcon(it, 72)}<div class="grow">${form(it)}</div></div>`;
+    bind(box.querySelector(`.cform[data-iid="${it.id}"]`));
+  });
+}
+
+async function viewItems() {
+  main.innerHTML = `<h1>Предметы</h1>
+  <p class="muted">Ваша библиотека товаров и вещей, которые появляются в кадре: продукт, который вы рекламируете, фирменная кружка ведущего, машина героя. Загрузите фото предмета (лучше несколько, с разных сторон и с логотипом крупно), программа сама составит по ним точное описание. При запуске ролика нажмите на нужные предметы: сценарий найдёт им место в истории, а на картинках они будут как на ваших фото (через fal.ai, ~$0.04 за такую картинку). В проекте можно отметить, какие предметы выбираются сами.</p>
+  <div class="card" id="items">Загружаю…</div>`;
+  await renderItems();
+}
+
 const AUD = { ru: "🇷🇺 Для русской аудитории", en: "🇺🇸 Для английской аудитории", both: "🌍 Не определено (можно пометить в Настройках)" };
 let VOICES = null;
 async function loadVoices(force) { if (!VOICES || force) VOICES = await api("/api/voices"); return VOICES; }
@@ -646,6 +765,7 @@ async function viewProject(id) {
   const yt = await api("/api/youtube").catch(() => ({ channels: [] }));
   const gs = await api("/api/settings").catch(() => ({}));
   const allChars = await api("/api/characters").catch(() => []);
+  const allItems = await api("/api/items").catch(() => []);
   const opt = (v, cur) => String(v) === String(cur) ? "selected" : "";
   const sel = (key, options) => `<select data-q="${key}">${options.map(([v, n]) => `<option value="${esc(v)}" ${opt(v, p[key])}>${esc(n)}</option>`).join("")}</select>`;
   main.innerHTML = `<div class="row"><h1 class="grow">${esc(p.icon)} ${esc(p.name)}</h1>
@@ -714,6 +834,11 @@ async function viewProject(id) {
     ${allChars.length ? `<div class="row" id="pj-chars">${allChars.map(c => `<button class="cbtn ${(p.characters || []).includes(c.id) ? "on" : ""}" data-pchar="${c.id}" title="${esc(c.role)}">${charIcon(c, 48)}<span>${esc(c.name)}</span></button>`).join("")}</div>`
       : `<p class="muted">Персонажей пока нет. <a href="#/characters">Добавить персонажа</a></p>`}
   </div>
+  <div class="card"><h2>Предметы проекта</h2>
+    <p class="muted small">Отметьте товары и вещи, которые будут выбраны сами при запуске ролика в этом проекте (при запуске их можно поменять). Сами предметы с фото хранятся в разделе <a href="#/items">«Предметы»</a> слева.</p>
+    ${allItems.length ? `<div class="row" id="pj-items">${allItems.map(it => `<button class="cbtn ${(p.items || []).includes(it.id) ? "on" : ""}" data-pitem="${it.id}" title="${esc(it.kind)}">${itemIcon(it, 48)}<span>${esc(it.name)}</span></button>`).join("")}</div>`
+      : `<p class="muted">Предметов пока нет. <a href="#/items">Добавить предмет</a></p>`}
+  </div>
   <div class="card"><h2>🎯 Образцы удачных шортсов</h2>
     <p class="muted small">Вставьте сюда тексты шортсов, которые вам нравятся и набирают просмотры: что говорят в ролике, от первой фразы до последней. Можно описать своими словами, что происходит и в чём поворот. Каждый образец отделяйте пустой строкой или чертой. Сценарист шортсов изучит, как они цепляют в первую секунду, где поворот и как бьёт концовка, и будет писать на том же уровне. Сюжеты и фразы он не копирует. Для длинных роликов это поле не используется.</p>
     <textarea data-q="short_examples" rows="8" placeholder="Например:&#10;«Мой хозяин решил побриться тёркой для сыра…» (дальше весь текст ролика)&#10;———&#10;Второй образец…">${esc(p.short_examples || "")}</textarea>
@@ -754,12 +879,18 @@ async function viewProject(id) {
     const manual = $("#pj-voice-id").value.trim();
     if (manual) { out.voice_id = manual; out.voice_name = `Свой голос (${manual.slice(0, 6)}…)`; }
     out.characters = [...main.querySelectorAll("[data-pchar].on")].map(b => b.dataset.pchar);
+    out.items = [...main.querySelectorAll("[data-pitem].on")].map(b => b.dataset.pitem);
     return out;
   };
   main.querySelectorAll("[data-pchar]").forEach(b => b.onclick = async () => {
     b.classList.toggle("on");
     await api(`/api/projects/${id}`, { json: { characters: [...main.querySelectorAll("[data-pchar].on")].map(x => x.dataset.pchar) } })
       .then(() => toast("Персонажи проекта сохранены")).catch(e => toast(e.message, true));
+  });
+  main.querySelectorAll("[data-pitem]").forEach(b => b.onclick = async () => {
+    b.classList.toggle("on");
+    await api(`/api/projects/${id}`, { json: { items: [...main.querySelectorAll("[data-pitem].on")].map(x => x.dataset.pitem) } })
+      .then(() => toast("Предметы проекта сохранены")).catch(e => toast(e.message, true));
   });
   const langSel = main.querySelector('[data-q="language"]'), fmtSel = main.querySelector('[data-q="format"]');
   const fillVoices = async () => {
@@ -1873,6 +2004,7 @@ function viewHelp() {
       <li>Режим «Только шортс» выбирается в «Новом ролике» или в проекте: сценарий, картинки, озвучка и монтаж делаются под вертикальное видео до 60 секунд.</li>
       <li>Эффекты (звук перелистывания, удары, «вжух», наезды, тряска) нейросеть расставляет по смыслу сценария. Режим меняется под готовым видео, пересборка бесплатная.</li>
       <li>Персонажи создаются в проекте (описание по-русски, портрет рисуется или загружается). При запуске ролика нажмите на нужных персонажей: сценарий строится вокруг них, а на картинках они похожи на свой портрет.</li>
+      <li>Предметы (товары и вещи) добавляются в разделе «Предметы» с фото. При запуске ролика нажмите на нужные: они появятся в истории и на картинках будут как на ваших фото.</li>
       <li>Анимация сцен выбирается при запуске ролика или в шаге «Анимация сцен». Выгоднее всего «Только хук»: оживает начало ролика, где зрители решают, смотреть ли дальше. Цена показывается до запуска.</li>
       <li>Субтитры включаются галочкой при запуске ролика или кнопкой «Включить/Выключить субтитры» под готовым видео. Видео пересобирается за пару минут бесплатно, без новых запросов к сервисам.</li>
       <li>Все ролики лежат в папке: <code>${esc(META.data_dir)}/jobs</code>. Кнопка «Открыть папку» на странице ролика открывает её в Finder.</li>

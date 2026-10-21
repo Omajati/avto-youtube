@@ -200,6 +200,8 @@ def create_job(data: dict = Body(...)):
     }
     chars = projects.list_chars(set(data.get("characters", proj.get("characters", [])) or []))
     opts["characters"] = [c["id"] for c in chars]
+    items = projects.list_items(set(data.get("items", proj.get("items", [])) or []))
+    opts["items"] = [it["id"] for it in items]
     created = []
     first_ep = _next_episode(proj) if proj.get("series") else 0
     if first_ep and str(data.get("episode") or "").strip().isdigit():
@@ -225,6 +227,19 @@ def create_job(data: dict = Body(...)):
                 snap.append({k: c.get(k, "") for k in ("id", "name", "name_en", "role", "appearance", "personality", "extra_ru", "voice_id", "voice_name")}
                             | {"portrait": f"chars/{c['id']}.png" if src.exists() else "", "refs": refs})
             pipeline.write_json(jd / "characters.json", snap)
+        if items:
+            jd = pipeline.job_dir(j["id"])
+            (jd / "items").mkdir(parents=True, exist_ok=True)
+            snap = []
+            for it in items:
+                photos = []
+                for i, src in enumerate([projects.item_photo_path(it["id"])] + projects.list_item_refs(it["id"])):
+                    if src.exists():
+                        shutil.copy(src, jd / "items" / f"{it['id']}_{i}.png")
+                        photos.append(f"items/{it['id']}_{i}.png")
+                snap.append({k: it.get(k, "") for k in ("id", "name", "name_en", "kind", "appearance", "extra_ru")}
+                            | {"photos": photos})
+            pipeline.write_json(jd / "items.json", snap)
     worker.wake()
     return created
 
@@ -799,6 +814,130 @@ def char_portrait_file(cid: str):
     if not projects.get_char(cid):
         raise HTTPException(404)
     p = projects.portrait_path(cid)
+    if not p.exists():
+        raise HTTPException(404)
+    return FileResponse(p, headers={"Cache-Control": "no-cache"})
+
+
+# ---------------------------------------------------------------- items
+
+ITEM_SCHEMA = {"type": "object", "properties": {"name_en": {"type": "string"}, "appearance": {"type": "string"}}}
+
+
+def _item_photos(iid: str) -> list:
+    from PIL import Image
+    import io
+    out = []
+    main = projects.item_photo_path(iid)
+    for f in ([main] if main.exists() else []) + projects.list_item_refs(iid):
+        im = Image.open(f).convert("RGB")
+        im.thumbnail((1024, 1024))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=88)
+        out.append(buf.getvalue())
+    return out[:9]
+
+
+def _describe_item(it: dict) -> dict:
+    """An exact English description of the product for the image model, strictly from the owner's photos."""
+    photos = _item_photos(it["id"])
+    system = ("You help a faceless YouTube channel show the same real product or object in many AI-generated "
+              "images, so it must always look exactly like the original. Answer only with JSON.")
+    if photos:
+        look = ("The attached image(s) show this item (possibly from several sides). Describe ONLY what you actually "
+                "see: do not invent or change anything. If a side is not visible, do not describe it.")
+    else:
+        look = "There are no photos: build the look from the owner's description."
+    user = (f"Item name: {it['name']}\nKind: {it.get('kind', '')}\n"
+            f"Description from the owner (may be in Russian): {it.get('description_ru', '')}\n\n{look}\n\n"
+            "Return:\n- name_en: the name as it should be written in English narration (keep brand names as they are);\n"
+            "- appearance: 40-90 words, an exact, reusable visual description in English: what the object is, shape and "
+            "proportions, size relative to a hand, colours, materials and finish, parts and buttons, where the logo, "
+            "labels and text are placed and what they say, packaging if shown. No art style words.")
+    return llm.call_json(load_settings(), system, user, ITEM_SCHEMA, {}, 2000, images=photos)
+
+
+@app.get("/api/items")
+def items_list():
+    return projects.list_items()
+
+
+@app.post("/api/items")
+def item_create(data: dict = Body(...)):
+    return _item_save("", data)
+
+
+@app.post("/api/items/{iid}")
+def item_update(iid: str, data: dict = Body(...)):
+    return _item_save(iid, data)
+
+
+def _item_save(iid, data):
+    it = projects.save_item(iid, data)
+    if data.get("later"):
+        return it  # the page uploads the photos first and then asks for the description
+    if data.get("describe") or not it.get("appearance"):
+        try:
+            it = projects.save_item(it["id"], {**it, **_describe_item(it)})
+        except UserError as e:
+            return {**it, "warning": f"Предмет сохранён, но описание для картинок не получилось: {e} "
+                                     "Можно вписать описание по-английски вручную в «Изменить»."}
+    return it
+
+
+@app.delete("/api/items/{iid}")
+def item_delete(iid: str):
+    projects.remove_item(iid)
+    return {"ok": True}
+
+
+async def _item_image(iid: str, request: Request) -> bytes:
+    if not projects.get_item(iid):
+        raise UserError("Предмет не найден")
+    raw = await request.body()
+    if len(raw) < 100 or len(raw) > 30_000_000:
+        raise UserError("Не похоже на картинку. Подойдёт JPG или PNG.")
+    return raw
+
+
+@app.post("/api/items/{iid}/upload")
+async def item_upload(iid: str, request: Request):
+    media.to_png(await _item_image(iid, request), projects.item_photo_path(iid))
+    return {"ok": True}
+
+
+@app.post("/api/items/{iid}/refs")
+async def item_ref_add(iid: str, request: Request):
+    raw = await _item_image(iid, request)
+    media.to_png(raw, projects.new_item_ref_path(iid))
+    return {"ok": True}
+
+
+@app.delete("/api/items/{iid}/refs/{name}")
+def item_ref_delete(iid: str, name: str):
+    projects.item_ref_path(iid, name).unlink(missing_ok=True)
+    return {"ok": True}
+
+
+@app.post("/api/items/{iid}/refs/{name}/main")
+def item_ref_main(iid: str, name: str):
+    projects.item_make_main(iid, name)
+    return {"ok": True}
+
+
+@app.get("/itemrefs/{iid}/{name}")
+def item_ref_file(iid: str, name: str):
+    p = projects.item_ref_path(iid, name)
+    if not projects.get_item(iid) or not p.exists():
+        raise HTTPException(404)
+    return FileResponse(p, headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/itemphotos/{iid}.png")
+def item_photo_file(iid: str):
+    if not projects.get_item(iid):
+        raise HTTPException(404)
+    p = projects.item_photo_path(iid)
     if not p.exists():
         raise HTTPException(404)
     return FileResponse(p, headers={"Cache-Control": "no-cache"})

@@ -22,6 +22,7 @@ FIELDS = {
     "short_examples": "",  # texts of Shorts the owner loves: a style reference for the writer
     "same_place": True,  # one reference picture per location so every scene there shows the same place
     "characters": [],  # ids from the shared character library used by default
+    "items": [],  # ids from the shared library of items and products shown in the pictures by default
     "voice_mode": "mixed", "short_seconds": 50, "music_mode": "library",  # narrator / mixed (narrator + characters' lines) / dialogue (cartoon, mostly dialogue) / host (the hero tells it all)
     # Voice details (empty = general settings)
     "tts_model": "", "voice_stability": "", "voice_similarity": "", "voice_style": "", "voice_speed": "",
@@ -531,3 +532,111 @@ def remove_char(cid: str):
     for proj in list_all():
         if cid in proj.get("characters", []):
             save(proj["id"], {"characters": [x for x in proj["characters"] if x != cid]})
+
+
+# ---------------------------------------------------------------- items
+# Products and objects that must look exactly like the owner's photos in every picture (data/items).
+# Same layout as characters: <iid>.json, the main photo <iid>.png and more photos in <iid>_refs.
+
+ITEM_DIR = DATA_DIR / "items"
+ITEM_FIELDS = {"name": "", "name_en": "", "kind": "",  # товар, предмет, техника...
+               "description_ru": "",  # the owner's words: what it is, how it is used
+               "appearance": "",      # exact English visual description made from the photos
+               "extra_ru": ""}        # the owner's notes for scenes: how it is held, where it stands (Russian)
+
+
+def _item_id(iid: str):
+    if not _CID.fullmatch(iid or ""):
+        raise UserError("Предмет не найден")
+    return iid
+
+
+def list_items(ids=None) -> list:
+    if not ITEM_DIR.exists():
+        return []
+    out = []
+    for f in ITEM_DIR.glob("*.json"):
+        try:
+            it = json.loads(f.read_text("utf-8"))
+        except (OSError, ValueError):
+            continue
+        if ids is not None and it.get("id") not in ids:
+            continue
+        it["has_photo"] = item_photo_path(it["id"]).exists()
+        it["refs"] = [f.name for f in list_item_refs(it["id"])]
+        out.append(it)
+    return sorted(out, key=lambda it: it.get("created", 0))
+
+
+def get_item(iid: str) -> dict:
+    if not _CID.fullmatch(iid or ""):
+        return {}
+    try:
+        return json.loads((ITEM_DIR / f"{iid}.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_item(iid: str, data: dict) -> dict:
+    old = get_item(iid) if iid else {}
+    if iid and not old:
+        raise UserError("Предмет не найден")
+    it = {k: str(data.get(k, old.get(k, v)) or "").strip() for k, v in ITEM_FIELDS.items()}
+    if not it["name"]:
+        raise UserError("Укажите название предмета")
+    it.update(id=iid or uuid.uuid4().hex[:10], created=old.get("created", time.time()))
+    ITEM_DIR.mkdir(parents=True, exist_ok=True)
+    (ITEM_DIR / f"{it['id']}.json").write_text(json.dumps(it, ensure_ascii=False, indent=2), "utf-8")
+    return it
+
+
+def item_photo_path(iid: str):
+    return ITEM_DIR / f"{_item_id(iid)}.png"
+
+
+def item_refs_dir(iid: str):
+    return ITEM_DIR / f"{_item_id(iid)}_refs"
+
+
+def list_item_refs(iid: str) -> list:
+    d = item_refs_dir(iid)
+    return sorted(d.glob("*.png"), key=lambda f: f.stat().st_mtime) if d.exists() else []
+
+
+def item_ref_path(iid: str, name: str):
+    if not _REF.fullmatch(name or ""):
+        raise UserError("Фото не найдено")
+    return item_refs_dir(iid) / name
+
+
+def new_item_ref_path(iid: str):
+    if len(list_item_refs(iid)) >= MAX_REFS:
+        raise UserError(f"У предмета уже {MAX_REFS} дополнительных фото. Удалите лишние, чтобы добавить новые.")
+    d = item_refs_dir(iid)
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{uuid.uuid4().hex[:10]}.png"
+
+
+def item_make_main(iid: str, name: str):
+    ref, main = item_ref_path(iid, name), item_photo_path(iid)
+    if not ref.exists():
+        raise UserError("Фото не найдено")
+    if main.exists():
+        tmp = ref.with_suffix(".swap")
+        main.replace(tmp)
+        ref.replace(main)
+        tmp.replace(ref)
+    else:
+        ref.replace(main)
+
+
+def remove_item(iid: str):
+    import shutil
+    if not _CID.fullmatch(iid or ""):
+        return
+    (ITEM_DIR / f"{iid}.json").unlink(missing_ok=True)
+    (ITEM_DIR / f"{iid}.png").unlink(missing_ok=True)
+    shutil.rmtree(ITEM_DIR / f"{iid}_refs", ignore_errors=True)
+    for proj in list_all():
+        if iid in proj.get("items", []):
+            save(proj["id"], {"items": [x for x in proj["items"] if x != iid]})
