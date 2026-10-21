@@ -1,0 +1,6 @@
+{
+ "version": 39,
+ "label": "обновления одной кнопкой",
+ "notes": "Программа сама находит новые версии: слева вверху появляется кнопка «Обновить». Плюс исправлена связь с Claude.",
+ "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
+}

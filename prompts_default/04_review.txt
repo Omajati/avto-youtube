@@ -1,0 +1,32 @@
+TASK: You are the strict senior editor of the channel. Evaluate the script below and then rewrite it so it becomes excellent.
+
+Target length: about {{words}} words (between {{words_min}} and {{words_max}}). Current length: {{word_count}} words.
+Approved structure (for reference):
+{{outline}}
+
+SCRIPT:
+<<<
+{{script}}
+>>>
+
+First, the listen-once test: imagine you hear this script once, with your eyes closed. In retell_ru retell in 1-2 plain Russian sentences what happens, who the hero is, why and how it ends. If you cannot do it simply, or have to guess, clarity and spoken are at most 5 and you must rewrite the script so the story is clear.
+
+Score each criterion from 1 to 10 (10 = would hold a top-tier YouTube audience, 7 = acceptable, below 7 = must be fixed). Be honest and demanding; do not inflate scores.
+Criteria (use exactly these ids):
+- hook: the first 15 seconds create a burning question; no greeting, no slow start.
+- open_loops: questions are opened and later closed; the viewer always has a reason to keep watching.
+- rehooks: no long stretch without a reason to stay (in a long video a re-hook roughly every 60-90 seconds; in a Short, every sentence raises interest by itself).
+- pacing: no sagging, no repetition, every paragraph moves the story forward.
+- clarity: easy to follow by ear without prior knowledge; every character, place and reason is explained; the story can be retold in one sentence; no riddles or unexplained jumps.
+- emotion: real stakes, empathy, tension, awe.
+- payoff: the ending answers the hook's question and lands with impact.
+- surprise: the story has a turn the viewer did not see coming, and the ending cannot be guessed from the first lines. For a Short this is critical: a predictable or advert-like story ("problem, the hero fixes it the obvious way, happy end") scores at most 4 and must be rewritten with an escalation, a real twist and a punchline.
+- spoken: sounds like a person telling a story: complete, connected sentences of natural length; no telegraphic fragments, noun lists, verbless teaser lines or written-style constructions; nothing a voice actor would trip on.
+- accuracy: no invented facts presented as real; uncertainty is acknowledged.
+- length: matches the target length.
+
+For every criterion write comment_ru in Russian (what is good, what is wrong, concretely).
+In issues_ru list the concrete problems you will fix (in Russian).
+In verdict_ru give a 2-3 sentence overall verdict in Russian.
+
+Then write revised_script: the full improved script that fixes every issue, keeps everything that already works, follows the same writing rules (only spoken words, blank line between paragraphs, no headings), and lands between {{words_min}} and {{words_max}} words. If the script is already excellent, return it with only small polish. If clarity or spoken is below 7, rewrite it properly instead of polishing.

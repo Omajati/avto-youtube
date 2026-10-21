@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Авто ютуб</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/static/icon-180.png">
+<script>(function () { var m; try { m = localStorage.getItem("ay_theme"); } catch (e) { } m = m || "auto";
+  var dark = m === "dark" || (m === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light"; })();</script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<aside class="side">
+  <div class="logo">▶ Авто ютуб</div>
+  <div class="ver">версия от 21 октября (39): обновления одной кнопкой</div>
+  <div id="updbox"></div>
+  <nav>
+    <a href="#/new" data-nav="new">＋ Новый ролик</a>
+    <a href="#/jobs" data-nav="jobs">🎬 Ролики</a>
+    <a href="#/projects" data-nav="projects">📁 Проекты и ниши</a>
+    <a href="#/characters" data-nav="characters">🧑‍🎨 Персонажи</a>
+    <a href="#/settings" data-nav="settings">⚙️ Настройки</a>
+    <a href="#/prompts" data-nav="prompts">📝 Шаблоны сценария</a>
+    <a href="#/music" data-nav="music">🎵 Музыка</a>
+    <a href="#/balance" data-nav="balance">💰 Балансы</a>
+    <a href="#/help" data-nav="help">❓ Как пользоваться</a>
+  </nav>
+  <a href="#/balance" id="balside" class="balside"></a>
+  <div class="themesw" id="themesw" title="Оформление"><button data-th="auto">Авто</button><button data-th="light">☀️ Светлая</button><button data-th="dark">🌙 Тёмная</button></div>
+  <a href="#" id="quit" class="quit">⏻ Выключить программу</a>
+</aside>
+<div class="wrap"><div id="tabbar" class="tabbar"></div><main id="main"></main></div>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

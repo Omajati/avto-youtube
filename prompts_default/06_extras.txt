@@ -1,0 +1,15 @@
+TASK: Prepare the final materials for the video below.
+
+SCRIPT:
+<<<
+{{script}}
+>>>
+
+1. script_ru: a faithful, complete Russian translation of the whole script, paragraph by paragraph (keep the blank lines between paragraphs). The owner will read it to check the story.
+2. youtube_title: the final YouTube title (max 70 characters), curiosity-driven and honest; youtube_title_ru its translation.
+3. description: a YouTube description in English: 2 short hook paragraphs (without spoiling the ending), then 3-5 relevant hashtags on the last line.
+4. tags: 10-15 YouTube tags in English.
+5. thumbnail_text: 2-4 punchy words for the thumbnail (English); thumbnail_text_ru translation.
+6. thumbnail_prompt: an image prompt for a striking thumbnail picture (a single dramatic subject, strong emotion, high contrast, simple composition, empty space on one side for the text, no text in the image), 30-50 words. If the channel has recurring characters (see RECURRING CHARACTERS above), the thumbnail must show the main one by name with their exact look, never a random animal or a new character.
+7. music_prompt: an English prompt for instrumental background music that fits this video's mood and audience (genre, mood, tempo, instruments; no vocals, nothing that distracts from the voice), 15-30 words.
+8. music_style_ru: the same style in 2-5 Russian words for the owner's music library, for example "весёлый поп, бодрый" or "тревожный эмбиент".

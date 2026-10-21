@@ -1,0 +1,30 @@
+#!/bin/bash
+# «Авто ютуб.app»: при первом запуске и после обновления ставит программу в ~/AutoYouTube, потом открывает окно.
+RES="$(cd "$(dirname "$0")/../Resources" && pwd)"
+DEST="$HOME/AutoYouTube"
+mkdir -p "$DEST/data"
+LOG="$DEST/data/install.log"
+NEW="$(cat "$RES/payload/VERSION" 2>/dev/null)"
+OLD="$(cat "$DEST/VERSION" 2>/dev/null)"
+export AY_APP="$(cd "$(dirname "$0")/../.." && pwd)"
+# Only a newer copy inside the app is installed: an update made with the «Обновить» button is never rolled back.
+if [ "${NEW:-0}" -gt "${OLD:-0}" ] 2>/dev/null || [ ! -x "$DEST/.venv/bin/python" ]; then
+  if [ -z "$OLD" ]; then
+    MSG="Первый запуск: устанавливаю всё нужное. Это займёт 1–3 минуты, потом откроется окно программы."
+  else
+    MSG="Обновляю программу до новой версии. Это меньше минуты, потом откроется окно программы."
+  fi
+  osascript -e "display dialog \"$MSG\" with title \"Авто ютуб\" buttons {\"Хорошо\"} default button 1 giving up after 900" >/dev/null 2>&1 &
+  DLG=$!
+  echo "=== $(date) установка версии $NEW ===" >> "$LOG"
+  if ! bash "$RES/payload/setup.sh" "$RES/payload" >> "$LOG" 2>&1; then
+    kill $DLG 2>/dev/null
+    osascript -e 'display dialog "Не получилось установить программу. Проверьте интернет и запустите её ещё раз. Подробности: файл install.log в папке ~/AutoYouTube/data." with title "Авто ютуб" buttons {"OK"} default button 1 with icon stop' >/dev/null 2>&1
+    exit 1
+  fi
+  kill $DLG 2>/dev/null
+fi
+cd "$DEST" || exit 1
+# Started from the Dock the program does not see settings from the Terminal profile, such as a VPN proxy: take them over.
+while IFS= read -r v; do export "$v"; done < <("${SHELL:-/bin/zsh}" -ilc 'env' </dev/null 2>/dev/null | grep -iE '^(https?|all|no)_proxy=')
+exec ./.venv/bin/python run.py --window >> "$DEST/data/app.log" 2>&1

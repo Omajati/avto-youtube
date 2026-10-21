@@ -1,0 +1,20 @@
+TASK: Build the story structure for a {{minutes}}-minute video (about {{words}} spoken words) on this idea:
+
+{{idea}}
+
+Build a retention-first structure:
+1. HOOK (first 15 seconds, 35-45 words): open in the middle of the most intriguing moment or with a shocking, specific fact. Plant one big question the viewer can only answer by watching to the end. Do not greet, do not say "in this video", do not reveal the ending.
+2. SETUP (until ~1:30): who, where, when, and why it matters. Fast. Make us care about a person.
+3. RISING ACTION: escalating events, each raising stakes.
+4. TWISTS: 2-3 genuine turns that change how we see the story.
+5. CLIMAX: the decisive moment.
+6. RESOLUTION AND PAYOFF: answer the big question from the hook, plus a final thought that lingers. End with one short natural line inviting viewers to subscribe for more stories (no begging).
+
+Retention rules:
+- Every 60-90 seconds place a re-hook: an open loop, a foreshadowing line, or a question ("But that was not the strangest part.").
+- Keep at least two open loops active at all times; close each loop later, never leave one unresolved.
+- Give each section a clear purpose; no section may only repeat information.
+
+Also describe each main character's consistent visual appearance (age, face, hair, clothing of the era) so every image of them looks the same, and list the locations with their visual look. List every place and moment the narration takes the viewer to, not only where the main action happens: if the narrator says "winter, Leningrad, 1941", that is a location of its own (the besieged city in deep snow, period buildings and clothing, harsh grey light). Examples, historical facts, comparisons and "imagine..." moments each get the place and era they talk about, so the video travels with the story instead of staying in one room. Give each location a fixed, detailed look written so a painter could draw the identical place again and again: era, season and weather, layout, main colours and materials, architecture, key furniture and props and where they stand, the light source and time of day. Every picture set in that place will repeat this description word for word.
+
+Fill summary_ru with a clear Russian retelling of the whole planned story (6-10 sentences) and for each section give purpose_ru. hook.why_ru explains in Russian why the hook works.
