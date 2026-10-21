@@ -391,7 +391,8 @@ def job_image(jid: str, data: dict = Body(...)):
     if fix and prompt:
         prompt = _fix_prompt(prompt, fix)
     pipeline.regenerate_image(jid, data.get("kind", "scene"), int(data["index"]), prompt)
-    if j["status"] in ("done", "error", "paused"):
+    # A video waiting for the owner (for example before animation) redraws right away and stops at the same place.
+    if j["status"] in ("done", "error", "paused", "review"):
         db.update(jid, status="queued", error="")
         worker.wake()
     return {"ok": True}
