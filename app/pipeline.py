@@ -1560,7 +1560,9 @@ def anim_scenes(job_or_opts) -> list:
 def needs_anim_choice(job: dict) -> bool:
     """The owner asked to stop before animation and has not chosen the scenes yet."""
     opts = job.get("options", {})
-    return job.get("status") == "review" and bool(opts.get("anim_pause")) and not opts.get("anim_picked")
+    # Only after the script is approved: earlier review stops (topics, script) are not about animation.
+    return (job.get("status") == "review" and bool(opts.get("anim_pause")) and not opts.get("anim_picked")
+            and bool(job.get("id")) and (job_dir(job["id"]) / "approval.json").exists())
 
 
 def anim_suggest(jid: str, job: dict) -> list:
