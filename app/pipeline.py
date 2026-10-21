@@ -742,7 +742,11 @@ def _idea_block(c: Ctx) -> str:
                  + (f" and follow the owner's plan: \"{topic}\"." if topic else "."))
     elif topic:
         block = (f"The channel owner suggested this topic (it may be written in Russian):\n\"{topic}\"\n"
-                 "All ideas must be different angles on, or specific stories within, this topic.")
+                 "Stay very close to this topic: every idea must be about exactly what the owner wrote, not a "
+                 "neighbouring subject. The first idea is the owner's topic itself, turned into a video as written "
+                 "(keep every point the owner named). The other ideas are close variations of it: the same subject "
+                 "with a different hook, a different key fact or a different example, so the owner can pick the "
+                 "best wording of their own topic.")
     else:
         block = "Choose freely within the channel niche. Make the ideas diverse in era, place and type of story."
     return block + c.history_block()
@@ -751,6 +755,9 @@ def _idea_block(c: Ctx) -> str:
 def _ask_ideas(c: Ctx, n: int, avoid: list = None) -> dict:
     extra = SHORT_IDEAS_EXTRA if c.short_format else ""
     extra += f"\n\nGive exactly {n} ideas, no more and no fewer."
+    if (c.job.get("topic") or "").strip() and not c.episode:
+        extra += ("\n\nThe owner gave a topic: variety only inside that topic, never leave it for another subject."
+                  + (" The owner's topic itself is already in the list, so give new close variations of it." if avoid else ""))
     if avoid:
         extra += ("\n\nThese ideas were already proposed for this video and the owner wants NEW ones: no repeated "
                   "stories, situations or twists:\n" + "\n".join(f"- {t}" for t in avoid))
