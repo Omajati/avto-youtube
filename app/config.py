@@ -45,6 +45,7 @@ DEFAULTS = {
     "openai_model": "gpt-5",
     "niche": "real historical stories: dramatic, little-known true events from history",
     "duration_min": 10,
+    "ideas_count": 5,  # topics the writer proposes at once; more on request ("Ещё темы")
     "quality_threshold": 8.0,
     "min_criterion_score": 7,
     "max_editor_rounds": 3,

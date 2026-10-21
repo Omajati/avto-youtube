@@ -1,4 +1,4 @@
-TASK: Come up with 10 video ideas and pick the single best one.
+TASK: Come up with {{count}} video ideas and pick the single best one.
 
 {{topic_block}}
 

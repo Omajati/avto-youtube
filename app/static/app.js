@@ -195,7 +195,7 @@ async function viewNew() {
       <button class="pcard on" data-fmt="long"><div class="pic">🎬</div><div><b>Видео + шортс</b><div class="muted small">длинное видео, шортс по желанию</div></div></button>
       <button class="pcard" data-fmt="short"><div class="pic">📱</div><div><b>Только шортс</b><div class="muted small">вертикальное видео до 60 секунд</div></div></button>
     </div>
-    <label class="f">Тема ролика <span class="hint">Можно по-русски. Оставьте пустым, и программа сама придумает 10 тем и выберет самую цепляющую.</span></label>
+    <label class="f">Тема ролика <span class="hint">Можно по-русски. Оставьте пустым, и программа сама придумает 5 тем и выберет самую цепляющую (ещё темы можно попросить кнопкой).</span></label>
     <textarea id="topic" placeholder="Например: загадочное исчезновение колонии Роанок"></textarea>
     <div id="series-hint" class="banner" style="display:none;margin-top:8px"></div>
     <div class="grid2">
@@ -842,6 +842,10 @@ async function viewProject(id) {
     ${allItems.length ? `<div class="row" id="pj-items">${allItems.map(it => `<button class="cbtn ${(p.items || []).includes(it.id) ? "on" : ""}" data-pitem="${it.id}" title="${esc(it.kind)}">${itemIcon(it, 48)}<span>${esc(it.name)}</span></button>`).join("")}</div>`
       : `<p class="muted">Предметов пока нет. <a href="#/items">Добавить предмет</a></p>`}
   </div>
+  <div class="card" id="pj-golden"><h2>⭐ Копилка удачных сценариев</h2>
+    <p class="muted small">Сценарии этого проекта, которые сработали. Перед каждым новым роликом проекта сценарист изучает последние 6 (отдельно для видео и для шортсов): какие темы, первые фразы, ритм и повороты здесь заходят. Добавляйте кнопкой «⭐ В копилку удачных» на странице ролика. Ниже программа сама подсказывает хиты по статистике YouTube.</p>
+    <div id="pj-golden-list" class="muted small">Загружаю…</div>
+  </div>
   <div class="card"><h2>🎯 Образцы удачных шортсов</h2>
     <p class="muted small">Вставьте сюда тексты шортсов, которые вам нравятся и набирают просмотры: что говорят в ролике, от первой фразы до последней. Можно описать своими словами, что происходит и в чём поворот. Каждый образец отделяйте пустой строкой или чертой. Сценарист шортсов изучит, как они цепляют в первую секунду, где поворот и как бьёт концовка, и будет писать на том же уровне. Сюжеты и фразы он не копирует. Для длинных роликов это поле не используется.</p>
     <textarea data-q="short_examples" rows="8" placeholder="Например:&#10;«Мой хозяин решил побриться тёркой для сыра…» (дальше весь текст ролика)&#10;———&#10;Второй образец…">${esc(p.short_examples || "")}</textarea>
@@ -895,6 +899,20 @@ async function viewProject(id) {
     await api(`/api/projects/${id}`, { json: { items: [...main.querySelectorAll("[data-pitem].on")].map(x => x.dataset.pitem) } })
       .then(() => toast("Предметы проекта сохранены")).catch(e => toast(e.message, true));
   });
+  const loadGolden = async () => {
+    const box = $("#pj-golden-list"); if (!box) return;
+    try {
+      const g = await api(`/api/projects/${id}/golden`);
+      const kindRu = k => k === "short" ? "шортс" : "видео";
+      box.className = "";
+      box.innerHTML = (g.items.length ? `<table>${g.items.slice().reverse().map(x => `<tr><td>${x.kind === "short" ? "📱" : "🎬"}</td><td><b>${esc(x.title_ru || x.title)}</b>${x.title_ru ? `<div class="en">${esc(x.title)}</div>` : ""}${x.note_ru ? `<div class="small">💬 ${esc(x.note_ru)}</div>` : ""}<details><summary class="muted small">Текст</summary><pre class="text">${esc(x.text)}</pre></details></td><td class="small muted" style="white-space:nowrap">${kindRu(x.kind)}${x.views != null ? `<br>${x.views.toLocaleString("ru")} просм.` : ""}<br>${new Date(x.added * 1000).toLocaleDateString("ru")}</td><td><a href="#/job/${x.job}" class="small">ролик</a> <button class="sm danger" data-gdel="${x.id}">×</button></td></tr>`).join("")}</table>`
+        : `<p class="muted">Пока пусто. Откройте удачный ролик этого проекта и нажмите «⭐ В копилку удачных».</p>`)
+        + (g.suggest.length ? `<h3>Хиты по статистике, которых нет в копилке</h3><table>${g.suggest.map(x => `<tr><td>${esc(x.title)}</td><td class="small">${x.views.toLocaleString("ru")} просм. (обычно ${x.median.toLocaleString("ru")})${x.avg_view_pct ? `, досматривают ${x.avg_view_pct}%` : ""}</td><td><button class="sm" data-gadd="${x.job}:${x.kind}">⭐ Добавить</button></td></tr>`).join("")}</table>` : "");
+      box.querySelectorAll("[data-gdel]").forEach(b => b.onclick = async () => { if (!confirm("Убрать из копилки?")) return; await api(`/api/projects/${id}/golden/${b.dataset.gdel}`, { method: "DELETE" }); loadGolden(); });
+      box.querySelectorAll("[data-gadd]").forEach(b => b.onclick = async () => { const [jid, kind] = b.dataset.gadd.split(":"); await api(`/api/jobs/${jid}/golden`, { json: { kind, note: "хит по статистике" } }).catch(e => toast(e.message, true)); loadGolden(); });
+    } catch (e) { box.textContent = e.message; }
+  };
+  loadGolden();
   const langSel = main.querySelector('[data-q="language"]'), fmtSel = main.querySelector('[data-q="format"]');
   const fillVoices = async () => {
     const vsel = $("#pj-voice"); const cur = vsel.value;
@@ -1061,6 +1079,8 @@ function renderHead(d) {
   const ideaWait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked;
   const animWait = d.anim && d.anim.waiting;
   if (j.status === "review" && !ideaWait && !animWait) act.push(`<button class="primary" data-act="approve">✓ Сценарий хороший, продолжить</button>`);
+  if (j.options.project_id && d.stages.review && j.status !== "running") act.push(`<button data-gold="video" title="Сценарист будет изучать этот текст перед новыми роликами проекта">⭐ ${d.format === "short" ? "Шортс" : "Сценарий"} в копилку удачных</button>`);
+  if (j.options.project_id && d.format !== "short" && d.stages.short_script && j.status !== "running") act.push(`<button data-gold="short">⭐ Шортс в копилку</button>`);
   act.push(`<button data-open="1">📂 Открыть папку</button>`);
   act.push(`<button class="danger" data-act="delete">Удалить</button>`);
   $("#jhead").innerHTML = `
@@ -1085,6 +1105,12 @@ function renderHead(d) {
     if (a === "delete" && !confirm("Удалить этот ролик вместе со всеми файлами?")) return;
     await api(`/api/jobs/${j.id}/action`, { json: { action: a } }).catch(e => toast(e.message, true));
     if (a === "delete") location.hash = "#/jobs"; else lastStagesKey = "";
+  });
+  $("#jhead").querySelectorAll("[data-gold]").forEach(b => b.onclick = async () => {
+    const note = prompt("Чем этот текст хорош? Например: «сильный первый кадр», «смешная концовка». Можно оставить пустым.", "");
+    if (note === null) return;
+    await api(`/api/jobs/${j.id}/golden`, { json: { kind: b.dataset.gold, note } })
+      .then(() => toast("Добавлено в копилку удачных сценариев проекта")).catch(e => toast(e.message, true));
   });
   $("#jhead [data-open]").onclick = () => api("/api/open", { json: { what: "job", id: j.id } }).catch(e => toast(e.message, true));
 }
@@ -1172,6 +1198,13 @@ function renderStages(d) {
       .then(() => toast("Эффекты изменены, видео пересобирается")).catch(e => { toast(e.message, true); b.disabled = false; });
     lastStagesKey = "";
   });
+  const moreBtn = el.querySelector("#idea-more");
+  if (moreBtn) moreBtn.onclick = async () => {
+    moreBtn.disabled = true; moreBtn.textContent = "Придумываю…";
+    await api(`/api/jobs/${j.id}/ideas/more`, { method: "POST" }).then(r => toast(`Добавлено новых тем: ${r.added}`)).catch(e => toast(e.message, true));
+    moreBtn.disabled = false; moreBtn.textContent = "➕ Ещё темы";
+    lastStagesKey = "";
+  };
   const ideaBtn = el.querySelector("#idea-apply");
   if (ideaBtn) ideaBtn.onclick = async () => {
     const pick = el.querySelector('input[name="idea-pick"]:checked');
@@ -1332,9 +1365,10 @@ const RENDER = {
       ? "Тему выбрал строгий зритель: он смотрит не на «Итог» сценариста, а на то, зацепит ли первая фраза, угадывается ли концовка и сработает ли поворот." : "Тему выбрал сценарист.";
     return `${wait ? `<div class="banner info">Отметьте тему и нажмите «Взять эту тему». ★ — тема, которую предлагает программа.</div>` : ""}
     <div class="banner ok"><b>${who}</b> ${esc(r.picked_by_owner ? "" : r.reason_ru || "")}</div>
-    <table>${head}${order.slice(0, 5).map(row).join("")}</table>
-    ${order.length > 5 ? `<details><summary>Ещё ${order.length - 5} тем</summary><table>${head}${order.slice(5).map(row).join("")}</table></details>` : ""}
+    <table>${head}${order.slice(0, 10).map(row).join("")}</table>
+    ${order.length > 10 ? `<details><summary>Ещё ${order.length - 10} тем</summary><table>${head}${order.slice(10).map(row).join("")}</table></details>` : ""}
     ${busy ? "" : `<div class="row" style="margin-top:8px"><button class="${wait ? "primary" : ""}" id="idea-apply">✓ Взять эту тему</button>
+      <button id="idea-more" title="Сценарист придумает новые темы, не повторяя эти. Стоит как один запрос к ИИ, остальное не переделывается">➕ Ещё темы</button>
       ${wait ? "" : `<span class="muted small">Если тема сменится, сценарий, картинки и озвучка сделаются заново.</span>`}</div>`}
     <p class="muted small">«Итог» — средняя оценка самого сценариста (любопытство, эмоции, понятность, новизна, наглядность).</p>`;
   },
@@ -1588,6 +1622,7 @@ async function viewSettings(id) {
     ${field("niche", "Ниша канала по умолчанию", s, { type: "textarea", hint: "Можно по-русски. Например: «мистические реальные истории», «истории выживания», «загадки истории»." })}
     <div class="grid2"><div>
       ${field("duration_min", "Длительность по умолчанию, минут", s, { type: "number" })}
+      ${field("ideas_count", "Сколько тем придумывать за раз", s, { type: "number", hint: "От 3 до 10. Меньше тем — дешевле. На странице ролика можно попросить ещё столько же кнопкой «Ещё темы»" })}
       ${field("quality_threshold", "Порог качества (средняя оценка из 10)", s, { type: "number", hint: "Ниже порога редактор переписывает текст. 8 — строго, 7 — мягче." })}
     </div><div>
       ${field("min_criterion_score", "Минимум по любому пункту чек-листа", s, { type: "number" })}
@@ -2023,7 +2058,7 @@ function viewHelp() {
     </ol>
     <h2>Как делается ролик</h2>
     <ol>
-      <li><b>Выбор темы.</b> Нейросеть придумывает 10 тем, оценивает каждую по 5 пунктам и выбирает лучшую.</li>
+      <li><b>Выбор темы.</b> Нейросеть придумывает 5 тем (число меняется в Настройках, ещё темы можно попросить кнопкой), оценивает каждую по 5 пунктам и выбирает лучшую.</li>
       <li><b>Структура и хуки.</b> Хук на первые 15 секунд, повороты, удерживающие крючки каждые 1–1,5 минуты.</li>
       <li><b>Текст.</b> Около 150 слов на минуту ролика.</li>
       <li><b>Проверка редактором.</b> Отдельный запрос оценивает текст по 10 пунктам и переписывает, пока оценка не выше порога. Все оценки и комментарии на русском.</li>

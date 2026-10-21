@@ -336,7 +336,7 @@ SCHEMA_IDEA_CRITIC = {
 
 SHORT_IDEAS_EXTRA = """
 
-SHORTS: for every idea also give first_line (the exact first spoken sentence, in the video's language), twist (the unexpected turn in one sentence) and twist_ru (the same in Russian). An idea without a real twist, or whose ending can be guessed from the first line, is worthless: replace it. Make the 10 ideas different in situation, conflict and type of twist (reveal, role reversal, ironic backfire, absurd solution, rival, failure that turns into a win)."""
+SHORTS: for every idea also give first_line (the exact first spoken sentence, in the video's language), twist (the unexpected turn in one sentence) and twist_ru (the same in Russian). An idea without a real twist, or whose ending can be guessed from the first line, is worthless: replace it. Make the ideas different in situation, conflict and type of twist (reveal, role reversal, ironic backfire, absurd solution, rival, failure that turns into a win)."""
 
 IDEA_CRITIC = """You are a jaded 20-year-old who scrolls YouTube Shorts for hours and swipes away from anything boring, predictable or advert-like within 2 seconds. You are judging ideas for one channel.
 
@@ -658,6 +658,26 @@ class Ctx:
                 "last line lands, and reach the same level. Never copy their plots, jokes or lines:\n<<<\n"
                 + ex[:6000] + "\n>>>")
 
+    def golden_block(self, prompt_file: str) -> str:
+        """Scripts of this project that the owner marked as successful: the bar for ideas and writing."""
+        if prompt_file not in GOLDEN_STAGES or not self.project.get("id"):
+            return ""
+        from . import projects
+        kind = "short" if (self.short_format or prompt_file == "07_short.txt") else "video"
+        items = [x for x in projects.list_golden(self.project["id"]) if x.get("kind") == kind][-GOLDEN_IN_PROMPT:]
+        if not items:
+            return ""
+        limit = 2500 if kind == "short" else 1500  # long videos: the title and the opening, where viewers stay or leave
+        parts = []
+        for x in reversed(items):
+            head = f"### {x.get('title', '')}" + (f" ({x['views']} views)" if x.get("views") else "")
+            note = f"\nWhy the owner likes it (Russian): {x['note_ru']}" if x.get("note_ru") else ""
+            parts.append(f"{head}{note}\n{x.get('text', '')[:limit]}")
+        return ("\n\nSUCCESSFUL VIDEOS OF THIS CHANNEL (the owner marked them as what works here; newest first"
+                + ("" if kind == "short" else ", openings only") + "). Study why they work: the kind of topic, the hook, "
+                "the rhythm, how the story turns, the voice. Aim for the same level and the same audience; never repeat "
+                "their topics, plots or lines:\n<<<\n" + "\n\n".join(parts) + "\n>>>")
+
     def lessons_block(self) -> str:
         """Rules learned from this project's own YouTube numbers (see analytics.py)."""
         if not self.project.get("id"):
@@ -686,7 +706,7 @@ class Ctx:
                   + (KIDS_OVERRIDE if self.project.get("made_for_kids")
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
-                  + self.lessons_block())
+                  + self.lessons_block() + self.golden_block(prompt_file))
         user = fill(load_prompt(prompt_file), niche=self.niche, minutes=max(1, int(self.minutes)), words=self.words,
                     words_min=int(self.words * 0.9), words_max=int(self.words * 1.1), **values) + extra
         result = llm.call_json(self.settings, system, user, schema, self.usage, max_tokens)
@@ -696,27 +716,50 @@ class Ctx:
 
 # ---------------------------------------------------------------- stages
 
-def st_idea(c: Ctx):
+GOLDEN_STAGES = ("01_ideas.txt", "02_outline.txt", "03_script.txt", "04_review.txt", "07_short.txt")
+GOLDEN_IN_PROMPT = 6
+
+
+def ideas_count(settings: dict) -> int:
+    try:
+        return max(3, min(int(float(settings.get("ideas_count") or 5)), 10))
+    except (TypeError, ValueError):
+        return 5
+
+
+def _idea_block(c: Ctx) -> str:
     topic = (c.job.get("topic") or "").strip()
     if not topic and c.episode:
         from . import projects
         topic = projects.plan_line(c.project, c.episode)
     if c.episode:
-        block = (f"This is episode {c.episode} of the series. All 10 ideas are possible plots for this episode that "
+        block = (f"This is episode {c.episode} of the series. All ideas are possible plots for this episode that "
                  "continue the series naturally (see SERIES above)"
                  + (f" and follow the owner's plan: \"{topic}\"." if topic else "."))
     elif topic:
         block = (f"The channel owner suggested this topic (it may be written in Russian):\n\"{topic}\"\n"
-                 "All 10 ideas must be different angles on, or specific stories within, this topic.")
+                 "All ideas must be different angles on, or specific stories within, this topic.")
     else:
-        block = "Choose freely within the channel niche. Make the 10 ideas diverse in era, place and type of story."
-    block += c.history_block()
+        block = "Choose freely within the channel niche. Make the ideas diverse in era, place and type of story."
+    return block + c.history_block()
+
+
+def _ask_ideas(c: Ctx, n: int, avoid: list = None) -> dict:
+    extra = SHORT_IDEAS_EXTRA if c.short_format else ""
+    extra += f"\n\nGive exactly {n} ideas, no more and no fewer."
+    if avoid:
+        extra += ("\n\nThese ideas were already proposed for this video and the owner wants NEW ones: no repeated "
+                  "stories, situations or twists:\n" + "\n".join(f"- {t}" for t in avoid))
+    return c.ask("01_ideas.txt", SCHEMA_IDEAS, 16000, extra=extra, topic_block=_idea_block(c), count=n)
+
+
+def st_idea(c: Ctx):
+    n = ideas_count(c.settings)
     if c.demo:
         r = _demo("idea")
     else:
-        c.log("Придумываю 10 тем и выбираю лучшую…")
-        r = c.ask("01_ideas.txt", SCHEMA_IDEAS, 16000, extra=SHORT_IDEAS_EXTRA if c.short_format else "",
-                  topic_block=block)
+        c.log(f"Придумываю {n} тем и выбираю лучшую…")
+        r = _ask_ideas(c, n)
     ideas = r.get("ideas") or []
     if not ideas:
         raise UserError("Модель не предложила ни одной темы. Запустите шаг ещё раз.")
@@ -735,6 +778,27 @@ def st_idea(c: Ctx):
     db.update(c.id, options=c.opts)
     c.log(f"Выбрана тема: {chosen.get('title_ru') or chosen['title']}")
     write_json(c.out("idea"), r)
+
+
+def more_ideas(jid: str) -> int:
+    """The owner asked for more topics: a few new ones are added to the list, nothing else changes."""
+    job = db.get(jid)
+    d = job_dir(jid)
+    r = read_json(d / "idea.json")
+    if not job or not r:
+        raise UserError("Темы ещё не готовы.")
+    c = Ctx(job)
+    n = ideas_count(c.settings)
+    old = r.get("ideas") or []
+    new = (_ask_ideas(c, n, [f"{x.get('title', '')}: {x.get('premise', '')[:160]}" for x in old]).get("ideas") or [])[:n]
+    for idea in new:
+        sc = idea.get("scores") or {}
+        idea["total"] = round(sum(sc.values()) / max(len(sc), 1), 1)
+        idea["more"] = True
+    r["ideas"] = old + new
+    write_json(d / "idea.json", r)
+    c.log(f"Добавлено ещё {len(new)} тем по вашей просьбе.")
+    return len(new)
 
 
 def _critic_pick(c: Ctx, ideas: list, r: dict, idx: int) -> int:

@@ -458,6 +458,78 @@ def job_effects(jid: str, data: dict = Body(...)):
     return {"ok": True}
 
 
+@app.post("/api/jobs/{jid}/ideas/more")
+def job_more_ideas(jid: str):
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
+    return {"added": pipeline.more_ideas(jid)}
+
+
+@app.post("/api/jobs/{jid}/golden")
+def job_golden(jid: str, data: dict = Body(...)):
+    """Puts this video's script into its project's library of successful scripts."""
+    j = _job_or_404(jid)
+    pid = j["options"].get("project_id")
+    if not pid or not projects.get(pid):
+        raise UserError("Ролик сделан без проекта. Копилка удачных сценариев ведётся для каждого проекта отдельно.")
+    d = pipeline.job_dir(jid)
+    kind = data.get("kind", "video")
+    if kind == "short":
+        s = pipeline.read_json(d / "short_script.json") or {}
+        title, text, why = s.get("title", ""), s.get("script", ""), s.get("why_ru", "")
+        title_ru = s.get("title_ru", "")
+    else:
+        rv = pipeline.read_json(d / "review.json") or {}
+        title, text = j.get("title", ""), rv.get("final_script", "")
+        title_ru = j["options"].get("title_ru", "")
+        idea = pipeline.read_json(d / "idea.json") or {}
+        try:
+            why = idea["ideas"][idea["chosen_index"]].get("premise_ru", "")
+        except (KeyError, IndexError, TypeError):
+            why = ""
+        if j["options"].get("format") == "short":
+            kind = "short"
+    if not text:
+        raise UserError("У ролика ещё нет готового текста.")
+    stats = (pipeline.read_json(d / "stats.json", {}) or {}).get("short" if kind == "short" and j["options"].get("format") != "short" else "video") or {}
+    entry = projects.add_golden(pid, {"job": jid, "kind": kind, "title": title, "title_ru": title_ru,
+                                      "text": text, "why_ru": why, "note_ru": (data.get("note") or "").strip()[:500],
+                                      "views": stats.get("views")})
+    return {"ok": True, "id": entry["id"]}
+
+
+@app.get("/api/projects/{pid}/golden")
+def project_golden(pid: str):
+    """The library plus hits from the YouTube numbers that are not in it yet (views well above the usual)."""
+    items = projects.list_golden(pid)
+    have = {(x.get("job"), x.get("kind")) for x in items}
+    suggest = []
+    try:
+        vids = analytics.project_videos(pid)
+    except Exception:
+        vids = []
+    for kind in ("long", "shorts"):
+        group = [v for v in vids if v["kind"] == kind and v.get("views") is not None]
+        if len(group) < 3:
+            continue
+        views = sorted(v["views"] for v in group)
+        median = views[len(views) // 2]
+        for v in sorted(group, key=lambda v: v["views"], reverse=True)[:5]:
+            gk = "short" if kind == "shorts" else "video"
+            src = "short" if kind == "shorts" and (db.get(v["job_id"]) or {}).get("options", {}).get("format") != "short" else "video"
+            if v["views"] >= max(median * 1.5, 1) and (v["job_id"], gk) not in have:
+                suggest.append({"job": v["job_id"], "kind": src, "title": v["title"], "views": v["views"],
+                                "avg_view_pct": v.get("avg_view_pct"), "median": median})
+    return {"items": items, "suggest": suggest}
+
+
+@app.delete("/api/projects/{pid}/golden/{gid}")
+def project_golden_delete(pid: str, gid: str):
+    projects.remove_golden(pid, gid)
+    return {"ok": True}
+
+
 @app.post("/api/jobs/{jid}/speed")
 def job_speed(jid: str, data: dict = Body(...)):
     """Speeds up a finished video or Short (or puts the original back). Free: FFmpeg on this computer."""
@@ -1032,7 +1104,7 @@ def open_folder(data: dict = Body(...)):
 
 PROMPT_TITLES = {
     "00_system.txt": "Общие правила для нейросети (ниша, стиль, язык)",
-    "01_ideas.txt": "Шаг 1. Придумать 10 тем и выбрать лучшую",
+    "01_ideas.txt": "Шаг 1. Придумать темы (по умолчанию 5) и выбрать лучшую",
     "02_outline.txt": "Шаг 2. Структура: хук, повороты, удерживающие крючки",
     "03_script.txt": "Шаг 3. Написать текст",
     "04_review.txt": "Шаг 4. Редактор: чек-лист и переписывание",

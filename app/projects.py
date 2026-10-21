@@ -640,3 +640,35 @@ def remove_item(iid: str):
     for proj in list_all():
         if iid in proj.get("items", []):
             save(proj["id"], {"items": [x for x in proj["items"] if x != iid]})
+
+
+# ---------------------------------------------------------------- the project's library of successful scripts
+# The owner marks videos that worked; the writer studies them before writing new ones for this project.
+
+GOLDEN_MAX = 30
+
+
+def _golden_file(pid: str):
+    d = PROJ_DIR / _path(pid).stem
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "golden.json"
+
+
+def list_golden(pid: str) -> list:
+    try:
+        return json.loads(_golden_file(pid).read_text("utf-8"))
+    except (OSError, ValueError):
+        return []
+
+
+def add_golden(pid: str, entry: dict) -> dict:
+    items = [x for x in list_golden(pid) if not (x.get("job") == entry.get("job") and x.get("kind") == entry.get("kind"))]
+    entry = {**entry, "id": uuid.uuid4().hex[:10], "added": time.time()}
+    items = (items + [entry])[-GOLDEN_MAX:]
+    _golden_file(pid).write_text(json.dumps(items, ensure_ascii=False, indent=1), "utf-8")
+    return entry
+
+
+def remove_golden(pid: str, gid: str):
+    items = [x for x in list_golden(pid) if x.get("id") != gid]
+    _golden_file(pid).write_text(json.dumps(items, ensure_ascii=False, indent=1), "utf-8")
