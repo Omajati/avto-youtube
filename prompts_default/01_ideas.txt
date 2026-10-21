@@ -3,11 +3,11 @@ TASK: Come up with {{count}} video ideas and pick the single best one.
 {{topic_block}}
 
 A great idea for this channel:
-- is a real story with a clear protagonist, a goal or threat, and stakes a viewer feels;
+- fits the channel niche exactly: its kind of topics, its format and its host or characters (for a story channel: a real story with a clear protagonist, a goal or threat, and stakes a viewer feels);
 - contains a genuine mystery, twist or "wait, what?" moment that can carry a {{minutes}}-minute video;
 - can be summarized in one curiosity-provoking sentence that makes people need to click;
 - is not overdone on YouTube (avoid the 20 most famous stories everyone already knows, unless the angle is fresh);
-- can be illustrated with paintings of people, places and moments (no need for archival footage).
+- can be illustrated with pictures of people, places and moments (no need for archival footage).
 
 For every idea give:
 - title: a clickable YouTube title (max 70 characters, no clickbait lies, no ALL CAPS);

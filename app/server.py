@@ -171,6 +171,15 @@ def _short_seconds(v) -> int:
         return 50
 
 
+def _job_niche(sent, own: str) -> str:
+    """The niche typed on the new-video page wins; if it is the project's own niche with its line breaks lost
+    (older pages showed it in a one-line field), the original text with its structure is kept."""
+    sent = (sent or "").strip()
+    if not sent or "".join(sent.split()) == "".join((own or "").split()):
+        return own
+    return sent
+
+
 @app.post("/api/jobs")
 def create_job(data: dict = Body(...)):
     s = load_settings()
@@ -185,7 +194,7 @@ def create_job(data: dict = Body(...)):
         "review_pause": bool(data.get("review_pause", False)),
         "idea_pause": bool(data.get("idea_pause", False)),
         "duration_min": float(data.get("duration_min") or proj.get("duration_min") or s["duration_min"]),
-        "niche": (data.get("niche") or "").strip() or proj.get("niche") or s["niche"],
+        "niche": _job_niche(data.get("niche"), proj.get("niche") or s["niche"]),
         "demo": bool(data.get("demo", False)),
         "channel_id": (data.get("channel_id") or "").strip() or proj.get("channel_id", ""),
         "subs_video": bool(data.get("subs_video", proj.get("subs_video", s.get("subtitles_long")))),

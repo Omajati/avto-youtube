@@ -521,7 +521,11 @@ class Ctx:
         lines = "\n".join(f"- {self.char_name(ch)} ({ch.get('role') or 'recurring character'}): "
                           + (f"Owner's description, the main source about who this character is and what he talks "
                              f"about (Russian): {ch['description_ru']} " if (ch.get("description_ru") or "").strip() else "")
-                          + f"{ch.get('personality', '')} Looks: {ch.get('appearance', '')}"
+                          + (f"(Older automatic summary, the owner's description and manner of speech win where they "
+                             f"differ: {ch.get('personality', '')}) " if ch.get("personality") and (
+                                 (ch.get("description_ru") or "").strip() or (ch.get("speech_ru") or "").strip())
+                             else f"{ch.get('personality', '')} ")
+                          + f"Looks: {ch.get('appearance', '')}"
                           + (f" Owner's additions, use them when they fit the scene (may be in Russian): {ch['extra_ru']}"
                              if ch.get("extra_ru") else "")
                           + (f" MANNER OF SPEECH, write every line of this character (the whole narration when this character is the "
@@ -656,6 +660,10 @@ class Ctx:
             return ""
         ex = (self.project.get("short_examples") or "").strip()
         if not ex:
+            if any((ch.get("speech_ru") or "").strip() for ch in self.characters):
+                # The built-in samples are calm science explainers: next to a character with his own manner
+                # they pull the script towards a textbook voice and textbook topics.
+                return ""
             return ("\n\nEXAMPLES OF THE REQUIRED WRITING LEVEL (only the quality bar: how sentences connect, how the "
                     "answer is delayed, how exact the comparison is, how the ending lands; never reuse their topics, "
                     "facts or jokes, and follow this channel's own niche and characters):\n<<<\n"
@@ -719,7 +727,11 @@ class Ctx:
                 "must sound unmistakably like him: his tone, his pet words and turns of phrase, his way of addressing "
                 "the viewer, his humour. Use several of his pet words in every script and build sentences the way he "
                 "talks. A neutral, polite or textbook narrator voice is a failure. Do not copy the sample lines word "
-                "for word; write new lines in the same manner. His slang is allowed and wanted, but no hard swearing.")
+                "for word; write new lines in the same manner. His slang is allowed and wanted, but no hard swearing. "
+                "This voice rule beats the generic writing rules of the task (for example \"use second person "
+                "sparingly\" or sensory description). A short scene from the character's own life (a passenger, "
+                "a day at work) is allowed as his way of telling, when his description or the niche suggests it; "
+                "facts presented as real stay true.")
         if prompt_file == "01_ideas.txt":
             text += ("\nTopics come from this character's world as the owner described him: everyday, relatable things "
                      "any viewer knows from their own life and that fit his job and life as described, seen through his eyes and told as his bitter truth or as a lie he exposes. "
@@ -731,12 +743,15 @@ class Ctx:
         return text
 
     def ask(self, prompt_file: str, schema: dict, max_tokens: int = 32000, extra: str = "", **values) -> dict:
-        system = (fill(load_prompt("00_system.txt"), niche=self.niche) + LANG_OVERRIDE.get(self.lang, "")
+        lang = LANG_OVERRIDE.get(self.lang, "")
+        if self.short_format:  # the line about the extra Short is for long videos only
+            lang = "\n".join(x for x in lang.split("\n") if not x.startswith("- The Short is "))
+        system = (fill(load_prompt("00_system.txt"), niche=self.niche) + lang
                   + (SHORT_OVERRIDE.format(seconds=self.short_seconds, words=self.words) if self.short_format else "")
                   + (KIDS_OVERRIDE if self.project.get("made_for_kids")
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
-                  + self.lessons_block() + self.golden_block(prompt_file))
+                  + self.lessons_block() + self.golden_block(prompt_file) + OWNER_FIRST)
         user = fill(load_prompt(prompt_file), niche=self.niche, minutes=max(1, int(self.minutes)), words=self.words,
                     words_min=int(self.words * 0.9), words_max=int(self.words * 1.1), **values) + extra \
             + self.voice_rule(prompt_file)
@@ -749,6 +764,9 @@ class Ctx:
 
 GOLDEN_STAGES = ("01_ideas.txt", "02_outline.txt", "03_script.txt", "04_review.txt", "07_short.txt")
 GOLDEN_IN_PROMPT = 6
+OWNER_FIRST = ("\n\nPRIORITY: the channel niche above and the characters' descriptions and manner of speech are the "
+               "owner's own rules. Where they differ from the general rules of this prompt (topics, tone, audience, "
+               "structure, how the narrator talks), the owner's rules win.")
 VOICE_STAGES = ("01_ideas.txt", "02_outline.txt", "03_script.txt", "04_review.txt", "07_short.txt")
 
 
@@ -776,7 +794,8 @@ def _idea_block(c: Ctx) -> str:
                  "with a different hook, a different key fact or a different example, so the owner can pick the "
                  "best wording of their own topic.")
     else:
-        block = "Choose freely within the channel niche. Make the ideas diverse in era, place and type of story."
+        block = ("Choose freely within the channel niche and follow its rules about topics exactly. Make the ideas "
+                 "diverse within those rules.")
     return block + c.history_block()
 
 
