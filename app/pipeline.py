@@ -45,6 +45,7 @@ CRITERIA_RU = {
     "spoken": "Звучит естественно вслух",
     "accuracy": "Достоверность фактов",
     "length": "Длина",
+    "voice": "Манера речи героя",
 }
 
 WORDS_PER_MIN = 150
@@ -704,6 +705,25 @@ class Ctx:
     def data(self, stage: str):
         return read_json(self.out(stage))
 
+    def voice_rule(self, prompt_file: str) -> str:
+        """The owner described how a character talks: the writer and the editor must keep that voice, not a
+        neutral narrator's. Repeated at the end of the task, where the model pays the most attention."""
+        talk = [ch for ch in self.characters if (ch.get("speech_ru") or "").strip()]
+        if not talk or prompt_file not in VOICE_STAGES:
+            return ""
+        who = "\n".join(f"- {self.char_name(ch)}: {ch['speech_ru'].strip()}" for ch in talk)
+        text = ("\n\nVOICE OF THE CHARACTER (most important style rule, the owner wrote it in Russian):\n" + who + "\n"
+                "Every line this character says, and the whole narration if this character is the host or narrator, "
+                "must sound unmistakably like him: his tone, his pet words and turns of phrase, his way of addressing "
+                "the viewer, his humour. Use several of his pet words in every script and build sentences the way he "
+                "talks. A neutral, polite or textbook narrator voice is a failure. Do not copy the sample lines word "
+                "for word; write new lines in the same manner. His slang is allowed and wanted, but no hard swearing.")
+        if prompt_file == "04_review.txt":
+            text += ("\nAdd the criterion voice: does the script sound like this character (10) or like a neutral "
+                     "narrator (at most 4)? Below 7 means revised_script must be rewritten in his voice. "
+                     "Never smooth his slang or pet words out when you polish.")
+        return text
+
     def ask(self, prompt_file: str, schema: dict, max_tokens: int = 32000, extra: str = "", **values) -> dict:
         system = (fill(load_prompt("00_system.txt"), niche=self.niche) + LANG_OVERRIDE.get(self.lang, "")
                   + (SHORT_OVERRIDE.format(seconds=self.short_seconds, words=self.words) if self.short_format else "")
@@ -712,7 +732,8 @@ class Ctx:
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
                   + self.lessons_block() + self.golden_block(prompt_file))
         user = fill(load_prompt(prompt_file), niche=self.niche, minutes=max(1, int(self.minutes)), words=self.words,
-                    words_min=int(self.words * 0.9), words_max=int(self.words * 1.1), **values) + extra
+                    words_min=int(self.words * 0.9), words_max=int(self.words * 1.1), **values) + extra \
+            + self.voice_rule(prompt_file)
         result = llm.call_json(self.settings, system, user, schema, self.usage, max_tokens)
         self.save_usage()
         return result
@@ -722,6 +743,7 @@ class Ctx:
 
 GOLDEN_STAGES = ("01_ideas.txt", "02_outline.txt", "03_script.txt", "04_review.txt", "07_short.txt")
 GOLDEN_IN_PROMPT = 6
+VOICE_STAGES = ("02_outline.txt", "03_script.txt", "04_review.txt", "07_short.txt")
 
 
 def ideas_count(settings: dict) -> int:
@@ -919,6 +941,8 @@ def _evaluate(c: Ctx, script: str, round_no: int) -> dict:
         c.log(f"Редактор: раунд {round_no}, проверяю по чек-листу…")
         r = c.ask("04_review.txt", SCHEMA_REVIEW, 32000, outline=_outline_text(c), script=script,
                   word_count=word_count(script))
+    if not c.voice_rule("04_review.txt"):  # voice is judged only when the owner described a manner of speech
+        r["scores"] = [s for s in r.get("scores", []) if s.get("criterion") != "voice"]
     scores = {s["criterion"]: s for s in r.get("scores", []) if s.get("criterion") in CRITERIA_RU}
     values = [max(1, min(10, int(s["score"]))) for s in scores.values()] or [0]
     r["overall"] = round(statistics.mean(values), 2)
