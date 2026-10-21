@@ -1749,26 +1749,21 @@ async function viewSettings(id) {
     <p class="muted small">Шортсы выкладываются в Instagram как рилсы с подписью и хэштегами. Видео идёт прямо с вашего компьютера в Instagram. Если вы в России, при выкладке должен быть включён VPN.</p>
     ${s.ig_username ? `<div class="banner ok">✅ Подключён аккаунт <b>@${esc(s.ig_username)}</b>${s.ig_page ? ` (страница Facebook «${esc(s.ig_page)}»)` : ""}. <button class="sm danger" id="ig-off">Отключить</button></div>` : ""}
     <details ${s.ig_username ? "" : "open"}><summary><b>Как подключить (один раз, ~10 минут)</b></summary>
+      <p class="small"><b>Важно:</b> выкладывать видео прямо с компьютера Meta разрешает только при подключении через страницу Facebook. Маркер со страницы «Настройка API для входа в Instagram» для выкладки не подходит.</p>
       <ol class="small">
-        <li>В приложении Instagram: Настройки → «Тип аккаунта и инструменты» → <b>«Переключиться на профессиональный аккаунт»</b> → «Автор». Это бесплатно. Страница Facebook не нужна.</li>
-        <li>Откройте <a href="https://developers.facebook.com/apps" target="_blank">developers.facebook.com/apps</a> и своё приложение (если его нет: <b>Создать приложение</b>, тип «Бизнес»). Слева <b>Instagram</b> → <b>«Настройка API для входа в Instagram»</b>.</li>
-        <li>Сделайте свой Instagram тестировщиком: слева <b>«Роли в приложении» → «Роли»</b> → «Добавить людей» → <b>«Тестировщик Instagram»</b>, впишите ник Instagram. Потом примите приглашение: откройте <a href="https://www.instagram.com/accounts/manage_access/" target="_blank">instagram.com → Приложения и сайты</a> → вкладка <b>«Приглашения тестировщиков»</b> → «Принять».</li>
-        <li>Вернитесь на «Настройка API для входа в Instagram». В шаге 1 нажмите <b>«Добавить аккаунт»</b>, войдите в Instagram и разрешите доступ. Рядом с аккаунтом нажмите <b>«Сгенерировать маркер»</b> и скопируйте его целиком (начинается с IG).</li>
-        <li>Вставьте маркер в поле справа. В поле «Секрет» можно вставить <b>«Секрет приложения Instagram»</b> с той же страницы (кнопка «Показать»), это необязательно. Нажмите «Подключить Instagram». Программа сама продлевает маркер, секрет не сохраняет.</li>
-      </ol>
-      <details><summary class="muted small">Другой способ: через страницу Facebook и Graph API Explorer</summary>
-      <ol class="small">
-        <li>Привяжите профессиональный Instagram к странице Facebook (настройки страницы → «Связанные аккаунты» → Instagram → Подключить).</li>
-        <li>В приложении выберите Instagram → <b>«Настройка API для входа на Facebook»</b>. «Настройки приложения» → «Основное»: скопируйте <b>ID приложения</b> и <b>Секрет приложения</b> в поля ниже.</li>
-        <li>В <a href="https://developers.facebook.com/tools/explorer" target="_blank">Graph API Explorer</a> выберите приложение и «User Token», добавьте разрешения <b>instagram_basic</b>, <b>instagram_content_publish</b>, <b>pages_show_list</b>, <b>pages_read_engagement</b>, <b>business_management</b>, нажмите Generate Access Token, отметьте страницу и Instagram. Токен вставьте в поле справа.</li>
-      </ol></details></details>
+        <li>В приложении Instagram: Настройки → «Тип аккаунта и инструменты» → <b>«Переключиться на профессиональный аккаунт»</b> → «Автор». Это бесплатно.</li>
+        <li>Привяжите Instagram к странице Facebook. Если страницы нет, создайте её на <a href="https://www.facebook.com/pages/create" target="_blank">facebook.com/pages/create</a> (подойдёт любое название). В настройках страницы: «Связанные аккаунты» → Instagram → <b>Подключить</b>.</li>
+        <li>В кабинете приложения на <a href="https://developers.facebook.com/apps" target="_blank">developers.facebook.com/apps</a> слева: Instagram → <b>«Настройка API для входа на Facebook»</b>. Затем «Настройки приложения» → «Основное»: скопируйте <b>ID приложения</b> и <b>Секрет приложения</b> в поля ниже. Это не те ID и секрет, что на странице Instagram.</li>
+        <li>Откройте <a href="https://developers.facebook.com/tools/explorer" target="_blank">Graph API Explorer</a>. Справа выберите своё приложение и «User Token». В «Permissions» добавьте: <b>instagram_basic</b>, <b>instagram_content_publish</b>, <b>pages_show_list</b>, <b>pages_read_engagement</b>, <b>business_management</b>. Нажмите <b>Generate Access Token</b>, войдите, отметьте свою страницу и аккаунт Instagram. Скопируйте токен (начинается с EAA) в поле справа.</li>
+        <li>Нажмите «Подключить через Facebook». Программа сама сделает токен постоянным, секрет не сохраняет.</li>
+      </ol></details>
     <div class="grid2"><div>
-      <label class="f">Секрет приложения <span class="hint">необязательно для маркера Instagram</span></label><input type="password" id="ig-secret" autocomplete="off">
-      <label class="f">App ID <span class="hint">только для способа через Facebook</span></label><input type="text" id="ig-app" autocomplete="off">
+      <label class="f">Секрет приложения</label><input type="password" id="ig-secret" autocomplete="off">
+      <label class="f">ID приложения (App ID)</label><input type="text" id="ig-app" autocomplete="off">
     </div><div>
-      <label class="f">Маркер доступа (токен)</label><textarea id="ig-token" rows="4" autocomplete="off" placeholder="IGAA…"></textarea>
+      <label class="f">Маркер доступа (токен)</label><textarea id="ig-token" rows="4" autocomplete="off" placeholder="EAA…"></textarea>
     </div></div>
-    <div class="row" style="margin:10px 0"><button id="ig-connect">${s.ig_username ? "Подключить заново" : "Подключить Instagram"}</button><span id="ig-r" class="muted small"></span></div>
+    <div class="row" style="margin:10px 0"><button id="ig-connect">${s.ig_username ? "Подключить заново через Facebook" : "Подключить через Facebook"}</button><span id="ig-r" class="muted small"></span></div>
     <div class="grid2"><div>
       ${field("ig_auto", "Выкладывать в Instagram сам, как только ролик готов", s, { type: "select", options: [["false", "Нет, только по кнопке на странице ролика"], ["true", "Да, автоматически"]] })}
     </div><div>

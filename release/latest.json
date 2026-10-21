@@ -1,6 +1,6 @@
 {
- "version": 48,
- "label": "ещё одно исправление выкладки в Instagram",
- "notes": "Исправлена выкладка рилсов в Instagram (ошибка «video_url is required»).",
+ "version": 49,
+ "label": "Instagram через страницу Facebook",
+ "notes": "Instagram: выкладка с компьютера работает только при подключении через страницу Facebook, инструкция обновлена.",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

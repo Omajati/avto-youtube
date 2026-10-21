@@ -38,7 +38,7 @@ def connect(app_id: str, app_secret: str, user_token: str) -> dict:
             # A page token made from a long-lived user token does not expire.
             save_settings({"ig_token": p.get("access_token") or long_user, "ig_user_id": ig["id"],
                            "ig_username": ig.get("username", ""), "ig_page": p.get("name", ""),
-                           "ig_token_time": time.time()})
+                           "ig_login": "", "ig_token_time": time.time()})
             return {"username": ig.get("username", ""), "page": p.get("name", "")}
     raise UserError("Не нашёл Instagram-аккаунт. Проверьте, что аккаунт Instagram профессиональный и привязан к "
                     "странице Facebook, и что при создании токена вы отметили эту страницу и все разрешения из инструкции.")
@@ -132,6 +132,12 @@ def publish(video: Path, text: str, say=None) -> dict:
     token, uid = _auth(s)
     say = say or (lambda msg: None)
     ig_login = s.get("ig_login") == "instagram"
+    if ig_login:
+        # Meta allows uploading a file from the computer only for apps connected through Facebook Login;
+        # the Instagram-login API takes a public video link only, and the video is never put on a public host.
+        raise UserError("Это подключение Instagram (маркер со страницы «Настройка API для входа в Instagram») не умеет "
+                        "загружать видео с компьютера: так устроено у Meta. Подключите Instagram заново способом "
+                        "через страницу Facebook (Настройки → Instagram → «Подключить через Facebook»).")
     base = f"{IG_GRAPH}/{IG_VERSION}" if ig_login else GRAPH
     rupload = f"https://rupload.facebook.com/ig-api-upload/{IG_VERSION}" if ig_login else RUPLOAD
     params = {"media_type": "REELS", "upload_type": "resumable", "caption": text, "share_to_feed": "true",
