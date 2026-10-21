@@ -1960,7 +1960,13 @@ async function checkUpdate(byHand) {
   let u;
   const box = $("#updbox");
   try { u = await api("/api/update/check"); }
-  catch (e) { if (byHand) toast("Не удалось проверить обновления: " + e.message, true); return; }
+  catch (e) {
+    // GitHub not reachable right now (often without VPN): keep the link so it can be tried again.
+    box.innerHTML = `<a href="#" class="updcheck">Проверить обновления</a>`;
+    box.querySelector("a").onclick = async ev => { ev.preventDefault(); await checkUpdate(true); };
+    if (byHand) toast("Не удалось проверить обновления: " + e.message + " Если вы в России, включите VPN и нажмите ещё раз.", true);
+    return;
+  }
   if (!u.available) {
     box.innerHTML = `<a href="#" class="updcheck">Проверить обновления</a>`;
     box.querySelector("a").onclick = async ev => { ev.preventDefault(); await checkUpdate(true); if (!$("#updbox .updbtn")) toast(`У вас последняя версия (${u.current})`); };
@@ -1989,7 +1995,7 @@ async function runUpdate() {
   }, 1000);
 }
 checkUpdate();
-setInterval(checkUpdate, 6 * 3600 * 1000);
+setInterval(checkUpdate, 30 * 60 * 1000);
 
 // ------------------------------------------------------------------ balances
 const BAL_SHORT = { anthropic: "Claude", openai: "OpenAI", elevenlabs: "ElevenLabs", fal: "fal.ai", replicate: "Replicate", together: "Together", runware: "Runware" };

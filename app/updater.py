@@ -19,6 +19,9 @@ from .net import UserError
 REPO = "Omajati/avto-youtube"
 LATEST = f"https://raw.githubusercontent.com/{REPO}/main/release/latest.json"
 CODE_ZIP = f"https://codeload.github.com/{REPO}/zip/refs/heads/main"
+# Spare addresses: raw.githubusercontent.com and codeload are not reachable from every network.
+LATEST_API = f"https://api.github.com/repos/{REPO}/contents/release/latest.json"
+CODE_ZIP_API = f"https://api.github.com/repos/{REPO}/zipball/main"
 BUNDLE_ID = "ru.autoyoutube.app"
 # What an update replaces in ~/AutoYouTube (the data folder is never touched).
 PARTS = ["app", "prompts_default", "run.py", "requirements.txt", "README.md", "О программе Авто ютуб.txt"]
@@ -43,8 +46,16 @@ def can_install() -> bool:
     return sys.platform == "darwin" and (APP_DIR / ".venv").exists()
 
 
+def _latest() -> dict:
+    try:
+        return net.request("GitHub", "GET", LATEST, tries=1, timeout=15, params={"t": int(time.time() // 300)}).json()
+    except UserError:
+        return net.request("GitHub", "GET", LATEST_API, tries=2, timeout=20,
+                           headers={"Accept": "application/vnd.github.raw"}).json()
+
+
 def check() -> dict:
-    r = net.request("GitHub", "GET", LATEST, tries=2, timeout=20, params={"t": int(time.time() // 300)}).json()
+    r = _latest()
     latest = int(r.get("version") or 0)
     return {"current": current(), "latest": latest, "available": latest > current(), "label": r.get("label", ""),
             "notes": r.get("notes", ""), "can_install": can_install(), "download": r.get("app_zip", "")}
@@ -76,7 +87,10 @@ def _run():
         except Exception:
             pass
         _say("скачиваю новую версию")
-        data = net.request("GitHub", "GET", CODE_ZIP, tries=3, timeout=180).content
+        try:
+            data = net.request("GitHub", "GET", CODE_ZIP, tries=2, timeout=180).content
+        except UserError:
+            data = net.request("GitHub", "GET", CODE_ZIP_API, tries=2, timeout=240).content
         tmp = Path(tempfile.mkdtemp(prefix="ay-update-"))
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             z.extractall(tmp)
