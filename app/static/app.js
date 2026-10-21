@@ -1152,6 +1152,14 @@ function renderStages(d) {
       .catch(e => { toast(e.message, true); b.disabled = false; });
     lastStagesKey = "";
   });
+  el.querySelectorAll(".speed-apply").forEach(b => b.onclick = async () => {
+    const sel = b.parentElement.querySelector(".speed-sel");
+    b.disabled = true; b.textContent = "Ускоряю…"; toast("Ускоряю видео, на длинном ролике это займёт пару минут…");
+    await api(`/api/jobs/${j.id}/speed`, { json: { kind: sel.dataset.kind, speed: +sel.value } })
+      .then(x => toast(x.speed === 1 ? "Вернул обычную скорость" : `Готово: быстрее в ${x.speed} раза`)).catch(e => toast(e.message, true));
+    b.disabled = false; b.textContent = "Применить";
+    lastStagesKey = "";
+  });
   el.querySelectorAll(".fx-apply").forEach(b => b.onclick = async () => {
     b.disabled = true;
     await api(`/api/jobs/${j.id}/effects`, { json: { mode: b.parentElement.querySelector(".fx-sel").value } })
@@ -1458,6 +1466,7 @@ const RENDER = {
       <div class="row" style="margin-top:10px"><a class="btn primary" href="/files/${d.job.id}/output/video.mp4" download="${esc(((d.job.title || "").replace(/[^\p{L}\p{N}\- ]+/gu, "").trim() || "video"))}.mp4">⬇ Скачать видео</a>
       <span class="muted">${fmtTime(r.duration)} · ${vert ? "1080×1920, шортс" : "1920×1080"}${r.music ? " · музыка: " + esc(r.music) : " · без музыки"}</span></div>
       ${subsRow(d, "video", vert ? "short_srt" : "srt", vert ? "short_subtitles.srt" : "subtitles.srt")}
+      ${speedRow(d, "video", r)}
       ${fxRow(d)}
       <div class="upbox" data-kind="video"></div>${vert ? `<div class="igbox"></div>` : ""}`;
   },
@@ -1466,6 +1475,7 @@ const RENDER = {
     return `<video class="vert" controls preload="metadata" src="/files/${d.job.id}/output/short.mp4?v=${d.job.updated}"></video>
       <div class="row" style="margin-top:10px"><a class="btn primary" href="/files/${d.job.id}/output/short.mp4" download="short.mp4">⬇ Скачать шортс</a><span class="muted">${fmtTime(r.duration)} · 1080×1920</span></div>
       ${subsRow(d, "short", "short_srt", "short_subtitles.srt")}
+      ${speedRow(d, "short", r)}
       <div class="upbox" data-kind="short"></div>${d.format !== "short" ? `<div class="igbox"></div>` : ""}`;
   },
 };
@@ -1474,6 +1484,15 @@ function fxTag(s) {
   const parts = [META.effect_ru[s.effect], META.sfx_ru[s.sfx]].filter(Boolean);
   return (s.speaker_name ? `<div class="tag-mod">🗣 Говорит: ${esc(s.speaker_name)}</div>` : "")
     + (parts.length ? `<div class="tag-mod">✨ ${esc(parts.join(" + "))}</div>` : "");
+}
+
+const SPEEDS = [1, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.4, 1.5];
+function speedRow(d, kind, r) {
+  const busy = d.job.status === "running";
+  const cur = r.speed || 1, base = r.orig_duration || r.duration;
+  return `<div class="row" style="margin-top:8px"><span>Скорость:</span>
+    <select class="speed-sel" data-kind="${kind}" style="width:auto" ${busy ? "disabled" : ""}>${SPEEDS.map(s => `<option value="${s}" ${s === cur ? "selected" : ""}>${s === 1 ? "Обычная (оригинал)" : "Быстрее в " + s + " раза"} · ${fmtTime(base / s)}</option>`).join("")}</select>
+    <button class="sm speed-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">картинка и голос ускоряются вместе, голос не становится писклявым; бесплатно, оригинал сохраняется</span></div>`;
 }
 
 function fxRow(d) {

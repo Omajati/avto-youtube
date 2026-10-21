@@ -1,6 +1,6 @@
 {
- "version": 43,
- "label": "исправлена выкладка в Instagram",
- "notes": "Исправлена выкладка рилсов в Instagram при подключении маркером Instagram (ошибка «video_url is required»).",
+ "version": 44,
+ "label": "ускорение готовых роликов",
+ "notes": "Ускорение готовых роликов: на странице ролика можно ускорить видео и шортс в 1.05–1.5 раза, оригинал сохраняется.",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

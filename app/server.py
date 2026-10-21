@@ -453,6 +453,22 @@ def job_effects(jid: str, data: dict = Body(...)):
     return {"ok": True}
 
 
+@app.post("/api/jobs/{jid}/speed")
+def job_speed(jid: str, data: dict = Body(...)):
+    """Speeds up a finished video or Short (or puts the original back). Free: FFmpeg on this computer."""
+    j = _job_or_404(jid)
+    kind = data.get("kind", "video")
+    if kind not in ("video", "short"):
+        raise HTTPException(400, "Неизвестный тип ролика")
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
+    try:
+        speed = float(data.get("speed") or 1)
+    except ValueError:
+        raise UserError("Скорость должна быть числом, например 1.2")
+    return pipeline.set_speed(jid, kind, speed)
+
+
 @app.post("/api/jobs/{jid}/upload")
 def job_upload(jid: str, data: dict = Body(...)):
     _job_or_404(jid)

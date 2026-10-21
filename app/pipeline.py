@@ -1645,6 +1645,7 @@ def st_video(c: Ctx):
     r["vertical"] = c.vertical
     c.log(f"Видео готово: {r['duration'] / 60:.1f} мин" if not c.vertical else f"Шортс готов: {r['duration']:.0f} сек")
     write_json(c.out("video"), r)
+    _respeed_after_build(c, "video")
 
 
 def st_short_video(c: Ctx):
@@ -1654,6 +1655,79 @@ def st_short_video(c: Ctx):
     r = _render(c, "short", short["scenes"], voice["short_durations"], c.dir / "short_narration.wav",
                 c.dir / "output" / "short.mp4", c.dir / "clips_short", 1080, 1920, subs_on(db.get(c.id) or c.opts, "short", c.settings))
     write_json(c.out("short_video"), r)
+    _respeed_after_build(c, "short")
+
+
+# -------- speed of a finished video
+
+SPEEDS = (1.0, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.4, 1.5)
+
+
+def _speed_files(d: Path, kind: str, vertical: bool):
+    """(video, original copy, subtitles, original subtitles) of the long video or the Short."""
+    name = "video" if kind == "video" else "short"
+    srt = "short_subtitles" if (kind == "short" or vertical) else "subtitles"
+    out = d / "output"
+    return out / f"{name}.mp4", out / f"{name}_orig.mp4", out / f"{srt}.srt", out / f"{srt}_orig.srt"
+
+
+def _scale_srt(src: Path, dst: Path, speed: float):
+    def fix(m):
+        h, mi, s, ms = (int(x) for x in m.groups())
+        total = round((((h * 60 + mi) * 60 + s) * 1000 + ms) / speed)
+        return f"{total // 3600000:02d}:{total // 60000 % 60:02d}:{total // 1000 % 60:02d},{total % 1000:03d}"
+    dst.write_text(re.sub(r"(\d+):(\d+):(\d+),(\d+)", fix, src.read_text("utf-8")), "utf-8")
+
+
+def set_speed(jid: str, kind: str, speed: float) -> dict:
+    """Speeds up (or restores) a finished video: picture and voice together, the voice keeps its pitch.
+    Always made from the original assembly, so changing the speed again does not lose quality."""
+    speed = min(SPEEDS, key=lambda x: abs(x - float(speed)))
+    j = db.get(jid) or {}
+    d = job_dir(jid)
+    vertical = (j.get("options") or {}).get("format") == "short"
+    mp4, orig, srt, srt_orig = _speed_files(d, kind, vertical)
+    stage = d / ("video.json" if kind == "video" else "short_video.json")
+    info = read_json(stage, {}) or {}
+    if not mp4.exists() and not orig.exists():
+        raise UserError("Видео ещё не готово.")
+    if speed == 1.0:
+        if orig.exists():
+            orig.replace(mp4)
+        if srt_orig.exists():
+            srt_orig.replace(srt)
+    else:
+        if not orig.exists():
+            shutil.copy(mp4, orig)
+            if srt.exists():
+                shutil.copy(srt, srt_orig)
+        tmp = mp4.with_suffix(".speed.mp4")
+        media.run(["-i", orig, "-filter_complex", f"[0:v]setpts=PTS/{speed}[v];[0:a]atempo={speed}[a]",
+                   "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", 20,
+                   "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", 44100, "-movflags", "+faststart",
+                   tmp], "Ускорение видео")
+        tmp.replace(mp4)
+        if srt_orig.exists():
+            _scale_srt(srt_orig, srt, speed)
+    base = info.get("orig_duration") or info.get("duration") or 0
+    if info:
+        info.update(speed=speed, orig_duration=base, duration=round(base / speed, 2) if base else info.get("duration"))
+        write_json(stage, info)
+    opts = dict(j.get("options") or {})
+    opts["speed_video" if kind == "video" else "speed_short"] = speed
+    db.update(jid, options=opts)
+    return {"speed": speed, "duration": info.get("duration")}
+
+
+def _respeed_after_build(c: Ctx, kind: str):
+    """A fresh assembly replaces the original; the chosen speed is applied to it again."""
+    _, orig, _, srt_orig = _speed_files(c.dir, kind, c.vertical)
+    orig.unlink(missing_ok=True)
+    srt_orig.unlink(missing_ok=True)
+    speed = float(((db.get(c.id) or {}).get("options") or {}).get("speed_video" if kind == "video" else "speed_short") or 1)
+    if speed != 1.0:
+        c.log(f"Ускоряю {'видео' if kind == 'video' else 'шортс'} в {speed:g} раза…")
+        set_speed(c.id, kind, speed)
 
 
 STAGE_FUNCS = {
@@ -1694,8 +1768,8 @@ RESET_PLAN = {
                "clips", "output/video.mp4", "short_video.json", "clips_short", "output/short.mp4"],
     "animate": ["animate.json", "anim", "video.json", "clips", "output/video.mp4", "short_video.json", "clips_short",
                 "output/short.mp4"],
-    "video": ["video.json", "clips", "output/video.mp4", "subtitles.ass", "output/subtitles.srt"],
-    "short_video": ["short_video.json", "clips_short", "output/short.mp4", "short_subtitles.ass", "output/short_subtitles.srt"],
+    "video": ["video.json", "clips", "output/video.mp4", "subtitles.ass", "output/subtitles.srt", "output/video_orig.mp4"],
+    "short_video": ["short_video.json", "clips_short", "output/short.mp4", "short_subtitles.ass", "output/short_subtitles.srt", "output/short_orig.mp4"],
 }
 
 
