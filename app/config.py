@@ -34,7 +34,7 @@ if not _EDITED_MARK.exists():
 
 SECRET_FIELDS = [
     "anthropic_key", "openai_key", "elevenlabs_key",
-    "fal_key", "replicate_key", "together_key", "runware_key", "ig_token",
+    "fal_key", "replicate_key", "together_key", "runware_key", "ig_token", "ig_user_token",
 ]
 
 DEFAULTS = {
@@ -92,7 +92,7 @@ DEFAULTS = {
     # Effects that follow the script (sounds on cuts, punch-ins, shakes)
     "fx_mode": "light",
     # Instagram Reels
-    "ig_token": "", "ig_user_id": "", "ig_username": "", "ig_page": "", "ig_token_time": 0.0,
+    "ig_token": "", "ig_user_token": "", "ig_user_id": "", "ig_username": "", "ig_page": "", "ig_token_time": 0.0,
     "ig_login": "",  # "instagram" when connected through «API setup with Instagram login» (no Facebook page)
     "ig_auto": False, "ig_ai_label": True,
     "char_reference": True,

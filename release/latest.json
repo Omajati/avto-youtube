@@ -1,6 +1,6 @@
 {
- "version": 49,
- "label": "Instagram через страницу Facebook",
- "notes": "Instagram: выкладка с компьютера работает только при подключении через страницу Facebook, инструкция обновлена.",
+ "version": 50,
+ "label": "загрузка видео в Instagram",
+ "notes": "Instagram: видео загружается ключом пользователя, а не ключом страницы (ошибка ProcessingFailedError). Нужно один раз подключить Instagram заново.",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

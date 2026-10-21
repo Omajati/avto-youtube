@@ -36,7 +36,9 @@ def connect(app_id: str, app_secret: str, user_token: str) -> dict:
         ig = p.get("instagram_business_account") or {}
         if ig.get("id"):
             # A page token made from a long-lived user token does not expire.
-            save_settings({"ig_token": p.get("access_token") or long_user, "ig_user_id": ig["id"],
+            # The user token is kept too: Meta's file upload (rupload) may refuse a page token.
+            save_settings({"ig_token": p.get("access_token") or long_user, "ig_user_token": long_user,
+                           "ig_user_id": ig["id"],
                            "ig_username": ig.get("username", ""), "ig_page": p.get("name", ""),
                            "ig_login": "", "ig_token_time": time.time()})
             return {"username": ig.get("username", ""), "page": p.get("name", "")}
@@ -62,7 +64,7 @@ def _connect_ig(app_secret: str, token: str) -> dict:
     uid = str(me.get("user_id") or me.get("id") or "")
     if not uid:
         raise UserError(f"Instagram не прислал номер аккаунта: {str(me)[:200]}")
-    save_settings({"ig_token": token, "ig_user_id": uid, "ig_username": me.get("username", ""), "ig_page": "",
+    save_settings({"ig_token": token, "ig_user_token": "", "ig_user_id": uid, "ig_username": me.get("username", ""), "ig_page": "",
                    "ig_login": "instagram", "ig_token_time": time.time()})
     return {"username": me.get("username", ""), "page": ""}
 
@@ -103,10 +105,10 @@ def caption(extras: dict) -> str:
     return text[:2200]
 
 
-def _create_container(url: str, params: dict) -> str:
-    """Creates the Reel container for a file sent from this computer. Instagram reads the fields from the address
-    line (in the form body it may miss upload_type and ask for a video link instead); as a last try only the
-    required fields are sent."""
+def _create_container(url: str, params: dict) -> tuple:
+    """Creates the Reel container for a file sent from this computer. Returns (id, upload address or "").
+    Instagram reads the fields from the address line (in the form body it may miss upload_type and ask for
+    a video link instead); as a last try only the required fields are sent."""
     tries = [{"params": params}, {"data": params},
              {"params": {k: v for k, v in params.items() if k not in ("is_ai_generated", "share_to_feed")}}]
     last = None
@@ -118,12 +120,37 @@ def _create_container(url: str, params: dict) -> str:
                 raise
             last = e
             continue
-        cid = r.json().get("id")
-        if not cid:
+        j = r.json()
+        if not j.get("id"):
             raise UserError(f"Instagram не создал рилс: {r.text[:300]}")
-        return cid
+        return j["id"], j.get("uri") or ""
     raise UserError("Instagram не принимает загрузку видео прямо с компьютера для этого подключения. "
                     f"Напишите об этом, приложив текст ошибки: {last}")
+
+
+def _upload(base: str, uid: str, params: dict, tokens: list, data: bytes, say) -> tuple:
+    """Creates a container and sends the file. Meta's upload server wants a user token and may refuse a page
+    token («ProcessingFailedError»), so each saved token is tried in turn, with a fresh container each time."""
+    last = None
+    for token in tokens:
+        cid, uri = _create_container(f"{base}/{uid}/media", {**params, "access_token": token})
+        if not uri.startswith("https://rupload.facebook.com/"):
+            uri = ""
+        say("загружаю видео")
+        try:
+            up = net.request("Instagram", "POST", uri or f"{RUPLOAD}/{cid}", content=data, tries=3, timeout=900,
+                             headers={"Authorization": f"OAuth {token}", "offset": "0", "file_size": str(len(data))})
+        except UserError as e:
+            last = e
+            continue
+        if (up.json() or {}).get("success"):
+            return cid, token
+        last = UserError(f"Instagram не принял файл: {up.text[:300]}")
+    if len(tokens) < 2:
+        raise UserError("Instagram не принял файл. Подключите Instagram заново (Настройки → Instagram → "
+                        "«Подключить через Facebook», с новым токеном из Graph API Explorer): новое подключение "
+                        f"сохраняет ещё один ключ, который нужен для загрузки видео. Ответ: {last}")
+    raise last
 
 
 def publish(video: Path, text: str, say=None) -> dict:
@@ -139,20 +166,11 @@ def publish(video: Path, text: str, say=None) -> dict:
                         "загружать видео с компьютера: так устроено у Meta. Подключите Instagram заново способом "
                         "через страницу Facebook (Настройки → Instagram → «Подключить через Facebook»).")
     base = f"{IG_GRAPH}/{IG_VERSION}" if ig_login else GRAPH
-    rupload = f"https://rupload.facebook.com/ig-api-upload/{IG_VERSION}" if ig_login else RUPLOAD
-    params = {"media_type": "REELS", "upload_type": "resumable", "caption": text, "share_to_feed": "true",
-              "access_token": token}
+    params = {"media_type": "REELS", "upload_type": "resumable", "caption": text, "share_to_feed": "true"}
     if s.get("ig_ai_label", True):
         params["is_ai_generated"] = "true"
-    cid = _create_container(f"{base}/{uid}/media", params)
-    if not cid:
-        raise UserError(f"Instagram не создал рилс: {r.text[:300]}")
-    say("загружаю видео")
-    data = video.read_bytes()
-    up = net.request("Instagram", "POST", f"{rupload}/{cid}", content=data, tries=3, timeout=900, headers={
-        "Authorization": f"OAuth {token}", "offset": "0", "file_size": str(len(data))})
-    if not (up.json() or {}).get("success"):
-        raise UserError(f"Instagram не принял файл: {up.text[:300]}")
+    tokens = [t for t in dict.fromkeys([s.get("ig_user_token"), token]) if t]
+    cid, token = _upload(base, uid, params, tokens, video.read_bytes(), say)
     say("Instagram обрабатывает видео")
     deadline = time.time() + 15 * 60
     while True:

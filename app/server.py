@@ -601,7 +601,7 @@ def instagram_connect(data: dict = Body(...)):
 @app.post("/api/instagram/disconnect")
 def instagram_disconnect():
     from .config import clear_settings
-    clear_settings("ig_token", "ig_user_id", "ig_username", "ig_page", "ig_login")
+    clear_settings("ig_token", "ig_user_token", "ig_user_id", "ig_username", "ig_page", "ig_login")
     return {"ok": True}
 
 
