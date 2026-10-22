@@ -857,7 +857,11 @@ def st_idea(c: Ctx):
     idx = r.get("chosen_index", 0)
     if not isinstance(idx, int) or not 0 <= idx < len(ideas):
         idx = max(range(len(ideas)), key=lambda i: ideas[i]["total"])
-    if c.short_format and not c.demo and len(ideas) > 1:
+    own_topic = bool((c.job.get("topic") or "").strip()) and not c.episode
+    if own_topic:
+        idx = 0  # the first idea is the owner's own topic as written: he already chose it
+        c.log("Беру вашу тему как есть (остальные варианты можно выбрать вручную).")
+    elif c.short_format and not c.demo and len(ideas) > 1:
         idx = _critic_pick(c, ideas, r, idx)
     r["chosen_index"] = idx
     chosen = ideas[idx]
