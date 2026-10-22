@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, animate, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, tts, updater, uploader, worker, youtube
+from . import analytics, animate, cta, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, thumb, tts, updater, uploader, worker, youtube
 from .config import (DATA_DIR, MUSIC_DIR, PROMPTS_DEFAULT_DIR, PROMPTS_DIR, load_settings,
                      public_settings, save_settings)
 from .net import UserError
@@ -98,7 +98,7 @@ def meta():
                           "clip": round(animate.clip_seconds({"video_model": k}, 5) * v["price"], 2)}
                          for k, v in animate.VIDEO_MODELS.items()],
         "anim_modes": animate.MODES, "video_model": load_settings().get("video_model", "kling25"),
-        "fx_modes": effects.MODES, "effect_ru": effects.EFFECT_RU, "sfx_ru": effects.SFX_RU,
+        "fx_modes": effects.MODES, "cta_modes": cta.MODES, "cta_langs": cta.LANGS, "thumb_fonts": {k: v[0] for k, v in thumb.STYLE_FONTS.items()}, "thumb_looks": thumb.LOOKS, "effect_ru": effects.EFFECT_RU, "sfx_ru": effects.SFX_RU,
         "image_styles": projects.IMAGE_STYLES,
         "presets": {k: {"name": v["name"], "icon": v["icon"], "language": v["language"]} for k, v in projects.PRESETS.items()},
         "languages": projects.LANGUAGES,
@@ -419,7 +419,7 @@ def job_thumbnail(jid: str, data: dict = Body(...)):
     _job_or_404(jid)
     if not (pipeline.job_dir(jid) / "images" / "thumbnail_src.png").exists():
         raise UserError("Картинки для превью ещё нет: она появится после шага «Картинки».")
-    pipeline.make_package(jid, data.get("text"), data.get("side"))
+    pipeline.make_package(jid, data.get("text"), data.get("side"), data.get("font"), data.get("look"))
     return {"ok": True}
 
 

@@ -15,7 +15,7 @@ LANGUAGES = {"en": "Английский (США, весь мир)", "ru": "Ру
 FIELDS = {
     "name": "", "icon": "🎬", "preset": "", "language": "en", "niche": "", "image_style": "",
     "voice_id": "", "voice_name": "", "channel_id": "", "format": "long", "duration_min": 10, "make_short": True,
-    "anim_mode": "off", "anim_short": False, "anim_count": 3, "anim_pause": False, "subs_video": False, "subs_short": True, "fx_mode": "light",
+    "anim_mode": "off", "anim_short": False, "anim_count": 3, "anim_pause": False, "subs_video": False, "subs_short": True, "cta_short": "both", "cta_lang": "auto", "fx_mode": "light",
     "made_for_kids": False, "fiction": False,
     # Series: episodes remember what happened before
     "series": False, "series_bible": "", "season_plan": "",

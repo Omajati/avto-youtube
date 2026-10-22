@@ -85,6 +85,8 @@ DEFAULTS = {
     # Subtitles burned into the picture (can be switched per video too)
     "subtitles_long": False,
     "subtitles_short": True,
+    "cta_short": "both",  # animated Subscribe / Like buttons on Shorts (see cta.py)
+    "cta_lang": "auto",  # their language: auto = the video's, ru, en
     # Animation of scenes (image-to-video on fal.ai)
     "anim_mode": "off",
     "anim_short": False,

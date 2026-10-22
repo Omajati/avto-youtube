@@ -828,6 +828,8 @@ async function viewProject(id) {
       <div id="pj-anim-est" class="muted small" style="margin-top:4px"></div>
       <label class="f">Музыка по умолчанию <span class="hint">В «Новом ролике» можно поменять для каждого ролика</span></label>${sel("music_mode", Object.entries(META.music_modes))}
       <label class="f">Эффекты</label>${sel("fx_mode", Object.entries(META.fx_modes))}
+      <label class="f">Призыв на шортсах <span class="hint">анимированные кнопки «Подписаться» и «Нравится» в стиле YouTube во второй половине каждого шортса</span></label>${sel("cta_short", Object.entries(META.cta_modes))}
+      <label class="f">Язык кнопок призыва</label>${sel("cta_lang", Object.entries(META.cta_langs))}
     </div><div>
       <label class="check pj-long" style="margin-top:38px"><input type="checkbox" data-q="make_short" ${p.make_short ? "checked" : ""}> Делать шортс</label>
       <label class="check pj-long"><input type="checkbox" data-q="anim_short" ${p.anim_short ? "checked" : ""}> Оживлять шортс</label>
@@ -1311,7 +1313,7 @@ function renderStages(d) {
   const thBtn = el.querySelector("#th-apply");
   if (thBtn) thBtn.onclick = async () => {
     thBtn.disabled = true;
-    await api(`/api/jobs/${j.id}/thumbnail`, { json: { text: el.querySelector("#th-text").value, side: el.querySelector("#th-side").value } })
+    await api(`/api/jobs/${j.id}/thumbnail`, { json: { text: el.querySelector("#th-text").value, side: el.querySelector("#th-side").value, font: el.querySelector("#th-font").value, look: el.querySelector("#th-look").value } })
       .then(() => toast("Превью обновлено")).catch(e => toast(e.message, true));
     lastStagesKey = "";
   };
@@ -1490,6 +1492,11 @@ const RENDER = {
         <input type="text" id="th-text" value="${esc(t.text ?? r.thumbnail_text)}">
         <label class="f">Где надпись</label>
         <select id="th-side"><option value="left" ${t.side !== "right" ? "selected" : ""}>${d.format === "short" ? "Сверху" : "Слева"}</option><option value="right" ${t.side === "right" ? "selected" : ""}>${d.format === "short" ? "Снизу" : "Справа"}</option></select>
+        <label class="f">Шрифт</label>
+        <select id="th-font"><option value="">Как предложил сценарист${r.thumbnail_font ? ` (${esc((META.thumb_fonts[r.thumbnail_font] || r.thumbnail_font).split(":")[0])})` : ""}</option>${Object.entries(META.thumb_fonts).map(([k, n]) => `<option value="${k}" ${t.font === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+        <label class="f">Оформление надписи</label>
+        <select id="th-look"><option value="">Как предложил сценарист</option>${Object.entries(META.thumb_looks).map(([k, n]) => `<option value="${k}" ${t.look === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+        <p class="muted small">Шрифт без русских букв программа сама заменит на подходящий.</p>
         <div class="row" style="margin-top:10px">
           <button class="primary" id="th-apply" ${d.files.thumbnail_src ? "" : "disabled"}>Обновить надпись</button>
           ${d.files.thumbnail ? `<a class="btn" href="/files/${d.job.id}/output/thumbnail.jpg" download="thumbnail.jpg">⬇ Скачать превью</a>` : ""}
@@ -1757,6 +1764,8 @@ async function viewSettings(id) {
     <div class="grid2"><div>
       ${field("subtitles_long", "Субтитры на длинном видео", s, { type: "select", options: [["false", "Выключены"], ["true", "Включены"]], hint: "Для роликов без проекта. У проекта своя настройка в его карточке" })}
     </div><div>
+      ${field("cta_short", "Призыв на шортсах", s, { type: "select", options: Object.entries(META.cta_modes), hint: "Анимированные кнопки «Подписаться» и «Нравится» в стиле YouTube во второй половине шортса. Для роликов без проекта; у проекта своя настройка в его карточке" })}
+      ${field("cta_lang", "Язык кнопок призыва", s, { type: "select", options: Object.entries(META.cta_langs), hint: "Для роликов без проекта" })}
       ${field("subtitles_short", "Субтитры на шортсе", s, { type: "select", options: [["true", "Включены (рекомендую: шортсы часто смотрят без звука)"], ["false", "Выключены"]], hint: "Для роликов без проекта. У проекта своя настройка в его карточке" })}
     </div></div>
   </div>

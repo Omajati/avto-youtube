@@ -9,7 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import animate, balance, captions, db, effects, images, llm, media, music as musiclib, thumb, tts
+from . import animate, balance, captions, cta, db, effects, images, llm, media, music as musiclib, thumb, tts
 from .config import JOBS_DIR, MUSIC_DIR, PROMPTS_DIR, PROMPTS_DEFAULT_DIR, load_settings
 from .net import Cancelled, UserError
 
@@ -411,7 +411,7 @@ SCHEMA_EXTRAS = {
         "description": {"type": "string"},
         "tags": {"type": "array", "items": {"type": "string"}},
         "thumbnail_text": {"type": "string"}, "thumbnail_text_ru": {"type": "string"},
-        "thumbnail_prompt": {"type": "string"},
+        "thumbnail_prompt": {"type": "string"}, "thumbnail_font": {"type": "string"}, "thumbnail_look": {"type": "string"},
         "music_prompt": {"type": "string"}, "music_style_ru": {"type": "string"},
     },
 }
@@ -1574,7 +1574,7 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
     balance.record(c.settings.get("image_provider") or "fal", images.price_per_image(c.settings))
 
 
-def make_package(jid: str, text: str = None, side: str = None):
+def make_package(jid: str, text: str = None, side: str = None, font: str = None, look: str = None):
     """Thumbnail with headline + youtube.txt. Cheap: no API calls, can be redone any time."""
     d = job_dir(jid)
     extras = read_json(d / "extras.json") or {}
@@ -1585,6 +1585,10 @@ def make_package(jid: str, text: str = None, side: str = None):
         opts["text"] = text
     if side is not None:
         opts["side"] = side
+    if font is not None:
+        opts["font"] = font
+    if look is not None:
+        opts["look"] = look
     write_json(d / "thumb.json", opts)
     (d / "output").mkdir(exist_ok=True)
     src = d / "images" / "thumbnail_src.png"
@@ -1593,7 +1597,8 @@ def make_package(jid: str, text: str = None, side: str = None):
     if src.exists():
         media.thumbnail(src, d / "output" / "thumbnail_clean.png", vertical)
         thumb.render(src, d / "output" / "thumbnail.jpg", opts.get("text", extras.get("thumbnail_text", "")),
-                     opts.get("side", "left"), vertical)
+                     opts.get("side", "left"), vertical, opts.get("font") or extras.get("thumbnail_font", ""),
+                     opts.get("look") or extras.get("thumbnail_look", ""))
         (d / "output" / "thumbnail.png").unlink(missing_ok=True)  # older versions
     short = read_json(d / "short_script.json")
     thumb.write_package(d, extras, short)
@@ -1858,6 +1863,17 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     c.log("Склеиваю фрагменты и накладываю звук…")
     joined = clips_dir / "joined.mp4"
     media.concat_clips(clips, joined)
+    if height > width:
+        src = c.project if c.project.get("id") else c.settings
+        mode = src.get("cta_short") or "both"
+        lang = src.get("cta_lang") if src.get("cta_lang") in ("ru", "en") else c.lang
+        with_cta = clips_dir / "joined_cta.mp4"
+        try:
+            if cta.overlay(joined, with_cta, mode, lang, total, width, height, clips_dir):
+                with_cta.replace(joined)
+                c.log("Добавил анимацию «Подписаться» и «Нравится» во второй половине шортса.")
+        except UserError as e:
+            c.log(f"Анимацию «Подписаться» добавить не получилось: {e}")
     music = _music_for(c, total)
     out.parent.mkdir(exist_ok=True)
     cap = captions.build(c.dir, prefix, scenes, durations, width, height)
