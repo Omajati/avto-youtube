@@ -146,23 +146,71 @@ def _ytdlp_version() -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def _ytdlp(args: list, timeout: int = 300) -> str:
+BROWSERS = {"chrome": "Google Chrome", "firefox": "Firefox", "safari": "Safari", "edge": "Microsoft Edge",
+            "brave": "Brave Browser", "opera": "Opera", "vivaldi": "Vivaldi", "chromium": "Chromium"}
+BOT_MARK = "Sign in to confirm"
+_auto_failed = [0.0]  # when trying every browser last failed: not again for 10 minutes
+
+
+def _installed_browsers() -> list:
+    """Browsers to borrow the YouTube sign-in from; Firefox first (no password prompt), Safari last (needs Full
+    Disk Access)."""
+    order = ["firefox", "chrome", "edge", "brave", "opera", "vivaldi", "chromium", "safari"]
+    if sys.platform != "darwin":
+        return [b for b in order if b != "safari"]
+    apps = [Path("/Applications"), Path.home() / "Applications"]
+    return [b for b in order if b == "safari" or any((a / f"{BROWSERS[b]}.app").exists() for a in apps)]
+
+
+def _ytdlp_once(args: list, timeout: int, browser: str = "") -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")  # deno from the venv
     env["PATH"] += os.pathsep + str(Path(media.ffmpeg()).parent)
+    extra = ["--cookies-from-browser", browser] if browser else []
     try:
-        r = subprocess.run([sys.executable, "-m", "yt_dlp", "--no-warnings", "--ffmpeg-location", media.ffmpeg(), *args],
-                           capture_output=True, text=True, timeout=timeout, env=env)
+        return subprocess.run([sys.executable, "-m", "yt_dlp", "--no-warnings", "--ffmpeg-location", media.ffmpeg(),
+                               *extra, *args], capture_output=True, text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         raise UserError("YouTube слишком долго отвечает. Попробуйте ещё раз.")
-    if r.returncode != 0:
-        err = (r.stderr or r.stdout).strip()
+
+
+def _cookie_error(err: str) -> bool:
+    e = err.lower()
+    return BOT_MARK.lower() not in e and ("cookie" in e or "keyring" in e or "decrypt" in e or "operation not permitted" in e)
+
+
+def _ytdlp(args: list, timeout: int = 300) -> str:
+    """Runs yt-dlp. When YouTube takes the program for a robot, it borrows the owner's YouTube sign-in from his
+    browser (the way his own browser watches YouTube) and remembers which browser worked."""
+    browser = load_settings().get("yt_cookies_browser", "") or ""
+    r = _ytdlp_once(args, timeout, browser if browser not in ("", "none") else "")
+    err = (r.stderr or r.stdout).strip() if r.returncode else ""
+    if r.returncode and browser and browser != "none" and _cookie_error(err):
+        name = BROWSERS.get(browser, browser)
+        hint = ("Safari: Системные настройки → Конфиденциальность и безопасность → Полный доступ к диску → включите "
+                "«Авто ютуб» (или Terminal/Python). Либо выберите другой браузер." if browser == "safari" else
+                f"Откройте {name} и проверьте, что вы вошли в YouTube. Если Mac спросит пароль для «{name} Safe Storage», "
+                "нажмите «Разрешать всегда».")
+        raise UserError(f"Не удалось взять вход в YouTube из браузера {name}. {hint} Подробности: {err[-200:]}")
+    if r.returncode and BOT_MARK in err and not browser and time.time() - _auto_failed[0] > 600:
+        _auto_failed[0] = time.time()
+        for b in _installed_browsers():
+            r2 = _ytdlp_once(args, timeout, b)
+            if r2.returncode == 0:
+                from .config import save_settings
+                save_settings({"yt_cookies_browser": b})
+                _auto_failed[0] = 0.0
+                return r2.stdout
+        err += "\n(вход из браузеров не помог)"
+    if r.returncode:
         if "No module named yt_dlp" in err:
             raise UserError("Загрузчик YouTube не установлен. Нажмите «Обновить загрузчик YouTube» на этой странице.")
         if "Private video" in err or "members-only" in err.lower():
             raise UserError("Это видео закрыто или только для спонсоров: разобрать его нельзя.")
-        if "Sign in to confirm" in err:
-            raise UserError("YouTube просит подтвердить, что вы не робот. Подождите полчаса или включите/выключите VPN.")
+        if BOT_MARK in err:
+            raise UserError("YouTube принял программу за робота. Откройте YouTube в Chrome, Firefox или Safari и войдите "
+                            "в свой аккаунт, затем внизу страницы «ИИ продюсер» выберите этот браузер в поле «Вход в "
+                            "YouTube» и запустите разбор ещё раз. Если вы с VPN, попробуйте другую страну или без VPN.")
         raise UserError("YouTube не отдал ролик. Нажмите «Обновить загрузчик YouTube» и попробуйте ещё раз. "
                         f"Подробности: {err[-300:]}")
     return r.stdout

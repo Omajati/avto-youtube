@@ -1,6 +1,6 @@
 {
- "version": 67,
- "label": "прокрутка левого меню",
- "notes": "Левое меню прокручивается, балансы снова видны",
+ "version": 68,
+ "label": "вход в YouTube через браузер",
+ "notes": "ИИ продюсер: вход в YouTube через ваш браузер, когда YouTube принимает программу за робота",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

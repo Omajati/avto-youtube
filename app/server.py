@@ -1192,7 +1192,8 @@ def remakes_file(rid: str, name: str):
 
 @app.get("/api/producer")
 def producer_list():
-    return {"items": producer.list_all(), "downloader": producer._ytdlp_version()}
+    return {"items": producer.list_all(), "downloader": producer._ytdlp_version(), "browsers": producer.BROWSERS,
+            "installed": producer._installed_browsers(), "browser": load_settings().get("yt_cookies_browser", "")}
 
 
 @app.post("/api/producer")

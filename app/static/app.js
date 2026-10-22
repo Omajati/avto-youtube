@@ -2322,7 +2322,10 @@ async function viewProducer(id) {
   <div class="card"><h2>Разборы</h2>${r.items.length ? `<table>${r.items.map(x => `<tr><td><a href="#/producer/${x.id}">${esc(x.title || x.source)}</a><div class="muted small">${esc(x.source)}${x.count ? ` · роликов: ${x.count}` : ""}</div></td><td>${PR_STATUS[x.status] || esc(x.status)}</td></tr>`).join("")}</table>` : `<p class="muted">Пока ни одного разбора.</p>`}</div>
   <div class="card"><h2>Загрузчик YouTube</h2>
     <p class="muted small">YouTube часто меняет сайт. Если ссылки перестали разбираться, обновите загрузчик. Сейчас: ${r.downloader ? `версия ${esc(r.downloader)}` : "не установлен"}.</p>
-    <button id="pr-upd">🔄 Обновить загрузчик YouTube</button></div>`;
+    <button id="pr-upd">🔄 Обновить загрузчик YouTube</button>
+    <label class="f">Вход в YouTube <span class="hint">если YouTube принимает программу за робота, она смотрит ролики под вашим входом из браузера, как вы сами</span></label>
+    <select id="pr-br"><option value="">Автоматически (найти браузер, где вы вошли в YouTube)</option>${Object.entries(r.browsers).map(([k, n]) => `<option value="${k}" ${k === r.browser ? "selected" : ""}>${esc(n)}${r.installed.includes(k) ? "" : " (не найден)"}</option>`).join("")}<option value="none" ${r.browser === "none" ? "selected" : ""}>Не использовать</option></select>
+    <p class="muted small">Войдите в свой аккаунт YouTube в выбранном браузере. Для Chrome, Edge, Brave, Opera и Vivaldi Mac один раз спросит пароль: нажмите «Разрешать всегда». Для Safari нужно включить «Авто ютуб» в Системные настройки → Конфиденциальность и безопасность → Полный доступ к диску. Проще всего Firefox или Chrome. Яндекс Браузер не подходит.</p></div>`;
   $("#pr-go").onclick = async () => {
     const link = $("#pr-link").value.trim(), text = $("#pr-text").value.trim();
     if (!link && !text) return toast("Вставьте ссылку или текст", true);
@@ -2341,6 +2344,7 @@ async function viewProducer(id) {
       location.hash = `#/producer/${m.id}`;
     } catch (err) { $("#pr-up").textContent = ""; toast(err.message, true); }
   };
+  $("#pr-br").onchange = e => api("/api/settings", { json: { yt_cookies_browser: e.target.value } }).then(() => toast("Сохранено")).catch(er => toast(er.message, true));
   $("#pr-upd").onclick = async () => {
     const b = $("#pr-upd"); b.disabled = true; b.textContent = "⏳ Обновляю, это может занять пару минут…";
     try { const v = await api("/api/producer/update-downloader", { method: "POST" }); toast(`Загрузчик обновлён: ${v.version}`); viewProducer(); }

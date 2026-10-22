@@ -77,6 +77,7 @@ DEFAULTS = {
     "short_words_per_scene": 12,
     "motion_strength": 0.15,
     "music_volume": 0.12,
+    "yt_cookies_browser": "",  # "" = try the installed browsers when YouTube asks to sign in, "none" = never
     "scene_gap": 0.3,
     "paragraph_gap": 0.6,
     "render_parallel": 3,
