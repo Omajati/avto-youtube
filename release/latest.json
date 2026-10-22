@@ -1,6 +1,6 @@
 {
- "version": 66,
- "label": "симулятор субтитров в переделке",
- "notes": "Переделка ролика: симулятор субтитров, размер и положение новых субтитров",
+ "version": 67,
+ "label": "прокрутка левого меню",
+ "notes": "Левое меню прокручивается, балансы снова видны",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
