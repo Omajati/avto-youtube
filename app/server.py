@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, animate, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, tts, updater, uploader, worker, youtube
+from . import analytics, animate, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, tts, updater, uploader, worker, youtube
 from .config import (DATA_DIR, MUSIC_DIR, PROMPTS_DEFAULT_DIR, PROMPTS_DIR, load_settings,
                      public_settings, save_settings)
 from .net import UserError
@@ -38,6 +38,7 @@ def _any_error(request: Request, exc: Exception):
 def _startup():
     db.init()
     worker.start()
+    exporter.backfill()
     analytics.start()
 
 
@@ -1261,9 +1262,14 @@ def library_build(pid: str):
 def open_folder(data: dict = Body(...)):
     what = data.get("what")
     if what == "job":
-        _open(pipeline.job_dir(data["id"]) / "output")
+        f = exporter.export_job(data["id"])  # the video's own folder in Movies; the program's copy if nothing is ready
+        _open(f or pipeline.job_dir(data["id"]) / "output")
     elif what == "remake":
-        _open(remake._dir(data["id"]) / "output")
+        m = remake.get(data["id"])
+        _open(exporter.export_remake(data["id"], m, remake._dir(data["id"]) / "output") or remake._dir(data["id"]) / "output")
+    elif what == "videos":
+        exporter.ROOT.mkdir(parents=True, exist_ok=True)
+        _open(exporter.ROOT)
     elif what == "music":
         _open(MUSIC_DIR)
     elif what == "prompts":

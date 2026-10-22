@@ -1,6 +1,6 @@
 {
- "version": 68,
- "label": "вход в YouTube через браузер",
- "notes": "ИИ продюсер: вход в YouTube через ваш браузер, когда YouTube принимает программу за робота",
+ "version": 69,
+ "label": "папка для каждого ролика",
+ "notes": "Каждый готовый ролик лежит в своей папке: Фильмы → Авто ютуб → проект → ролик",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

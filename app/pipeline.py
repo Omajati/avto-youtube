@@ -1597,6 +1597,8 @@ def make_package(jid: str, text: str = None, side: str = None):
         (d / "output" / "thumbnail.png").unlink(missing_ok=True)  # older versions
     short = read_json(d / "short_script.json")
     thumb.write_package(d, extras, short)
+    if (job.get("stage") or "") == "done":
+        export(jid)
 
 
 def st_images(c: Ctx):
@@ -1989,7 +1991,20 @@ def set_speed(jid: str, kind: str, speed: float) -> dict:
     opts = dict(j.get("options") or {})
     opts["speed_video" if kind == "video" else "speed_short"] = speed
     db.update(jid, options=opts)
+    export(jid)
     return {"speed": speed, "duration": info.get("duration")}
+
+
+def export(jid: str, log=None):
+    """Puts the finished files into ~/Movies/Авто ютуб/<project>/<video>/ (see exporter.py); never fails the job."""
+    from . import exporter
+    try:
+        f = exporter.export_job(jid)
+        if f and log:
+            log(f"Файлы ролика лежат в папке: {f}")
+    except Exception as e:  # noqa: BLE001
+        if log:
+            log(f"Не удалось сложить файлы в папку ролика: {e}")
 
 
 def _respeed_after_build(c: Ctx, kind: str):
@@ -2023,6 +2038,7 @@ def run_job(job: dict):
         c.log(f"✓ {STAGE_NAMES[sid]}")
     c.stage = "done"
     db.update(c.id, progress=100, stage="done")
+    export(c.id, c.log)
     cost = c.usage.get("llm_cost", 0) + c.usage.get("image_cost", 0) + c.usage.get("anim_cost", 0)
     c.log(f"Готово. Примерная стоимость: ${cost:.2f} + {int(c.usage.get('tts_chars', 0))} символов ElevenLabs")
 

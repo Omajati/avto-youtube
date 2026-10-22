@@ -356,7 +356,7 @@ async function viewJobs() {
       <button class="${filter ? "" : "on"}" data-f="">Все</button>
       ${projs.map(p => `<button class="${filter === p.id ? "on" : ""}" data-f="${p.id}">${esc(p.icon)} ${esc(p.name)}</button>`).join("")}
       <button class="${filter === "none" ? "on" : ""}" data-f="none">Без проекта</button></div>` : "";
-    main.innerHTML = `<div class="row"><h1 class="grow">Ролики</h1><a class="btn primary" href="#/new">＋ Новый ролик</a></div>
+    main.innerHTML = `<div class="row"><h1 class="grow">Ролики</h1><button id="openvids" title="Фильмы → Авто ютуб: папка на каждый проект, внутри папка на каждый ролик">📂 Папка с роликами</button><a class="btn primary" href="#/new">＋ Новый ролик</a></div>
     ${tabs}
     ${jobs.length ? "" : `<div class="card muted">${filter ? "В этом проекте пока нет роликов." : "Пока нет ни одного ролика. Нажмите «Новый ролик»."}</div>`}
     <div class="jobs">${jobs.map(j => `
@@ -371,6 +371,7 @@ async function viewJobs() {
         </div>
       </a>`).join("")}</div>`;
     main.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { filter = b.dataset.f; lsSet("ay_jobs_filter", filter); render(); });
+    $("#openvids").onclick = () => api("/api/open", { json: { what: "videos" } }).catch(e => toast(e.message, true));
   };
   await render();
   timer = setInterval(() => render().catch(() => { }), 3000);

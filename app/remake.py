@@ -477,6 +477,11 @@ def _work(d: Path):
     meta = _read(d / "meta.json")
     meta.update(usage=usage, result_duration=total)
     _write(d / "meta.json", meta)
+    try:
+        from . import exporter
+        _log(d, f"Файлы лежат в папке: {exporter.export_remake(d.name, meta, d / 'output')}")
+    except Exception as e:  # noqa: BLE001 - the video is ready anyway
+        _log(d, f"Не удалось сложить файлы в отдельную папку: {e}")
     llm_cost = usage.get("llm_cost", 0)
     _log(d, f"Видео готово: {total:.0f} сек. Потрачено: текст ~${llm_cost:.2f} + "
          f"{int(usage.get('tts_chars', 0))} символов ElevenLabs + распознавание речи.")
