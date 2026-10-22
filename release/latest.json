@@ -1,6 +1,6 @@
 {
- "version": 61,
- "label": "своя тема без подмены",
- "notes": "Своя тема берётся как есть; предупреждение, если проект не выбран",
+ "version": 62,
+ "label": "поиск и обложки",
+ "notes": "Название, описание и теги под поиск; кликбейтные обложки",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

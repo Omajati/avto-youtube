@@ -111,8 +111,10 @@ def _run(jid, kind, channel_id, privacy, publish_at, profile):
                 short = pipeline.read_json(d / "short_script.json") or {}
                 title = f"{short.get('title', '')} #shorts"
                 more = "Полная история на нашем канале." if lang == "ru" else "The full story is on our channel."
-                desc = (f"{short.get('title', '')}\n{more}\n\n#shorts "
-                        + " ".join("#" + "".join(t.split()) for t in tags[:3]))
+                # The long video's search-ready description also serves its Short.
+                desc = f"{short.get('title', '')}\n{more}\n\n{extras.get('description', '')}".strip()
+                if "#shorts" not in desc.lower():
+                    desc += "\n\n#shorts"
                 file = d / "output" / "short.mp4"
             _log(jid, f"YouTube: загружаю {'видео' if kind == 'video' else 'шортс'} на канал «{state(jid).get(kind, {}).get('channel_title', '')}»…")
             last = [0.0]

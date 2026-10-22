@@ -1217,13 +1217,29 @@ def _name_speakers(c: Ctx, scenes: list):
             sc["speaker_name"] = names[sc["speaker"]]
 
 
+def merge_tags(tags: list, owner: str) -> list:
+    """The video's own search phrases first, then the owner's permanent ones, then the rest; no duplicates."""
+    own = [t.strip().lstrip("#") for t in re.split(r"[,;\n]", owner or "") if t.strip().lstrip("#")]
+    out, seen = [], set()
+    for t in tags[:6] + own + tags[6:]:
+        t = " ".join(str(t).lstrip("#").split())
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return out
+
+
 def st_extras(c: Ctx):
     script = c.data("review")["final_script"]
     if c.demo:
         r = _demo("extras")
     else:
         c.log("Готовлю название, описание и теги" + ("…" if c.lang == "ru" else ", перевожу сценарий на русский…"))
-        r = c.ask("06_extras.txt", SCHEMA_EXTRAS, 32000, script=script)
+        seo = (c.project.get("seo_ru") or "").strip()
+        r = c.ask("06_extras.txt", SCHEMA_EXTRAS, 32000, script=script, extra=(
+            "\n\nTHE OWNER'S PERMANENT SEARCH PHRASES FOR THIS CHANNEL (use the ones that fit in the description and "
+            f"hashtags; all of them go into the tags):\n{seo}" if seo else ""))
+        r["tags"] = merge_tags(r.get("tags") or [], seo)
     if c.lang == "ru" and not r.get("script_ru"):
         r["script_ru"] = script
     write_json(c.out("extras"), r)

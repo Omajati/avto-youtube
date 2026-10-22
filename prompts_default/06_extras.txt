@@ -6,10 +6,27 @@ SCRIPT:
 >>>
 
 1. script_ru: a faithful, complete Russian translation of the whole script, paragraph by paragraph (keep the blank lines between paragraphs). The owner will read it to check the story.
-2. youtube_title: the final YouTube title (max 70 characters for a long video, 60 for a Short), curiosity-driven and honest; youtube_title_ru its translation.
-3. description: a YouTube description in English: 2 short hook paragraphs (without spoiling the ending), then 3-5 relevant hashtags on the last line.
-4. tags: 10-15 YouTube tags in English.
-5. thumbnail_text: 2-4 punchy words for the thumbnail (English); thumbnail_text_ru translation.
-6. thumbnail_prompt: an image prompt for a striking thumbnail picture (a single dramatic subject, strong emotion, high contrast, simple composition, empty space on one side for the text, no text in the image), 30-50 words. If the channel has recurring characters (see RECURRING CHARACTERS above), the thumbnail must show the main one by name with their exact look, never a random animal or a new character.
+SEARCH (title, description and tags are written so that YouTube search and recommendations find the video):
+First think of the search phrases real people type into YouTube about this video's topic, the channel niche and its characters: the main phrase (2-4 words, the most searched way to say the topic), its synonyms and everyday wordings, the questions people ask ("почему...", "как...", "что будет если..."), related popular topics, and broad mass phrases with a huge audience in this niche (for example "юмор", "жизненно", "смешное видео", "лайфхаки", "психология", "отношения", "деньги"). Use only phrases that truly fit the video: misleading keywords are spam and YouTube punishes them.
+
+2. youtube_title: the final YouTube title (max 70 characters for a long video, 60 for a Short). Put the main search phrase in the first half, worded the way people search, and make the rest curiosity-driven and honest; never reveal the twist. youtube_title_ru its translation.
+3. description: 900-1500 characters, written as natural, readable text, never as a bare list of keywords:
+   - the first sentence (it is shown in search, about 150 characters) contains the main search phrase and a hook;
+   - then 2-3 short paragraphs that retell what the video is about without spoiling the ending, weaving in as many of the search phrases, synonyms and questions above as read naturally, plus the hero's name and the channel's recurring topics;
+   - a short line inviting to subscribe, with the channel's main topic in it;
+   - the last line: 8-12 hashtags, the 3 most important first (YouTube shows them above the title): the main topic, the niche, a broad mass hashtag; then the rest. Hashtags have no spaces.
+4. tags: 25-35 tags, most important first, about 450 characters in total:
+   - 5-8 exact search phrases for this video's topic;
+   - 6-10 broad mass tags with a huge audience that fit the niche (short popular words and phrases people search every day);
+   - 5-8 niche and channel tags (the niche, the format, the hero's name and role, the recurring topics);
+   - 4-6 related topics and common alternative wordings, including colloquial ones.
+   No duplicates, no "#", no tags longer than 30 characters.
+THUMBNAIL (its only job is to make a scrolling person click; it does not have to show what literally happens in the video):
+- Take the most emotional idea of the video and push it to the extreme: exaggerate scale, danger, absurdity or emotion until it looks almost insane. A small problem becomes a disaster, a funny moment becomes a madhouse, a secret becomes a shocking reveal. Impossible, surreal and over-the-top images are welcome.
+- Build it on one of the strongest click triggers: an extreme face (shock, horror, wild laughter, disgust) in close-up; something impossible or absurd; a moment just before a disaster; a forbidden or hidden thing half-revealed; a huge contrast (tiny vs giant, rich vs broke, calm vs chaos); an object that should not be there.
+- It must create a question the viewer can only answer by clicking, never the answer itself.
+- The exaggeration stays connected to a real element of the video (its hero, object, situation or emotion); never a promise of something that is not in it at all. No nudity, gore or real celebrities. On a children's channel exaggerate surprise, wonder and joy, never fear.
+5. thumbnail_text: 1-4 words that add what the picture does not say and sharpen the question: a provocative claim, a shocking number, a warning or a half-sentence that demands an ending ("НЕ ДЕЛАЙ ЭТО", "ОН ЗНАЛ", "300 000 В МЕСЯЦ И НИЩИЙ"). Never repeat the title, never reveal the twist. thumbnail_text_ru translation.
+6. thumbnail_prompt: an image prompt for that thumbnail, 40-70 words: start with the main subject and the extreme emotion on the face in close-up, then the absurd or exaggerated detail, then the setting. Hyper-expressive, saturated colours, very high contrast, strong rim light, the subject big and readable on a small phone screen, a simple uncluttered background, empty space on one side for the text, no text or letters in the image. If the channel has recurring characters (see RECURRING CHARACTERS above), the thumbnail shows the main one by name with their exact look and an exaggerated emotion, never a random animal or a new character.
 7. music_prompt: an English prompt for instrumental background music that fits this video's mood and audience (genre, mood, tempo, instruments; no vocals, nothing that distracts from the voice), 15-30 words.
 8. music_style_ru: the same style in 2-5 Russian words for the owner's music library, for example "весёлый поп, бодрый" or "тревожный эмбиент".
