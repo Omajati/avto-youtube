@@ -1090,6 +1090,7 @@ function renderHead(d) {
   if (j.status === "review" && !ideaWait && !animWait) act.push(`<button class="primary" data-act="approve">✓ Сценарий хороший, продолжить</button>`);
   if (j.options.project_id && d.stages.review && j.status !== "running") act.push(`<button data-gold="video" title="Сценарист будет изучать этот текст перед новыми роликами проекта">⭐ ${d.format === "short" ? "Шортс" : "Сценарий"} в копилку удачных</button>`);
   if (j.options.project_id && d.format !== "short" && d.stages.short_script && j.status !== "running") act.push(`<button data-gold="short">⭐ Шортс в копилку</button>`);
+  if (d.stages.images && j.status !== "running" && !j.options.translate_from && (j.options.language || "en") !== "en") act.push(`<button data-tr="1" title="Те же картинки и анимация, английский текст, голос, субтитры и описание">🌐 Английская версия</button>`);
   act.push(`<button data-open="1">📂 Открыть папку</button>`);
   act.push(`<button class="danger" data-act="delete">Удалить</button>`);
   $("#jhead").innerHTML = `
@@ -1104,6 +1105,7 @@ function renderHead(d) {
     </div>
     ${j.status !== "done" ? `<div class="bar"><div style="width:${j.progress}%"></div></div>` : ""}
     ${j.status === "error" ? `<div class="banner bad">${nl(j.error)}</div>` : ""}
+    ${j.options.translate_from ? `<div class="banner info">🌐 Английская версия ролика <a href="#/job/${esc(j.options.translate_from)}">${esc(j.options.translate_from)}</a>: те же картинки и анимация${(j.options.flipped || []).length ? ", кадры отражены и камера движется по-другому" : ""}, новый текст, голос, субтитры, описание и обложка.</div>` : ""}
     ${ideaWait ? `<div class="banner info">Темы готовы, программа ждёт вашего выбора. Откройте шаг «Выбор темы», отметьте понравившуюся тему и нажмите «Взять эту тему». Сценарий ещё не писался, деньги почти не потрачены.</div>` : ""}
     ${animWait ? `<div class="banner info">🎬 Картинки и озвучка готовы, программа ждёт вашего выбора анимации. Откройте шаг «Анимация сцен» ниже: программа уже отметила сцены, которые оживила бы сама. Добавьте или снимите любые галочки и нажмите «Оживить выбранные и продолжить». Перед оплатой покажется цена.</div>` : ""}
     ${j.status === "review" && !ideaWait && !animWait ? `<div class="banner info">Текст готов и проверен редактором. Программа остановилась и ждёт вас: сцены, картинки и озвучка ещё не делались. Прочитайте текст в шаге «Проверка редактором» → «Итоговый текст для озвучки». Если нужно, исправьте его там же и нажмите «Сохранить мой текст». Когда всё устраивает, нажмите «Сценарий хороший, продолжить». Или нажмите «Переделать» у шага «Текст сценария», чтобы ИИ написал заново.</div>` : ""}
@@ -1121,7 +1123,46 @@ function renderHead(d) {
     await api(`/api/jobs/${j.id}/golden`, { json: { kind: b.dataset.gold, note } })
       .then(() => toast("Добавлено в копилку удачных сценариев проекта")).catch(e => toast(e.message, true));
   });
+  const tr = $("#jhead [data-tr]");
+  if (tr) tr.onclick = () => openTranslate(j, d);
   $("#jhead [data-open]").onclick = () => api("/api/open", { json: { what: "job", id: j.id } }).catch(e => toast(e.message, true));
+}
+
+async function openTranslate(j, d) {
+  const proj = d.project;
+  const yt = await api("/api/youtube").catch(() => ({ channels: [] }));
+  const scenes = ((d.stages.scenes || {}).scenes || []).length;
+  const wrap = document.createElement("div");
+  wrap.className = "vlib"; wrap.dataset.nodraft = 1;
+  wrap.innerHTML = `<div class="box" style="max-width:560px"><button class="x" title="Закрыть">×</button>
+    <h2>🌐 Английская версия</h2>
+    <p class="muted small">Программа возьмёт картинки и анимацию этого ролика, переведёт текст по сценам на живой английский, озвучит выбранным голосом, наложит английские субтитры и сделает английские название, описание, теги и новую обложку. Русский ролик останется как был. Платится только перевод (центы), одна картинка обложки и символы ElevenLabs.</p>
+    <label class="f">Голос для английской версии <span class="hint">им говорит рассказчик или ведущий; персонажи со своими голосами в диалогах говорят своими</span></label>
+    <select data-v><option value="">Загружаю голоса…</option></select>
+    <label class="f">Канал YouTube</label>
+    <select data-ch><option value="">Без канала (загрузить вручную)</option>${yt.channels.map(c => `<option value="${c.id}">${esc(c.title)}</option>`).join("")}</select>
+    <label class="check" style="margin-top:10px"><input type="checkbox" data-rs checked> Изменить вид кадров: отразить картинки и анимацию зеркально и повести камеру в другую сторону (бесплатно; кадры с товарами не отражаются, чтобы надписи не читались задом наперёд)</label>
+    <label class="f">Перерисовать заново первые сцены (по тому же описанию, платно за каждую картинку)</label>
+    <input type="number" data-rd min="0" max="${scenes}" value="0" style="width:100px">
+    <div class="row" style="margin-top:14px"><button class="primary" data-go>Сделать английскую версию</button></div></div>`;
+  document.body.appendChild(wrap);
+  const close = () => wrap.remove();
+  wrap.querySelector(".x").onclick = close;
+  wrap.addEventListener("click", e => { if (e.target === wrap) close(); });
+  const vsel = wrap.querySelector("[data-v]");
+  const cur = (proj && proj.en_voice_id) || "";
+  loadVoices().then(vs => { vsel.innerHTML = `<option value="">— выберите голос —</option>` + voiceOptions(vs, cur, "en"); vsel.value = cur; })
+    .catch(e => { vsel.innerHTML = `<option value="">Голоса не загрузились: ${esc(e.message)}</option>`; });
+  if (proj && proj.en_channel_id) wrap.querySelector("[data-ch]").value = proj.en_channel_id;
+  wrap.querySelector("[data-go]").onclick = async () => {
+    const o = vsel.options[vsel.selectedIndex];
+    if (!vsel.value) return toast("Выберите голос", true);
+    const r = await api(`/api/jobs/${j.id}/translate`, { json: { voice_id: vsel.value, voice_name: o.dataset.name || o.text,
+      channel_id: wrap.querySelector("[data-ch]").value, restyle: wrap.querySelector("[data-rs]").checked,
+      redraw: +wrap.querySelector("[data-rd]").value || 0 } }).catch(e => { toast(e.message, true); return null; });
+    if (!r) return;
+    close(); toast("Английская версия запущена"); location.hash = `#/job/${r.id}`;
+  };
 }
 
 function stageIcon(sid, d) {

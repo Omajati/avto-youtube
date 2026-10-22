@@ -1,6 +1,6 @@
 {
- "version": 62,
- "label": "поиск и обложки",
- "notes": "Название, описание и теги под поиск; кликбейтные обложки",
+ "version": 63,
+ "label": "английская версия ролика",
+ "notes": "Английская версия готового ролика",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

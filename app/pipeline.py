@@ -466,6 +466,9 @@ class Ctx:
         if host:  # the hero tells the whole video in his own voice
             self.settings["elevenlabs_voice_id"] = host["voice_id"]
             self.settings["elevenlabs_voice_name"] = host.get("voice_name", "")
+        if self.opts.get("voice_id"):  # a translated version: the owner chose its voice separately
+            self.settings["elevenlabs_voice_id"] = self.opts["voice_id"]
+            self.settings["elevenlabs_voice_name"] = self.opts.get("voice_name", "")
         self.wpm = WPM.get(self.lang, WORDS_PER_MIN)
         self.demo = bool(self.opts.get("demo"))
         self.usage = read_json(self.dir / "usage.json", {}) or {}
@@ -562,7 +565,7 @@ class Ctx:
 
     def host(self):
         """In "host" mode the first chosen character with a voice tells the whole video himself."""
-        if self.project.get("voice_mode") != "host":
+        if self.project.get("voice_mode") != "host" or self.opts.get("voice_id"):
             return None
         return next((ch for ch in self.characters if ch.get("voice_id")), None)
 
@@ -648,7 +651,8 @@ class Ctx:
             return ""
         seen = []
         for j in sorted(db.list_all(), key=lambda j: j["id"], reverse=True):
-            if j["id"] == self.id or (j.get("options") or {}).get("project_id") != pid:
+            if j["id"] == self.id or (j.get("options") or {}).get("project_id") != pid \
+                    or (j.get("options") or {}).get("translate_from"):
                 continue
             idea = read_json(job_dir(j["id"]) / "idea.json", {}) or {}
             try:
@@ -1201,6 +1205,8 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
 
 
 def st_scenes(c: Ctx):
+    if c.opts.get("translate_from"):
+        return _translate_scenes(c)
     script = c.data("review")["final_script"]
     chunks = split_chunks(script, c.scene_words("short_words_per_scene" if c.short_format else "words_per_scene"),
                           c.speakers())
@@ -1286,6 +1292,8 @@ def _record_episode(c: Ctx, script: str):
 
 
 def st_short_script(c: Ctx):
+    if c.opts.get("translate_from"):
+        return _translate_short(c)
     script = c.data("review")["final_script"]
     if c.demo:
         r = _demo("short")
@@ -2110,3 +2118,181 @@ def _demo(kind: str, script: str = ""):
                 "script_ru": "Корабль нашли с поднятыми парусами и без людей.", "why_ru": "Демо",
                 "hook_score": 9, "payoff_score": 8}
     return {}
+
+
+# -------- a version of a finished video in another language
+
+LANG_NAMES = {"en": "English", "ru": "Russian"}
+SCHEMA_TRANSLATION = {"type": "object", "properties": {
+    "title": {"type": "string"}, "lines": {"type": "array", "items": {"type": "string"}}},
+    "required": ["title", "lines"]}
+# A mirrored picture with a camera move in the other direction reads as a new shot.
+MIRROR_MOTION = {"zoom_in": "zoom_out", "zoom_out": "zoom_in", "pan_left": "pan_right", "pan_right": "pan_left"}
+
+
+def _translate_lines(c: Ctx, title: str, lines: list) -> tuple:
+    """(title, lines) in the job's language, one line per scene, so every picture keeps its words."""
+    target = LANG_NAMES.get(c.lang, c.lang)
+    system = (f"You are a top YouTube localizer. You adapt Russian videos for a native {target}-speaking audience "
+              "so they sound as if written in that language from the start: natural spoken phrasing, local idioms, "
+              "jokes and slang that land the same way, numbers and units the way a native narrator says them. "
+              "Keep the meaning, the hook, the twist and the punchline. Answer only with JSON."
+              + c.char_block() + "\n\nChannel niche (may be in Russian): " + c.niche[:2000])
+    out = []
+    new_title = title
+    for start in range(0, len(lines), 60):
+        part = lines[start:start + 60]
+        listing = "\n".join(f"{i}. {t}" for i, t in enumerate(part))
+        user = (f"Translate the video below into {target}. Each numbered line is the narration of one picture: "
+                f"return exactly {len(part)} lines in the same order, line i for picture i, never merge or split "
+                "lines, keep each one about as long when spoken. A character's manner of speech stays recognisable "
+                "(use slang of the same strength in the new language). Spoken text only: numbers in words.\n"
+                + (f"Also translate the title into a strong, clickable {target} YouTube title (max 70 characters).\n"
+                   f"TITLE: {title}\n" if start == 0 else "Return the title unchanged.\n")
+                + "\nLINES:\n" + listing)
+        for attempt in range(2):
+            r = llm.call_json(c.settings, system, user, SCHEMA_TRANSLATION, c.usage, 16000)
+            got = [str(x).strip() for x in r.get("lines") or []]
+            if len(got) == len(part) and all(got):
+                break
+        else:
+            raise UserError(f"Перевод вернул {len(got)} строк вместо {len(part)}. Запустите шаг ещё раз.")
+        if start == 0:
+            new_title = r.get("title") or title
+        out += got
+        c.save_usage()
+    return new_title, out
+
+
+def _translated(c: Ctx, scenes: list, lines: list) -> list:
+    res = []
+    for sc, text in zip(scenes, lines):
+        sc = {**sc, "text": text}
+        if sc.get("motion") in MIRROR_MOTION and c.opts.get("restyle"):
+            sc["motion"] = MIRROR_MOTION[sc["motion"]]
+        res.append(sc)
+    return res
+
+
+def _script_of(scenes: list) -> str:
+    paras, cur = [], []
+    for sc in scenes:
+        cur.append(sc["text"])
+        if sc.get("paragraph_end"):
+            paras.append(" ".join(cur))
+            cur = []
+    if cur:
+        paras.append(" ".join(cur))
+    return "\n\n".join(paras)
+
+
+def _translate_scenes(c: Ctx):
+    src = read_json(job_dir(c.opts["translate_from"]) / "scenes.json") or {}
+    scenes = src.get("scenes") or []
+    if not scenes:
+        raise UserError("В исходном ролике нет сцен: перевести нечего.")
+    target = LANG_NAMES.get(c.lang, c.lang)
+    c.log(f"Перевожу {len(scenes)} сцен на {'английский' if c.lang == 'en' else target}…")
+    if c.demo:
+        title, lines = "Demo", [f"Line {i + 1} in {target}." for i in range(len(scenes))]
+    else:
+        title, lines = _translate_lines(c, (c.data("outline") or {}).get("title", ""), [sc["text"] for sc in scenes])
+    new = _translated(c, scenes, lines)
+    script = _script_of(new)
+    review = c.data("review") or {}
+    review.update(final_script=script, checks=script_checks(script, word_count(script), c.wpm))
+    write_json(c.out("review"), review)
+    write_json(c.out("script"), {**(c.data("script") or {}), "script": script})
+    outline = c.data("outline") or {}
+    outline["title"] = title
+    write_json(c.out("outline"), outline)
+    db.update(c.id, title=title)
+    write_json(c.out("scenes"), {"scenes": new})
+
+
+def _translate_short(c: Ctx):
+    src = read_json(job_dir(c.opts["translate_from"]) / "short_script.json") or {}
+    scenes = src.get("scenes") or []
+    if not scenes:
+        raise UserError("В исходном ролике нет шортса: перевести нечего.")
+    c.log("Перевожу шортс…")
+    if c.demo:
+        title, lines = "Demo short", [f"Short line {i + 1}." for i in range(len(scenes))]
+    else:
+        title, lines = _translate_lines(c, src.get("title", ""), [sc["text"] for sc in scenes])
+    new = _translated(c, scenes, lines)
+    text = " ".join(sc["text"] for sc in new)
+    write_json(c.out("short_script"), {**src, "title": title, "title_ru": src.get("title", ""), "script": text,
+                                       "script_ru": src.get("script", ""), "scenes": new,
+                                       "checks": script_checks(text, word_count(text), c.wpm)})
+
+
+TRANSLATE_COPY = ("idea.json", "outline.json", "script.json", "review.json", "approval.json", "characters.json",
+                  "items.json", "animate.json", "chars", "items", "images", "anim")
+
+
+def _mirror_image(path: Path):
+    from PIL import Image, ImageOps
+    with Image.open(path) as im:
+        ImageOps.mirror(im).save(path)
+
+
+def make_translation(jid: str, lang: str = "en", voice_id: str = "", voice_name: str = "", channel_id: str = "",
+                     restyle: bool = True, redraw: int = 0) -> dict:
+    """A new video from a finished one: the same pictures and animation, a translated script, a new voice,
+    subtitles, title, description and thumbnail. restyle mirrors the pictures (except ones with products, whose
+    labels would read backwards) and turns the camera moves around; redraw draws the first N pictures anew."""
+    src = db.get(jid)
+    if not src:
+        raise UserError("Ролик не найден.")
+    sd = job_dir(jid)
+    scenes = (read_json(sd / "scenes.json") or {}).get("scenes")
+    if not scenes or not (sd / "images.json").exists():
+        raise UserError("Английскую версию можно сделать, когда у ролика готовы картинки.")
+    o = dict(src["options"])
+    for k in ("episode", "title_ru", "idea_picked", "anim_picked", "translate_from", "flipped", "voice_id", "voice_name"):
+        o.pop(k, None)
+    o.update(language=lang, translate_from=jid, review_pause=False, idea_pause=False, anim_pause=False,
+             anim_picked=True, channel_id=channel_id, voice_id=voice_id, voice_name=voice_name, restyle=bool(restyle))
+    short_ok = o.get("format") != "short" and o.get("make_short") and (sd / "short_script.json").exists()
+    o["make_short"] = bool(short_ok)
+    job = db.create(src.get("topic", ""), o)
+    db.update(job["id"], status="paused")  # the worker must not start it before the files are copied
+    d = job_dir(job["id"])
+    for name in TRANSLATE_COPY:
+        p = sd / name
+        if p.is_dir():
+            shutil.copytree(p, d / name, dirs_exist_ok=True)
+        elif p.exists():
+            shutil.copy(p, d / name)
+    img = d / "images"
+    (img / "thumbnail_src.png").unlink(missing_ok=True)  # a new thumbnail is drawn for the new title
+    redraw = max(0, min(int(redraw or 0), len(scenes)))
+    for i in range(redraw):  # drawn anew from the same scene description: a fresh picture, no old animation
+        (img / f"scene_{i:03d}.png").unlink(missing_ok=True)
+        (d / "anim" / f"scene_{i:03d}.mp4").unlink(missing_ok=True)
+    flipped = []
+    if restyle:
+        kinds = [("scene", scenes)]
+        if short_ok:
+            kinds.append(("short", (read_json(sd / "short_script.json") or {}).get("scenes") or []))
+        for prefix, scs in kinds:
+            for i, sc in enumerate(scs):
+                if sc.get("items"):
+                    continue
+                pic, clip = img / f"{prefix}_{i:03d}.png", d / "anim" / f"{prefix}_{i:03d}.mp4"
+                if pic.exists():
+                    _mirror_image(pic)
+                if clip.exists():
+                    tmp = clip.with_suffix(".flip.mp4")
+                    media.run(["-i", clip, "-vf", "hflip", "-c:a", "copy", tmp], "Отражение анимации")
+                    tmp.replace(clip)
+                flipped.append(f"{prefix}_{i:03d}")
+    if not short_ok:
+        a = read_json(d / "animate.json") or {}
+        if a.get("short"):
+            a["short"] = []
+            write_json(d / "animate.json", a)
+    o["flipped"] = flipped
+    db.update(job["id"], options=o, title=src.get("title", ""), status="queued")
+    return db.get(job["id"])

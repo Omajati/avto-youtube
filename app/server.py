@@ -506,6 +506,26 @@ def job_more_ideas(jid: str):
     return {"added": pipeline.more_ideas(jid)}
 
 
+@app.post("/api/jobs/{jid}/translate")
+def job_translate(jid: str, data: dict = Body(...)):
+    """An English version of a finished video: the same pictures and animation, a new voice and text."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается.")
+    voice_id = (data.get("voice_id") or "").strip()
+    if not voice_id:
+        raise UserError("Выберите голос для английской версии.")
+    channel_id = (data.get("channel_id") or "").strip()
+    new = pipeline.make_translation(jid, "en", voice_id, (data.get("voice_name") or "").strip(), channel_id,
+                                    bool(data.get("restyle", True)), int(data.get("redraw") or 0))
+    pid = j["options"].get("project_id")
+    if pid and projects.get(pid):  # the next English version of this project starts with the same choice
+        projects.save(pid, {"en_voice_id": voice_id,
+                            "en_voice_name": (data.get("voice_name") or "").strip(), "en_channel_id": channel_id})
+    worker.wake()
+    return new
+
+
 @app.post("/api/jobs/{jid}/golden")
 def job_golden(jid: str, data: dict = Body(...)):
     """Puts this video's script into its project's library of successful scripts."""

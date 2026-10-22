@@ -19,6 +19,7 @@ FIELDS = {
     "made_for_kids": False, "fiction": False,
     # Series: episodes remember what happened before
     "series": False, "series_bible": "", "season_plan": "",
+    "en_voice_id": "", "en_voice_name": "", "en_channel_id": "",  # last choice for the English version
     "seo_ru": "",  # the owner's permanent tags and search phrases for every video of the project
     "short_examples": "",  # texts of Shorts the owner loves: a style reference for the writer
     "same_place": True,  # one reference picture per location so every scene there shows the same place
