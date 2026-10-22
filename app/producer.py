@@ -351,7 +351,7 @@ Return:
 - packaging_ru: what the title and thumbnail do and why they make people click (Russian).
 - techniques: 5-10 short rules in English for a scriptwriter, each a reusable technique, not a retelling of this plot (for example "Open with the punchline image, explain it only after 3 seconds").
 - topics_ru: 5-8 new topic ideas in the same spirit for a channel in this niche (Russian), never copies of this plot.
-- script_ru: if the speech is not Russian, its Russian translation; otherwise an empty string."""
+- script_ru: if the speech is not Russian, a Russian translation of its opening only (the first 60 seconds, at most 150 words), so the owner sees how the hook sounds; otherwise an empty string. Never translate the whole video."""
 
 
 def analyse(settings: dict, usage: dict, meta_text: str, transcript: str, images: list) -> dict:
@@ -360,7 +360,7 @@ def analyse(settings: dict, usage: dict, meta_text: str, transcript: str, images
             if images else "No pictures of the video are available: judge by the words and the stats.")
     user = ANALYSIS_PROMPT.format(meta=meta_text, frames_note=note, transcript=transcript[:20000] or "(no speech found)")
     return llm.call_json(settings, "You are a YouTube producer and script analyst. Answer only with JSON.", user,
-                         SCHEMA_ANALYSIS, usage, 8000, images=images or None)
+                         SCHEMA_ANALYSIS, usage, 16000, images=images or None)
 
 
 SCHEMA_CHANNEL = {"type": "object", "properties": {
@@ -468,7 +468,7 @@ def _work(d: Path):
                                      "formula of its hits: topic choice, hook, structure, character, packaging; Russian, 4-8 "
                                      "sentences); strengths_ru (Russian list); techniques (English rules for a scriptwriter); "
                                      "topics_ru (8-12 new topic ideas in the same spirit, Russian); advice_ru (how to beat this "
-                                     "channel with our own videos, Russian, 3-5 sentences).", SCHEMA_CHANNEL, usage, 6000)
+                                     "channel with our own videos, Russian, 3-5 sentences).", SCHEMA_CHANNEL, usage, 16000)
     else:
         items.append(_one_video(d, settings, usage, m["source"], 0))
         m["title"] = items[0]["title"]
@@ -511,4 +511,4 @@ def build_playbook(settings: dict, niche: str, items: list) -> dict:
             "built, the structure and rhythm, the tone and the character, packaging (titles, thumbnails), and the "
             "mistakes to avoid. playbook_ru: for the owner, in Russian, 10-20 short numbered rules. playbook: the same "
             "rules in English for the scriptwriter, imperative and concrete.")
-    return llm.call_json(settings, "You are a YouTube producer. Answer only with JSON.", user, SCHEMA_PLAYBOOK, {}, 6000)
+    return llm.call_json(settings, "You are a YouTube producer. Answer only with JSON.", user, SCHEMA_PLAYBOOK, {}, 16000)

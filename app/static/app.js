@@ -2377,7 +2377,8 @@ function prItem(x, i, canPick) {
     ${prSection("Название и обложка", nl(x.packaging_ru))}
     ${prSection("Похожие темы для нас", prList(x.topics_ru))}
     ${prSection("Приёмы для сценариста (на английском, так их читает нейросеть)", prList(x.techniques))}
-    ${x.script || x.script_ru ? `<details style="margin-top:8px"><summary>Текст ролика</summary><pre style="white-space:pre-wrap">${esc(x.script_ru || x.script)}</pre></details>` : ""}
+    ${prSection("Начало ролика по-русски", nl(x.script_ru))}
+    ${x.script ? `<details style="margin-top:8px"><summary>Текст ролика</summary><pre style="white-space:pre-wrap">${esc(x.script)}</pre></details>` : ""}
   </div>`;
 }
 
@@ -2462,7 +2463,8 @@ async function viewLibrary() {
       ${prSection("О чём", nl(x.summary_ru))}${prSection(x.type === "channel" ? "Формула хитов" : "Почему сработал", nl(x.why_ru))}
       ${prSection("Хук", nl(x.hook_ru))}${prSection("Сильные стороны", prList(x.strengths_ru))}
       ${prSection("Приёмы для сценариста", prList(x.techniques))}
-      ${x.script || x.script_ru ? `<details><summary>Текст ролика</summary><pre style="white-space:pre-wrap">${esc(x.script_ru || x.script)}</pre></details>` : ""}
+      ${prSection("Начало по-русски", nl(x.script_ru))}
+      ${x.script ? `<details><summary>Текст ролика</summary><pre style="white-space:pre-wrap">${esc(x.script)}</pre></details>` : ""}
       <div class="row" style="margin-top:6px"><button class="danger sm" data-lbdel="${x.id}">Убрать из хранилища</button></div></details>`).join("")
       : `<p class="muted">Пусто. Откройте <a href="#/producer">«🎓 ИИ продюсер»</a>, разберите удачный ролик и сохраните разбор сюда.</p>`}
   </div>`;
