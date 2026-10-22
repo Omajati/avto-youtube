@@ -51,6 +51,10 @@ def get(rid: str) -> dict:
         raise UserError("Переделка не найдена.")
     meta["log"] = (d / "log.txt").read_text("utf-8")[-8000:] if (d / "log.txt").exists() else ""
     meta["files"] = {n: (d / "output" / n).exists() for n in ("video.mp4", "thumbnail.jpg", "youtube.txt", "subtitles.srt")}
+    tr, lines = _read(d / "transcript.json") or {}, _read(d / "lines.json") or []
+    segs = segments(tr.get("words") or []) if lines else []
+    meta["preview_lines"] = [{"start": s["start"], "end": s["end"], "text": t} for s, t in zip(segs, lines)] \
+        if len(segs) == len(lines) else []
     if meta.get("status") == "running" and rid not in _threads:
         meta["status"] = "error"  # the program was closed while it worked
         meta["error"] = "Работа прервалась (программа закрывалась). Нажмите «Запустить» ещё раз."
@@ -128,6 +132,8 @@ def start(rid: str, opts: dict):
             "voice_id": opts["voice_id"].strip(), "voice_name": (opts.get("voice_name") or "").strip(),
             "lang": "en", "subs_mode": mode, "restyle": bool(opts.get("restyle", True)),
             "music": "off" if opts.get("music") == "off" else "library", "new_subs": bool(opts.get("new_subs", True)),
+            "subs_scale": _num(opts.get("subs_scale"), 1.0, 0.4, 2.5),
+            "subs_pos": None if opts.get("subs_pos") in (None, "") else _num(opts.get("subs_pos"), 80, 5, 98),
         }, box={"y": max(0.0, min(float(box.get("y", 75)), 95.0)), "h": max(3.0, min(float(box.get("h", 12)), 60.0))})
         _write(d / "meta.json", meta)
         (d / "log.txt").write_text("", "utf-8")
@@ -370,11 +376,27 @@ def _picture(d: Path, meta: dict, src: Path, total: float) -> Path:
     return out
 
 
-def _ass_margin(meta: dict, size: int) -> int:
-    """Subtitles sit on the blurred band, so they cover the place where the old ones were."""
-    box = meta["box"]
-    centre = (box["y"] + box["h"] / 2) / 100
-    return max(20, int(meta["height"] * (1 - centre) - size / 2))
+def _num(v, default: float, lo: float, hi: float) -> float:
+    try:
+        return max(lo, min(float(v), hi))
+    except (TypeError, ValueError):
+        return default
+
+
+def subs_centre(meta: dict, opts: dict):
+    """Where the middle of the new subtitles sits, % from the top: the owner's choice, else on the blurred band,
+    else None (the usual place)."""
+    if opts.get("subs_pos") is not None:
+        return opts["subs_pos"]
+    if opts.get("subs_mode", "blur") == "blur":
+        box = meta["box"]
+        return box["y"] + box["h"] / 2
+    return None
+
+
+def _ass_margin(meta: dict, size: int, centre: float) -> int:
+    """MarginV of a one-line subtitle whose middle is at `centre` % from the top."""
+    return max(10, int(meta["height"] * (1 - centre / 100) - size / 2))
 
 
 def _work(d: Path):
@@ -435,10 +457,11 @@ def _work(d: Path):
     captions.write_srt(cues, d / "output" / "subtitles.srt")
     if o["new_subs"]:
         fdir, family = captions.font()
-        size = 96 if vertical else 60
-        margin = _ass_margin(meta, size) if o["subs_mode"] == "blur" else None
+        size = round((96 if vertical else 60) * o.get("subs_scale", 1.0))
+        centre = subs_centre(meta, o)
+        margin = _ass_margin(meta, size, centre) if centre is not None else None
         subs = d / "subtitles.ass"
-        captions.write_ass(cues, subs, w, h, vertical, family, margin_v=margin)
+        captions.write_ass(cues, subs, w, h, vertical, family, margin_v=margin, size=size)
     _log(d, "Собираю видео…")
     s = settings
     media.final_mix(picture, d / "narration.wav", track, d / "output" / "video.mp4", float(s["music_volume"]),

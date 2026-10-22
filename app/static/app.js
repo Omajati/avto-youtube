@@ -2207,25 +2207,68 @@ async function viewRemakeOne(id) {
       <select id="rm-m" ${running ? "disabled" : ""}><option value="library">Подобрать из раздела «Музыка»</option><option value="off" ${o.music === "off" ? "selected" : ""}>Без музыки</option></select>
       <p class="muted small">Русский голос из ролика полностью убирается вместе с оригинальным звуком, поэтому под английский голос ставится музыка из вашей библиотеки.</p>
     </div><div>
-      <div id="rm-boxui"><label class="f">Где старые субтитры <span class="hint">двигайте ползунки, пока жёлтая рамка не закроет текст на кадре</span></label>
-      <div style="position:relative;display:inline-block;max-width:100%"><img src="/api/remakes/${id}/file/preview.jpg" style="max-height:420px;max-width:100%;display:block">
-        <div id="rm-box" style="position:absolute;left:0;right:0;border:3px solid #f5c400;background:rgba(245,196,0,.25)"></div></div>
-      <label class="f">Сверху: <span id="rm-yv"></span>%</label><input type="range" id="rm-y" min="0" max="95" step="1" value="${box.y}" ${running ? "disabled" : ""}>
-      <label class="f">Высота: <span id="rm-hv"></span>%</label><input type="range" id="rm-h" min="3" max="60" step="1" value="${box.h}" ${running ? "disabled" : ""}></div>
+      <label class="f">Симулятор <span class="hint">включите ролик: жёлтая рамка показывает, что закроется размытой полосой, белый текст показывает новые субтитры</span></label>
+      <div id="rm-stage" style="position:relative;display:inline-block;max-width:100%;overflow:hidden;border-radius:8px;background:#000">
+        <video id="rm-vid" src="/api/remakes/${id}/file/source.mp4" poster="/api/remakes/${id}/file/preview.jpg" controls playsinline preload="metadata" style="display:block"></video>
+        <div id="rm-box" style="position:absolute;left:0;right:0;border:3px solid #f5c400;background:rgba(245,196,0,.25);pointer-events:none"></div>
+        <div id="rm-sub" style="position:absolute;text-align:center;color:#fff;font-family:'Arial Black','Arial Bold',Arial,sans-serif;font-weight:900;line-height:1.15;pointer-events:none;white-space:pre-wrap"></div></div>
+      <div id="rm-boxui"><label class="f">Старые субтитры, сверху: <span id="rm-yv"></span>% <span class="hint">двигайте, пока жёлтая рамка не закроет старый текст во всём ролике</span></label><input type="range" id="rm-y" min="0" max="95" step="1" value="${box.y}" ${running ? "disabled" : ""}>
+      <label class="f">Старые субтитры, высота: <span id="rm-hv"></span>%</label><input type="range" id="rm-h" min="3" max="60" step="1" value="${box.h}" ${running ? "disabled" : ""}></div>
+      <div id="rm-subui"><label class="f">Размер новых субтитров: <span id="rm-zv"></span>%</label><input type="range" id="rm-z" min="40" max="250" step="5" value="${Math.round((o.subs_scale || 1) * 100)}" ${running ? "disabled" : ""}>
+      <label class="check"><input type="checkbox" id="rm-pa" ${o.subs_pos == null ? "checked" : ""} ${running ? "disabled" : ""}> Ставить новые субтитры автоматически (на место старых, если их закрывает полоса)</label>
+      <div id="rm-pui"><label class="f">Новые субтитры, середина текста сверху: <span id="rm-pv"></span>%</label><input type="range" id="rm-p" min="5" max="98" step="1" value="${o.subs_pos ?? 75}" ${running ? "disabled" : ""}></div></div>
     </div></div>
     <p class="muted small">Примерно: распознавание речи ~$${(0.004 * mins).toFixed(3)}, перевод и описание ~$${(0.02 * mins).toFixed(2)}, озвучка ~${Math.round(900 * mins).toLocaleString("ru")} символов ElevenLabs.</p>
     <div class="row"><button class="primary" id="rm-go" ${running ? "disabled" : ""}>${m.status === "new" ? "▶ Запустить переделку" : "↻ Переделать заново"}</button><span class="grow"></span><button class="danger" id="rm-del" ${running ? "disabled" : ""}>Удалить</button></div>
   </div>
   <div class="card"><h2>Журнал</h2><pre class="log" style="white-space:pre-wrap;max-height:300px;overflow:auto">${esc(m.log || "Пока пусто.")}</pre></div>`;
-  const draw = () => {
-    const y = +$("#rm-y").value, h = +$("#rm-h").value;
-    $("#rm-box").style.top = y + "%"; $("#rm-box").style.height = h + "%";
-    $("#rm-yv").textContent = y; $("#rm-hv").textContent = h;
-    $("#rm-boxui").style.display = $("#rm-s").value === "blur" ? "" : "none";
-    $("#rm-ai").style.display = $("#rm-s").value === "ai" ? "" : "none";
+  // ---- simulator: the source video with the band to blur and the new subtitles as they will be drawn (ASS sizes)
+  const W = m.width, H = m.height, vid = $("#rm-vid"), stage = $("#rm-stage");
+  const fit = () => {
+    const maxW = Math.max(200, stage.parentElement.clientWidth - 4), k = Math.min(maxW / W, (vertical ? 520 : 400) / H);
+    vid.style.width = Math.round(W * k) + "px"; vid.style.height = Math.round(H * k) + "px"; return k;
   };
-  ["#rm-y", "#rm-h"].forEach(k => $(k).oninput = draw);
-  $("#rm-s").onchange = draw; draw();
+  const cues = [];
+  (m.preview_lines || []).forEach(l => {  // like captions.group: short chunks, timed by their length
+    const ws = l.text.split(/\s+/).filter(Boolean), maxW = vertical ? 3 : 8, maxC = vertical ? 18 : 42, chunks = [];
+    let cur = [];
+    ws.forEach(w => { if (cur.length && (cur.length >= maxW || (cur.join(" ") + " " + w).length > maxC)) { chunks.push(cur.join(" ")); cur = []; } cur.push(w); });
+    if (cur.length) chunks.push(cur.join(" "));
+    const total = chunks.reduce((a, c) => a + c.length, 0) || 1; let t = l.start;
+    chunks.forEach(c => { const dt = (l.end - l.start) * c.length / total; cues.push({ s: t, e: t + dt, text: c }); t += dt; });
+  });
+  const sample = vertical ? "NEW SUBTITLES" : "This is how the new English subtitles will look";
+  const draw = () => {
+    const k = fit();
+    const y = +$("#rm-y").value, h = +$("#rm-h").value, mode = $("#rm-s").value, on = $("#rm-n").checked;
+    const scale = +$("#rm-z").value / 100, auto = $("#rm-pa").checked;
+    $("#rm-box").style.top = y + "%"; $("#rm-box").style.height = h + "%";
+    $("#rm-box").style.display = mode === "blur" ? "" : "none";
+    $("#rm-yv").textContent = y; $("#rm-hv").textContent = h; $("#rm-zv").textContent = Math.round(scale * 100); $("#rm-pv").textContent = $("#rm-p").value;
+    $("#rm-boxui").style.display = mode === "blur" ? "" : "none";
+    $("#rm-ai").style.display = mode === "ai" ? "" : "none";
+    $("#rm-subui").style.display = on ? "" : "none";
+    $("#rm-pui").style.display = auto ? "none" : "";
+    const sub = $("#rm-sub");
+    if (!on) { sub.textContent = ""; return; }
+    const size = Math.round((vertical ? 96 : 60) * scale), outline = Math.max(2, Math.round((vertical ? 6 : 4) * scale));
+    const centre = !auto ? +$("#rm-p").value : mode === "blur" ? y + h / 2 : null;
+    const marginV = centre != null ? Math.max(10, Math.round(H * (1 - centre / 100) - size / 2)) : vertical ? Math.round(H * 0.30) : 70;
+    const t = vid.currentTime, cue = cues.find(c => t >= c.s && t < c.e);
+    let text = cue ? cue.text : (vid.paused || !cues.length) ? (cues[0] ? cues[0].text : sample) : "";
+    if (vertical) text = text.toUpperCase();
+    const o = outline * k, sh = [];
+    for (let a = 0; a < 16; a++) sh.push(`${(Math.cos(a * Math.PI / 8) * o).toFixed(1)}px ${(Math.sin(a * Math.PI / 8) * o).toFixed(1)}px 0 #000`);
+    sh.push(`${2 * k}px ${2 * k}px 0 rgba(0,0,0,.5)`);
+    Object.assign(sub.style, { fontSize: size * k + "px", bottom: marginV * k + "px", left: 80 * k + "px", right: 80 * k + "px", textShadow: sh.join(",") });
+    sub.textContent = text;
+  };
+  ["#rm-y", "#rm-h", "#rm-z", "#rm-p"].forEach(k => $(k).oninput = draw);
+  ["#rm-s", "#rm-n", "#rm-pa"].forEach(k => $(k).onchange = draw);
+  ["timeupdate", "seeked", "play", "pause", "loadedmetadata"].forEach(ev => vid.addEventListener(ev, draw));
+  const onResize = () => document.body.contains(vid) ? draw() : window.removeEventListener("resize", onResize);
+  window.addEventListener("resize", onResize);
+  draw();
   const vsel = $("#rm-v");
   loadVoices().then(vs => { vsel.innerHTML = `<option value="">— выберите голос —</option>` + voiceOptions(vs, o.voice_id || "", "en"); vsel.value = o.voice_id || ""; })
     .catch(e => { vsel.innerHTML = `<option value="">Голоса не загрузились: ${esc(e.message)}</option>`; });
@@ -2233,7 +2276,8 @@ async function viewRemakeOne(id) {
     if (!vsel.value) return toast("Выберите голос", true);
     const op = vsel.options[vsel.selectedIndex];
     await api(`/api/remakes/${id}/start`, { json: { voice_id: vsel.value, voice_name: op.dataset.name || op.text, subs_mode: $("#rm-s").value,
-      restyle: $("#rm-r").checked, new_subs: $("#rm-n").checked, music: $("#rm-m").value, box: { y: +$("#rm-y").value, h: +$("#rm-h").value } } })
+      restyle: $("#rm-r").checked, new_subs: $("#rm-n").checked, music: $("#rm-m").value, box: { y: +$("#rm-y").value, h: +$("#rm-h").value },
+      subs_scale: +$("#rm-z").value / 100, subs_pos: $("#rm-pa").checked ? null : +$("#rm-p").value } })
       .then(() => viewRemakeOne(id)).catch(e => toast(e.message, true));
   };
   $("#rm-del").onclick = async () => { if (!confirm("Удалить эту переделку со всеми файлами?")) return; await api(`/api/remakes/${id}`, { method: "DELETE" }); location.hash = "#/remake"; };

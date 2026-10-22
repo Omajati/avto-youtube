@@ -1,6 +1,6 @@
 {
- "version": 65,
- "label": "ИИ продюсер и хранилище сценариев",
- "notes": "ИИ продюсер (разбор роликов и каналов YouTube) и хранилище сценариев по нишам",
+ "version": 66,
+ "label": "симулятор субтитров в переделке",
+ "notes": "Переделка ролика: симулятор субтитров, размер и положение новых субтитров",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

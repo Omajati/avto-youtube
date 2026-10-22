@@ -1182,7 +1182,7 @@ def remakes_delete(rid: str):
 @app.get("/api/remakes/{rid}/file/{name}")
 def remakes_file(rid: str, name: str):
     d = remake._dir(rid)
-    p = d / "preview.jpg" if name == "preview.jpg" else d / "output" / Path(name).name
+    p = d / name if name in ("preview.jpg", "source.mp4") else d / "output" / Path(name).name
     if not p.exists():
         raise HTTPException(404)
     return FileResponse(p, headers={"Cache-Control": "no-cache"})
