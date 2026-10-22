@@ -65,6 +65,8 @@ async function route() {
     else if (page === "prompts") await viewPrompts(id);
     else if (page === "music") await viewMusic();
     else if (page === "remake") await viewRemake(id);
+    else if (page === "producer") await viewProducer(id);
+    else if (page === "library") await viewLibrary();
     else if (page === "help") viewHelp();
     else if (page === "balance") await viewBalance();
     else await viewJobs();
@@ -142,7 +144,7 @@ function draftRestore() {
 }
 
 // ------------------------------------------------------------------ recent pages as tabs
-const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", projects: "📁", characters: "🧑‍🎨", items: "📦", settings: "⚙️", prompts: "📝", music: "🎵", remake: "🔁", help: "❓", balance: "💰" };
+const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", projects: "📁", characters: "🧑‍🎨", items: "📦", settings: "⚙️", prompts: "📝", music: "🎵", remake: "🔁", producer: "🎓", library: "📚", help: "❓", balance: "💰" };
 function getTabs() { try { return JSON.parse(lsGet("ay_tabs", "[]")) || []; } catch (e) { return []; } }
 function rememberTab() {
   const hash = location.hash || "#/jobs";
@@ -2247,4 +2249,176 @@ async function viewRemakeOne(id) {
     if (n.status !== "running") return viewRemakeOne(id);
     const log = main.querySelector("pre.log"); if (log) log.textContent = n.log;
   }, 3000);
+}
+
+// ------------------------------------------------------------------ AI producer: why competitors' videos worked
+const PR_STATUS = { running: "⏳ Идёт разбор", done: "✅ Готово", error: "⚠️ Ошибка" };
+function prList(arr) { return arr && arr.length ? `<ul>${arr.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""; }
+function prViews(v) { return v ? `${Number(v).toLocaleString("ru")} просмотров` : ""; }
+function prSection(title, body) { return body ? `<div style="margin-top:8px"><b>${title}</b><div>${body}</div></div>` : ""; }
+
+async function viewProducer(id) {
+  if (id) return viewProducerOne(id);
+  clearInterval(timer); timer = null;
+  const r = await api("/api/producer");
+  main.innerHTML = `<h1>🎓 ИИ продюсер</h1>
+  <div class="card">
+    <p>Дайте ссылку на ролик или на целый канал YouTube, загрузите видео или вставьте текст сценария. Продюсер разберёт смысл и сценарий, объяснит, почему ролик набрал просмотры, и выпишет сильные стороны. Готовый разбор можно сохранить в «📚 Хранилище сценариев» нужной ниши, и сценарист будет на него опираться.</p>
+    <label class="f">Ссылка на ролик, шортс или канал YouTube</label>
+    <input id="pr-link" placeholder="https://www.youtube.com/shorts/…  или  https://www.youtube.com/@канал">
+    <label class="f">Если это канал: сколько самых просматриваемых роликов разобрать</label>
+    <select id="pr-count">${[3, 5, 7, 10].map(n => `<option ${n === 5 ? "selected" : ""}>${n}</option>`).join("")}</select>
+    <label class="f">…или вставьте текст сценария</label>
+    <textarea id="pr-text" rows="5" placeholder="Текст чужого ролика, который вам понравился"></textarea>
+    <div class="row" style="margin-top:10px"><button class="primary" id="pr-go">▶ Разобрать</button>
+      <label class="btn" style="display:inline-block;cursor:pointer">📤 Загрузить видео<input type="file" id="pr-file" accept="video/*" style="display:none"></label>
+      <span id="pr-up" class="muted small"></span></div>
+    <p class="muted small">Разбор одного ролика стоит примерно $0.03–0.08 у нейросети сценария. Если у ролика нет субтитров, речь распознаёт ElevenLabs (около $0.004 за минуту).</p>
+  </div>
+  <div class="card"><h2>Разборы</h2>${r.items.length ? `<table>${r.items.map(x => `<tr><td><a href="#/producer/${x.id}">${esc(x.title || x.source)}</a><div class="muted small">${esc(x.source)}${x.count ? ` · роликов: ${x.count}` : ""}</div></td><td>${PR_STATUS[x.status] || esc(x.status)}</td></tr>`).join("")}</table>` : `<p class="muted">Пока ни одного разбора.</p>`}</div>
+  <div class="card"><h2>Загрузчик YouTube</h2>
+    <p class="muted small">YouTube часто меняет сайт. Если ссылки перестали разбираться, обновите загрузчик. Сейчас: ${r.downloader ? `версия ${esc(r.downloader)}` : "не установлен"}.</p>
+    <button id="pr-upd">🔄 Обновить загрузчик YouTube</button></div>`;
+  $("#pr-go").onclick = async () => {
+    const link = $("#pr-link").value.trim(), text = $("#pr-text").value.trim();
+    if (!link && !text) return toast("Вставьте ссылку или текст", true);
+    $("#pr-go").disabled = true;
+    try {
+      const m = await api("/api/producer", { json: { link, text: link ? "" : text, count: +$("#pr-count").value } });
+      location.hash = `#/producer/${m.id}`;
+    } catch (e) { $("#pr-go").disabled = false; toast(e.message, true); }
+  };
+  $("#pr-file").onchange = async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    $("#pr-up").textContent = `Загружаю ${f.name} (${(f.size / 1048576).toFixed(1)} МБ)…`;
+    try {
+      const m = await api(`/api/producer?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
+      location.hash = `#/producer/${m.id}`;
+    } catch (err) { $("#pr-up").textContent = ""; toast(err.message, true); }
+  };
+  $("#pr-upd").onclick = async () => {
+    const b = $("#pr-upd"); b.disabled = true; b.textContent = "⏳ Обновляю, это может занять пару минут…";
+    try { const v = await api("/api/producer/update-downloader", { method: "POST" }); toast(`Загрузчик обновлён: ${v.version}`); viewProducer(); }
+    catch (e) { toast(e.message, true); b.disabled = false; b.textContent = "🔄 Обновить загрузчик YouTube"; }
+  };
+}
+
+function prItem(x, i, canPick) {
+  const head = `${canPick ? `<input type="checkbox" class="pr-pick" data-i="${i}" checked> ` : ""}<b>${esc(x.title || "Ролик")}</b>`;
+  const sub = [x.channel, prViews(x.views), x.duration ? fmtTime(x.duration) : "", x.kind === "short" ? "шортс" : x.kind === "video" ? "длинный" : ""].filter(Boolean).join(" · ");
+  return `<div class="card">
+    <label style="display:block">${head}</label>
+    <div class="muted small">${esc(sub)}${x.source ? ` · <a href="${esc(x.source)}" target="_blank">открыть</a>` : ""}</div>
+    ${prSection("О чём ролик", nl(x.summary_ru))}
+    ${prSection("Почему сработал", nl(x.why_ru))}
+    ${prSection("Хук (начало)", nl(x.hook_ru))}
+    ${prSection("Структура", Array.isArray(x.structure_ru) ? prList(x.structure_ru) : nl(x.structure_ru))}
+    ${prSection("Сильные стороны", prList(x.strengths_ru))}
+    ${prSection("Что можно лучше", prList(x.weaknesses_ru))}
+    ${prSection("Название и обложка", nl(x.packaging_ru))}
+    ${prSection("Похожие темы для нас", prList(x.topics_ru))}
+    ${prSection("Приёмы для сценариста (на английском, так их читает нейросеть)", prList(x.techniques))}
+    ${x.script || x.script_ru ? `<details style="margin-top:8px"><summary>Текст ролика</summary><pre style="white-space:pre-wrap">${esc(x.script_ru || x.script)}</pre></details>` : ""}
+  </div>`;
+}
+
+async function viewProducerOne(id) {
+  clearInterval(timer); timer = null;
+  const [m, projs] = await Promise.all([api(`/api/producer/${id}`), api("/api/projects").catch(() => [])]);
+  const running = m.status === "running", items = m.items || [], ch = m.channel;
+  let last = ""; try { last = localStorage.getItem("ay_lib_project") || ""; } catch (e) { }
+  main.innerHTML = `<div class="row"><a href="#/producer" class="muted small">← Все разборы</a></div>
+  <h1>${esc(m.title || m.source)}</h1>
+  <div class="row" style="margin:8px 0">${PR_STATUS[m.status] || esc(m.status)}<span class="muted small">${esc(m.source)}</span></div>
+  ${m.status === "error" ? `<div class="banner bad">${nl(m.error || "")}</div>` : ""}
+  ${!running && items.length ? `<div class="card"><h2>📚 Сохранить в хранилище</h2>
+    ${projs.length ? `<label class="f">Ниша (проект)</label>
+    <select id="pr-proj">${projs.map(p => `<option value="${p.id}" ${p.id === last ? "selected" : ""}>${esc((p.icon || "") + " " + (p.name || "Без названия"))}</option>`).join("")}</select>
+    ${items.length > 1 ? `<p class="muted small">Сохранятся ролики с галочкой. Галочки стоят у каждого ролика ниже.</p>` : ""}
+    ${ch ? `<label class="check"><input type="checkbox" id="pr-ch" checked> И общую формулу канала</label>` : ""}
+    <div class="row" style="margin-top:8px"><button class="primary" id="pr-save">📚 Сохранить в хранилище</button></div>`
+      : `<p class="muted">Сначала создайте проект в разделе «📁 Проекты и ниши»: у каждой ниши своё хранилище.</p>`}</div>` : ""}
+  ${ch ? `<div class="card"><h2>Формула канала</h2>
+    ${prSection("Что за канал", nl(ch.summary_ru))}${prSection("Формула хитов", nl(ch.formula_ru))}
+    ${prSection("Сильные стороны", prList(ch.strengths_ru))}${prSection("Как обойти этот канал", nl(ch.advice_ru))}
+    ${prSection("Темы для нас", prList(ch.topics_ru))}${prSection("Приёмы для сценариста", prList(ch.techniques))}</div>` : ""}
+  ${items.map((x, i) => prItem(x, i, !running && items.length > 1)).join("")}
+  <div class="card"><h2>Журнал</h2><pre class="log" style="white-space:pre-wrap;max-height:300px;overflow:auto">${esc(m.log || "Пока пусто.")}</pre>
+    <div class="row"><span class="grow"></span><button class="danger" id="pr-del" ${running ? "disabled" : ""}>Удалить разбор</button></div></div>`;
+  const save = $("#pr-save");
+  if (save) save.onclick = async () => {
+    const pid = $("#pr-proj").value;
+    const picks = [...main.querySelectorAll(".pr-pick")];
+    const indexes = picks.length ? picks.filter(c => c.checked).map(c => +c.dataset.i) : null;
+    const withCh = $("#pr-ch") ? $("#pr-ch").checked : false;
+    if (indexes && !indexes.length && !withCh) return toast("Отметьте хотя бы один ролик", true);
+    try {
+      const r = await api(`/api/producer/${id}/save`, { json: { project_id: pid, indexes, with_channel: withCh } });
+      try { localStorage.setItem("ay_lib_project", pid); } catch (e) { }
+      toast(`Сохранено в хранилище: ${r.added}`);
+    } catch (e) { toast(e.message, true); }
+  };
+  $("#pr-del").onclick = async () => { if (!confirm("Удалить этот разбор? В хранилище сохранённое останется.")) return; await api(`/api/producer/${id}`, { method: "DELETE" }); location.hash = "#/producer"; };
+  if (running) timer = setInterval(async () => {
+    const n = await api(`/api/producer/${id}`).catch(() => null);
+    if (!n || location.hash !== `#/producer/${id}`) return;
+    if (n.status !== "running" || (n.items || []).length !== items.length) return viewProducerOne(id);
+    const log = main.querySelector("pre.log"); if (log) log.textContent = n.log;
+  }, 3000);
+}
+
+// ------------------------------------------------------------------ script library of a niche
+async function viewLibrary() {
+  clearInterval(timer); timer = null;
+  const projs = await api("/api/projects").catch(() => []);
+  if (!projs.length) {
+    main.innerHTML = `<h1>📚 Хранилище сценариев</h1><div class="card"><p>Хранилище есть у каждой ниши. Сначала создайте проект в разделе <a href="#/projects">«📁 Проекты и ниши»</a>.</p></div>`;
+    return;
+  }
+  let pid = ""; try { pid = localStorage.getItem("ay_lib_project") || ""; } catch (e) { }
+  if (!projs.some(p => p.id === pid)) pid = projs[0].id;
+  const proj = projs.find(p => p.id === pid);
+  const lib = await api(`/api/projects/${pid}/library`);
+  const items = [...lib.items].reverse();
+  const topics = [...new Set(lib.items.flatMap(x => x.topics_ru || []))].slice(-40).reverse();
+  main.innerHTML = `<h1>📚 Хранилище сценариев</h1>
+  <div class="card">
+    <label class="f">Ниша</label>
+    <select id="lb-proj">${projs.map(p => `<option value="${p.id}" ${p.id === pid ? "selected" : ""}>${esc((p.icon || "") + " " + (p.name || "Без названия"))}</option>`).join("")}</select>
+    <p class="muted small">Здесь лежат разборы роликов, которые сработали. Сценарист этой ниши читает правила ниши и последние разборы перед каждым новым роликом: учится приёмам, но не копирует темы и текст. Новые ниши появляются в списке сами, когда вы создаёте проект.</p>
+    <label class="f">Описание ниши <span class="hint">то же поле, что в проекте</span></label>
+    <textarea id="lb-niche" rows="4">${esc(proj.niche || "")}</textarea>
+    <div class="row" style="margin-top:6px"><button id="lb-niche-save">Сохранить описание</button></div>
+  </div>
+  <div class="card"><h2>Правила ниши</h2>
+    <p class="muted small">Продюсер собирает их из всех разборов этой ниши. Можно поправить текст руками: тогда сценарист будет читать ваш вариант.</p>
+    <textarea id="lb-pb" rows="10" placeholder="Пока пусто. Сохраните сюда несколько разборов и нажмите «Собрать правила».">${esc(lib.playbook_ru || "")}</textarea>
+    <div class="row" style="margin-top:6px"><button class="primary" id="lb-build" ${lib.items.length ? "" : "disabled"}>✨ Собрать правила из разборов</button><button id="lb-pb-save">Сохранить мои правки</button>
+      ${lib.playbook_at ? `<span class="muted small">обновлено ${new Date(lib.playbook_at * 1000).toLocaleString("ru")}</span>` : ""}</div>
+  </div>
+  ${topics.length ? `<div class="card"><h2>Темы из разборов</h2><p class="muted small">Идеи, которые продюсер предложил по мотивам удачных роликов. Можно брать как свою тему на странице нового ролика.</p>${prList(topics)}</div>` : ""}
+  <div class="card"><h2>Разборы (${lib.items.length})</h2>
+    ${items.length ? items.map(x => `<details style="margin-bottom:8px"><summary><b>${x.type === "channel" ? "📺 " : x.kind === "short" ? "📱 " : "🎬 "}${esc(x.title || "Без названия")}</b> <span class="muted small">${esc([x.channel, prViews(x.views)].filter(Boolean).join(" · "))}</span></summary>
+      ${x.source ? `<div class="small"><a href="${esc(x.source)}" target="_blank">${esc(x.source)}</a></div>` : ""}
+      ${prSection("О чём", nl(x.summary_ru))}${prSection(x.type === "channel" ? "Формула хитов" : "Почему сработал", nl(x.why_ru))}
+      ${prSection("Хук", nl(x.hook_ru))}${prSection("Сильные стороны", prList(x.strengths_ru))}
+      ${prSection("Приёмы для сценариста", prList(x.techniques))}
+      ${x.script || x.script_ru ? `<details><summary>Текст ролика</summary><pre style="white-space:pre-wrap">${esc(x.script_ru || x.script)}</pre></details>` : ""}
+      <div class="row" style="margin-top:6px"><button class="danger sm" data-lbdel="${x.id}">Убрать из хранилища</button></div></details>`).join("")
+      : `<p class="muted">Пусто. Откройте <a href="#/producer">«🎓 ИИ продюсер»</a>, разберите удачный ролик и сохраните разбор сюда.</p>`}
+  </div>`;
+  $("#lb-proj").onchange = e => { try { localStorage.setItem("ay_lib_project", e.target.value); } catch (er) { } viewLibrary(); };
+  $("#lb-niche-save").onclick = () => api(`/api/projects/${pid}`, { json: { niche: $("#lb-niche").value } }).then(() => toast("Описание ниши сохранено")).catch(e => toast(e.message, true));
+  $("#lb-pb-save").onclick = () => api(`/api/projects/${pid}/library/playbook`, { json: { playbook_ru: $("#lb-pb").value } }).then(() => toast("Правила сохранены")).catch(e => toast(e.message, true));
+  $("#lb-build").onclick = async () => {
+    const b = $("#lb-build"); b.disabled = true; b.textContent = "⏳ Собираю правила…";
+    try { await api(`/api/projects/${pid}/library/build`, { method: "POST" }); toast("Правила собраны"); viewLibrary(); }
+    catch (e) { toast(e.message, true); b.disabled = false; b.textContent = "✨ Собрать правила из разборов"; }
+  };
+  main.querySelectorAll("[data-lbdel]").forEach(b => b.onclick = async () => {
+    if (!confirm("Убрать этот разбор из хранилища?")) return;
+    await api(`/api/projects/${pid}/library/${b.dataset.lbdel}`, { method: "DELETE" }).catch(e => toast(e.message, true));
+    viewLibrary();
+  });
 }

@@ -707,6 +707,40 @@ class Ctx:
                 "the rhythm, how the story turns, the voice. Aim for the same level and the same audience; never repeat "
                 "their topics, plots or lines:\n<<<\n" + "\n\n".join(parts) + "\n>>>")
 
+    def library_block(self, prompt_file: str) -> str:
+        """The niche's script library (analyses of videos that worked, saved by the AI producer): its playbook and
+        the newest analyses of the same format."""
+        if prompt_file not in GOLDEN_STAGES or not self.project.get("id") or self.opts.get("translate_from"):
+            return ""
+        from . import projects
+        lib = projects.library(self.project["id"])
+        kind = "short" if (self.short_format or prompt_file == "07_short.txt") else "video"
+        items = [x for x in lib["items"] if x.get("kind") in (kind, "channel")][-LIBRARY_IN_PROMPT:]
+        rules = lib.get("playbook") or lib.get("playbook_ru") or ""
+        if not (items or rules):
+            return ""
+        text = ("\n\nSCRIPT LIBRARY OF THIS NICHE (analyses of competitors' and the owner's videos that got many views; "
+                "may be in Russian). Study why they worked and use the same techniques; never copy their topics, plots, "
+                "jokes or lines.")
+        if rules:
+            text += "\nPLAYBOOK OF THE NICHE:\n" + rules[:3000]
+        parts = []
+        for x in reversed(items):
+            head = f"### {x.get('title', '')}" + (f" ({x['views']} views)" if x.get("views") else "")
+            row = [head, f"Why it worked: {x.get('why_ru', '')}"]
+            if x.get("hook_ru"):
+                row.append(f"Hook: {x['hook_ru']}")
+            if x.get("techniques"):
+                row.append("Techniques: " + "; ".join(x["techniques"][:10]))
+            if prompt_file == "01_ideas.txt" and x.get("topics_ru"):
+                row.append("Topic ideas in this spirit: " + "; ".join(x["topics_ru"][:8]))
+            if prompt_file in ("03_script.txt", "07_short.txt") and x.get("script"):
+                row.append("Opening of its script: " + x["script"][:700 if kind == "short" else 900])
+            parts.append("\n".join(row))
+        if parts:
+            text += "\n<<<\n" + "\n\n".join(parts) + "\n>>>"
+        return text
+
     def lessons_block(self) -> str:
         """Rules learned from this project's own YouTube numbers (see analytics.py)."""
         if not self.project.get("id"):
@@ -775,7 +809,7 @@ class Ctx:
                   + (KIDS_OVERRIDE if self.project.get("made_for_kids")
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
-                  + self.lessons_block() + self.golden_block(prompt_file) + OWNER_FIRST)
+                  + self.lessons_block() + self.golden_block(prompt_file) + self.library_block(prompt_file) + OWNER_FIRST)
         length = f"{self.short_seconds}-second" if self.short_format else f"{max(1, int(self.minutes))}-minute"
         user = fill(load_prompt(prompt_file), niche=self.niche, minutes=max(1, int(self.minutes)), length=length,
                     words=self.words,
@@ -790,6 +824,7 @@ class Ctx:
 
 GOLDEN_STAGES = ("01_ideas.txt", "02_outline.txt", "03_script.txt", "04_review.txt", "07_short.txt")
 GOLDEN_IN_PROMPT = 6
+LIBRARY_IN_PROMPT = 5
 POSITIONS_RULE = (
     "\n\nPOSITIONS (the image model gets each prompt alone and guesses where people are): in every prompt say "
     "exactly where each person is and what they do there, in the subject part, not only in the location text. "

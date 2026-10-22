@@ -1,6 +1,6 @@
 {
- "version": 64,
- "label": "переделка ролика",
- "notes": "Раздел «Переделка ролика»: перевод чужого mp4 на английский",
+ "version": 65,
+ "label": "ИИ продюсер и хранилище сценариев",
+ "notes": "ИИ продюсер (разбор роликов и каналов YouTube) и хранилище сценариев по нишам",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

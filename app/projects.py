@@ -675,3 +675,66 @@ def add_golden(pid: str, entry: dict) -> dict:
 def remove_golden(pid: str, gid: str):
     items = [x for x in list_golden(pid) if x.get("id") != gid]
     _golden_file(pid).write_text(json.dumps(items, ensure_ascii=False, indent=1), "utf-8")
+
+
+# ---------------------------------------------------------------- script library of a niche
+# Analyses of videos that worked (competitors' or the owner's), saved by the AI producer. The writer studies them.
+
+LIBRARY_MAX = 100
+
+
+def _library_file(pid: str):
+    d = PROJ_DIR / _path(pid).stem
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "library.json"
+
+
+def library(pid: str) -> dict:
+    """{"items": [...], "playbook_ru": str, "playbook": str (English rules for the writer)}"""
+    try:
+        d = json.loads(_library_file(pid).read_text("utf-8"))
+        return {"items": d.get("items") or [], "playbook_ru": d.get("playbook_ru", ""), "playbook": d.get("playbook", ""),
+                "playbook_at": d.get("playbook_at", 0)}
+    except (OSError, ValueError):
+        return {"items": [], "playbook_ru": "", "playbook": "", "playbook_at": 0}
+
+
+def _save_library(pid: str, lib: dict):
+    f = _library_file(pid)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(lib, ensure_ascii=False, indent=1), "utf-8")
+    tmp.replace(f)
+
+
+def add_library(pid: str, entries: list) -> int:
+    if not get(pid):
+        raise UserError("Проект не найден")
+    lib = library(pid)
+    have = {x.get("source") for x in lib["items"] if x.get("source")}
+    n = 0
+    for e in entries:
+        if e.get("source") and e["source"] in have:
+            lib["items"] = [x for x in lib["items"] if x.get("source") != e["source"]]  # a newer analysis replaces it
+        lib["items"].append({**e, "id": uuid.uuid4().hex[:10], "added": time.time()})
+        n += 1
+    lib["items"] = lib["items"][-LIBRARY_MAX:]
+    _save_library(pid, lib)
+    return n
+
+
+def remove_library(pid: str, eid: str):
+    lib = library(pid)
+    lib["items"] = [x for x in lib["items"] if x.get("id") != eid]
+    _save_library(pid, lib)
+
+
+def set_playbook(pid: str, playbook_ru: str, playbook: str = None):
+    lib = library(pid)
+    lib["playbook_ru"] = (playbook_ru or "").strip()
+    if playbook is not None:
+        lib["playbook"] = playbook.strip()
+    elif lib["playbook_ru"] != library(pid)["playbook_ru"]:
+        lib["playbook"] = ""  # the owner rewrote it: the writer reads his Russian text
+    lib["playbook_at"] = time.time()
+    _save_library(pid, lib)
+    return lib

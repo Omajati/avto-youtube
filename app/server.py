@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, animate, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, projects, remake, tts, updater, uploader, worker, youtube
+from . import analytics, animate, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, tts, updater, uploader, worker, youtube
 from .config import (DATA_DIR, MUSIC_DIR, PROMPTS_DEFAULT_DIR, PROMPTS_DIR, load_settings,
                      public_settings, save_settings)
 from .net import UserError
@@ -1186,6 +1186,74 @@ def remakes_file(rid: str, name: str):
     if not p.exists():
         raise HTTPException(404)
     return FileResponse(p, headers={"Cache-Control": "no-cache"})
+
+
+# ---------------------------------------------------------------- AI producer and the niche script library
+
+@app.get("/api/producer")
+def producer_list():
+    return {"items": producer.list_all(), "downloader": producer._ytdlp_version()}
+
+
+@app.post("/api/producer")
+async def producer_start(request: Request, name: str = ""):
+    if name:  # an uploaded video
+        raw = await request.body()
+        if len(raw) < 1000:
+            raise UserError("Файл пустой. Выберите видео mp4.")
+        return producer.start(file_bytes=raw, file_name=Path(name).name)
+    data = await request.json()
+    return producer.start(data.get("link", ""), data.get("count", 5), data.get("text", ""))
+
+
+@app.post("/api/producer/update-downloader")
+def producer_update():
+    return {"version": producer.update_downloader()}
+
+
+@app.get("/api/producer/{aid}")
+def producer_get(aid: str):
+    return producer.get(aid)
+
+
+@app.delete("/api/producer/{aid}")
+def producer_delete(aid: str):
+    producer.delete(aid)
+    return {"ok": True}
+
+
+@app.post("/api/producer/{aid}/save")
+def producer_save(aid: str, data: dict = Body(...)):
+    pid = data.get("project_id", "")
+    n = projects.add_library(pid, producer.library_entries(aid, data.get("indexes"), bool(data.get("with_channel", True))))
+    return {"added": n}
+
+
+@app.get("/api/projects/{pid}/library")
+def library_get(pid: str):
+    if not projects.get(pid):
+        raise UserError("Проект не найден")
+    return projects.library(pid)
+
+
+@app.delete("/api/projects/{pid}/library/{eid}")
+def library_remove(pid: str, eid: str):
+    projects.remove_library(pid, eid)
+    return projects.library(pid)
+
+
+@app.post("/api/projects/{pid}/library/playbook")
+def library_playbook(pid: str, data: dict = Body(...)):
+    return projects.set_playbook(pid, data.get("playbook_ru", ""))
+
+
+@app.post("/api/projects/{pid}/library/build")
+def library_build(pid: str):
+    proj = projects.get(pid)
+    if not proj:
+        raise UserError("Проект не найден")
+    pb = producer.build_playbook(load_settings(), proj.get("niche", ""), projects.library(pid)["items"])
+    return projects.set_playbook(pid, pb.get("playbook_ru", ""), pb.get("playbook", ""))
 
 
 @app.post("/api/open")

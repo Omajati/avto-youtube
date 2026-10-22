@@ -5,3 +5,4 @@ anthropic>=1.0
 imageio-ffmpeg>=0.5.1
 pillow>=10.1
 pywebview>=5.3; sys_platform == "darwin"
+yt-dlp>=2025.1
