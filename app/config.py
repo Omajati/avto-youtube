@@ -67,8 +67,8 @@ DEFAULTS = {
     "runware_model": "runware:101@1",
     "image_style": (
         "cinematic digital oil painting, dramatic chiaroscuro lighting, muted earthy "
-        "color palette, rich texture, highly detailed, historically accurate clothing "
-        "and architecture, 16th-19th century atmosphere, no text, no letters, no watermark"
+        "color palette, rich texture, highly detailed, "
+        "no text, no letters, no watermark"
     ),
     "image_parallel": 4,
     # Video

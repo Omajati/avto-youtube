@@ -6,7 +6,7 @@ SCRIPT:
 >>>
 
 1. script_ru: a faithful, complete Russian translation of the whole script, paragraph by paragraph (keep the blank lines between paragraphs). The owner will read it to check the story.
-2. youtube_title: the final YouTube title (max 70 characters), curiosity-driven and honest; youtube_title_ru its translation.
+2. youtube_title: the final YouTube title (max 70 characters for a long video, 60 for a Short), curiosity-driven and honest; youtube_title_ru its translation.
 3. description: a YouTube description in English: 2 short hook paragraphs (without spoiling the ending), then 3-5 relevant hashtags on the last line.
 4. tags: 10-15 YouTube tags in English.
 5. thumbnail_text: 2-4 punchy words for the thumbnail (English); thumbnail_text_ru translation.

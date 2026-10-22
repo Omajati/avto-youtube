@@ -263,8 +263,9 @@ async function viewNew() {
     main.querySelectorAll(".long-only").forEach(el => el.style.display = f === "short" ? "none" : "");
     main.querySelectorAll(".short-only").forEach(el => el.style.display = f === "short" ? "" : "none");
     $("#subs-v-l").textContent = f === "short" ? "Субтитры" : "Субтитры на длинном видео";
-    if (fromUser) $("#subs-v").checked = f === "short" ? !!s.subtitles_short : !!s.subtitles_long;
-    if (fromUser) $("#fx").value = f === "short" ? "strong" : (s.fx_mode || "light");
+    const pj = projs.find(x => x.id === curProj);  // a chosen project keeps its own subtitles and effects
+    if (fromUser) $("#subs-v").checked = pj ? !!(f === "short" ? pj.subs_short : pj.subs_video) : (f === "short" ? !!s.subtitles_short : !!s.subtitles_long);
+    if (fromUser) $("#fx").value = pj ? pj.fx_mode || "light" : (f === "short" ? "strong" : (s.fx_mode || "light"));
     upd();
   };
   main.querySelectorAll("[data-fmt]").forEach(b => b.onclick = () => { setFmt(b.dataset.fmt, true); main.dispatchEvent(new Event("input")); });
@@ -328,7 +329,7 @@ async function viewNew() {
     if (!curProj) $("#niche").value = (c && c.profile.niche) || s.niche;  // a chosen project keeps its own niche
   };
   $("#go").onclick = async () => {
-    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan")?.value || "", subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, anim_pause: $("#anim-p").checked, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
+    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan") ? $("#chan").value : undefined, subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, anim_pause: $("#anim-p").checked, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
     draftClear(); toast("Запущено"); location.hash = jobs.length === 1 ? `#/job/${jobs[0].id}` : "#/jobs";
   };
   $("#demo").onclick = async () => {
@@ -1686,7 +1687,7 @@ async function viewSettings(id) {
     <p class="muted small">Нейросеть превращает картинку сцены в короткий клип с движением (люди, огонь, вода, камера). Работает через fal.ai, нужен ключ fal.ai из раздела «Картинки». Стоит денег за каждую секунду, поэтому выгоднее оживлять только начало ролика и ключевые моменты. Здесь значения по умолчанию, у каждого ролика можно выбрать своё.</p>
     <div class="grid2"><div>
       ${field("video_model", "Модель анимации", s, { type: "select", options: META.video_models.map(m => [m.id, `${m.name}: ~$${m.clip} за одну сцену ($${m.price} за секунду клипа)`]) })}
-      ${field("anim_mode", "Что оживлять по умолчанию", s, { type: "select", options: animModes() })}
+      ${field("anim_mode", "Что оживлять по умолчанию", s, { type: "select", options: animModes(), hint: "Для роликов без проекта. У проекта своя настройка в его карточке" })}
       ${field("anim_short", "Оживлять шортс", s, { type: "select", options: [["false", "Нет"], ["true", "Да, столько же первых сцен шортса"]] })}
     </div><div>
       ${field("anim_count", "Сколько сцен оживлять", s, { type: "number", hint: "«Первые сцены»: первые N. «Начало и ключевые моменты»: треть в начале, остальное на поворотах сюжета. Одна сцена ≈ цена одного клипа" })}
@@ -1696,16 +1697,16 @@ async function viewSettings(id) {
     <h3>Эффекты</h3>
     <p class="muted small">Звук перелистывания на смене картинок, удары, «вжух» на переходах, резкие наезды и тряска в нужных местах сценария. Можно положить свои звуки (mp3 или wav) в папки <code>${esc(META.data_dir)}/sfx/whoosh</code>, <code>impact</code> и <code>swoosh</code>: программа возьмёт их вместо встроенных.</p>
     <div class="grid2"><div>
-      ${field("fx_mode", "Эффекты по умолчанию", s, { type: "select", options: Object.entries(META.fx_modes) })}
+      ${field("fx_mode", "Эффекты по умолчанию", s, { type: "select", options: Object.entries(META.fx_modes), hint: "Для роликов без проекта. У проекта своя настройка в его карточке" })}
     </div><div>
       ${field("sfx_volume", "Громкость звуковых эффектов", s, { type: "range", min: 0, max: 1, step: 0.05 })}
     </div></div>
     <h3>Субтитры</h3>
     <p class="muted small">Текст озвучки появляется на видео в такт голосу. Это значение по умолчанию для новых роликов: у каждого ролика субтитры можно включить или выключить отдельно. Файл .srt для YouTube создаётся всегда.</p>
     <div class="grid2"><div>
-      ${field("subtitles_long", "Субтитры на длинном видео", s, { type: "select", options: [["false", "Выключены"], ["true", "Включены"]] })}
+      ${field("subtitles_long", "Субтитры на длинном видео", s, { type: "select", options: [["false", "Выключены"], ["true", "Включены"]], hint: "Для роликов без проекта. У проекта своя настройка в его карточке" })}
     </div><div>
-      ${field("subtitles_short", "Субтитры на шортсе", s, { type: "select", options: [["true", "Включены (рекомендую: шортсы часто смотрят без звука)"], ["false", "Выключены"]] })}
+      ${field("subtitles_short", "Субтитры на шортсе", s, { type: "select", options: [["true", "Включены (рекомендую: шортсы часто смотрят без звука)"], ["false", "Выключены"]], hint: "Для роликов без проекта. У проекта своя настройка в его карточке" })}
     </div></div>
   </div>
   <div class="card" id="ytcard"><h2>5. YouTube: автоматическая загрузка</h2>

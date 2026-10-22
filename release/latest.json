@@ -1,6 +1,6 @@
 {
- "version": 59,
- "label": "перерисовка сразу",
- "notes": "«Перерисовать» во время паузы (например перед анимацией) рисует картинку сразу.",
+ "version": 60,
+ "label": "полная проверка",
+ "notes": "Полная проверка: сценарист, голос, картинки, связи настроек",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

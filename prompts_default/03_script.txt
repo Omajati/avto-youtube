@@ -5,10 +5,10 @@ TASK: Write the full narration script, about {{words}} words (it must be between
 Writing rules:
 - Start immediately with the hook. The very first sentence must create curiosity or tension.
 - Write for a voice actor, like a storyteller talking to a friend: complete, connected sentences of short and medium length, varied rhythm, simple words, active voice. Each sentence follows from the previous one; never stack disconnected fragments or noun lists. A sentence should rarely exceed 25 words.
-- Show, don't tell: concrete sensory details (sounds, weather, smells, objects), specific numbers and names from the story.
-- Re-hook every 60-90 seconds, exactly where the structure plans it. Close every open loop by the end.
-- Use second person sparingly to pull the viewer in ("Imagine standing on that deck...").
+- Show, don't tell: concrete details (objects, sounds, reactions), specific numbers and names from the story. In a Short only the one detail that matters most.
+- In a long video, re-hook every 60-90 seconds, exactly where the structure plans it. Close every open loop by the end.
+- Use second person sparingly to pull the viewer in ("Imagine you were there..."), unless the niche or the narrator's manner of speech says otherwise.
 - No headings, no scene labels, no stage directions, no brackets, no emojis, no lists. Only the words that will be spoken.
 - Write numbers and years the way they are spoken when it helps clarity ("in 1692" is fine; "3,000" becomes "three thousand").
 - Separate paragraphs with a blank line. One paragraph = one idea or one moment (2-5 sentences).
-- End with the payoff and one short natural subscribe line.
+- End with the payoff and one short natural subscribe line, unless the format rules say otherwise.

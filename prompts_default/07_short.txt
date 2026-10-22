@@ -10,5 +10,5 @@ Rules:
 - Tell one tight, self-contained piece of the story (the strongest moment or a compressed version of the whole story) so it makes sense without the long video.
 - Build tension fast, deliver a twist or payoff, then end with a short line that sends viewers to the full story on the channel ("The full story is on our channel.").
 - Spoken American English, short sentences, no headings or stage directions.
-- Fill title (max 60 characters, curiosity-driven), title_ru, script, script_ru (full Russian translation), and why_ru (2 sentences in Russian about why this moment was chosen and why the first line works).
+- Fill title (max 60 characters, curiosity-driven), title_ru, script, script_ru (full Russian translation; an empty string if the script is already in Russian), and why_ru (2 sentences in Russian about why this moment was chosen and why the first line works).
 - Score yourself honestly from 1 to 10: hook_score (does the first line stop the scroll) and payoff_score (is the ending satisfying).

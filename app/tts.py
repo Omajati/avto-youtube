@@ -166,21 +166,34 @@ def account_info(settings) -> dict:
     return {"tier": d.get("tier"), "used": d.get("character_count"), "limit": d.get("character_limit")}
 
 
-def synthesize(settings, text: str, out_path: Path, previous_text: str = "", next_text: str = "") -> int:
+def _unit(v, default: float) -> float:
+    try:
+        return min(1.0, max(0.0, float(v)))
+    except (TypeError, ValueError):
+        return default
+
+
+def synthesize(settings, text: str, out_path: Path, previous_text: str = "", next_text: str = "",
+               language: str = "") -> int:
     """Writes an mp3 file. Returns the number of characters billed."""
     model = settings.get("elevenlabs_model") or "eleven_multilingual_v2"
     voice = settings.get("elevenlabs_voice_id") or "JBFqnCBsd6RMkjVDRZzb"
+    stability = _unit(settings.get("voice_stability", 0.5), 0.5)
+    if model == "eleven_v3":
+        stability = min((0.0, 0.5, 1.0), key=lambda x: abs(x - stability))  # v3 takes only these three
     body = {
         "text": text,
         "model_id": model,
         "voice_settings": {
-            "stability": float(settings.get("voice_stability", 0.5)),
-            "similarity_boost": float(settings.get("voice_similarity", 0.75)),
-            "style": float(settings.get("voice_style", 0.0)),
+            "stability": stability,
+            "similarity_boost": _unit(settings.get("voice_similarity", 0.75), 0.75),
+            "style": _unit(settings.get("voice_style", 0.0), 0.0),
             "use_speaker_boost": True,
             "speed": float(settings.get("voice_speed", 1.0)),
         },
     }
+    if language and "v2_5" in model:
+        body["language_code"] = language  # Turbo and Flash v2.5 otherwise guess the language and read numbers badly
     if model != "eleven_v3":
         # Context around the fragment keeps intonation continuous between scenes.
         if previous_text:

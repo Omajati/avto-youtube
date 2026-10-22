@@ -34,9 +34,9 @@ STAGE_IDS = [s[0] for s in STAGES]
 STAGE_NAMES = {s[0]: s[1] for s in STAGES}
 
 CRITERIA_RU = {
-    "hook": "Хук (первые 15 секунд)",
+    "hook": "Хук (первые секунды)",
     "open_loops": "Открытые вопросы (интрига)",
-    "rehooks": "Удерживающие крючки каждые 1–1,5 мин",
+    "rehooks": "Удерживающие крючки",
     "pacing": "Темп, нет провисаний",
     "clarity": "Понятность",
     "emotion": "Эмоции и ставки",
@@ -57,7 +57,7 @@ LANG_OVERRIDE = {
 LANGUAGE OVERRIDE (this rule beats every instruction above and below about language and audience):
 - This channel is Russian-language. The audience is Russian-speaking viewers in Russia and the CIS, not US/UK viewers.
 - Write every spoken or published text in natural, lively spoken Russian: ideas and titles, hooks, the script, the Short, YouTube titles, descriptions, tags, hashtags and thumbnail text. Never write them in English.
-- Write numbers, dates and abbreviations in words the way a Russian narrator would say them when it helps the voice actor.
+- The spoken text (script and Short) is read by a voice engine: in it always write numbers, dates, money, percentages and abbreviations in words, in the right grammatical case, the way a Russian narrator says them ("в двух тысячах рублей", not "в 2000 ₽"; "то есть", not "т.е."). There write foreign names in Cyrillic as Russians pronounce them. Titles, descriptions and thumbnail text may use digits.
 - Image prompts (fields named prompt and thumbnail_prompt) stay in English, because the image model understands English best.
 - Fields ending in _ru simply repeat the same Russian text. Exception: script_ru must be an empty string (the script is already in Russian).
 - The Short is 90-115 Russian words; its last line sends viewers to the full story on the channel in Russian.""",
@@ -167,7 +167,7 @@ def split_chunks(script: str, target_words: int, speakers: dict = None) -> list:
 SHORT_OVERRIDE = """
 
 FORMAT OVERRIDE (this rule beats every instruction above and below about length, structure and pacing):
-- This video is a vertical YouTube Short of about {seconds} seconds (about {words} spoken words), not a long video. Ignore the long-video sections, the 35-45-word hook and re-hooks every 60-90 seconds.
+- This video is a vertical YouTube Short of about {seconds} seconds (about {words} spoken words), not a long video. Ignore the long-video rules: the 35-45-word hook, setup timings in minutes, 2-3 twists, open loops, re-hooks every 60-90 seconds, sensory scene-setting (weather, smells, "imagine standing there") and dates or places added only for atmosphere.
 
 HOW A SHORT IS WATCHED (build everything around this):
 - The viewer decides in the first 1-2 seconds whether to swipe. They stay only while they cannot predict what happens next. The moment the ending becomes obvious, they leave.
@@ -175,20 +175,20 @@ HOW A SHORT IS WATCHED (build everything around this):
 - If the hero is a product, mascot or brand character, the hero simply winning is an advert, and nobody watches adverts. The hero must be underestimated, mocked, fail first, face a rival or a worse problem, or win in an absurd, unexpected way that costs something. Comedy and character beat demonstration.
 
 SHORT STORY ENGINE (every idea, outline and script must have all four):
-1) HOOK, the first sentence (2 seconds): drop the viewer into the most extreme moment, already in motion. Strong hook types: an absurd or impossible situation ("My owner tried to shave with a cheese grater."); a conflict mid-fight; a bold claim that sounds wrong; a ticking clock with high or ridiculous stakes; a forbidden thing or a secret; a "this went horribly wrong" opening; a direct challenge to the viewer. Never start with background, a name introduction, the weather or "one day".
+1) HOOK, the first sentence (2 seconds): drop the viewer into the most extreme moment, already in motion. Strong hook types: an absurd or impossible situation ("I tried to fix the leak and flooded three floors of neighbours."); a conflict mid-fight; a bold claim that sounds wrong; a ticking clock with high or ridiculous stakes; a forbidden thing or a secret; a "this went horribly wrong" opening; a direct challenge to the viewer. Never start with background, a name introduction, the weather or "one day".
 2) ESCALATION (to about 40%): things get worse in a way the viewer did not expect. The obvious solution fails or is blocked. Raise the stakes with a concrete complication.
 3) TWIST (about 70-80%): a turn nobody saw coming that changes the meaning of what happened: a reveal, a role reversal, an ironic consequence, an absurd solution, the "villain" was right, the hero's win backfires. The twist must be set up by an earlier detail so it feels clever, not random.
 4) PUNCHLINE (the last 1-2 sentences): a sharp, funny or bitter final line that rewards the viewer. Ideally it loops into the first sentence so the replay feels seamless. No moral lecture, no summary, no "and so we learned".
 
 PROVEN SHORT FORMATS (pick the one that fits the idea, or mix):
-- The insider and the believer: a naive character trusts what everyone is told, a cunning, confident character knows how it really works and reveals it ("what nobody tells you about..."). The hook names a familiar thing and promises the hidden truth; the twist is the reveal; the punchline is the believer's reaction or the insider's cynical last word. The same duo in every video builds a fan base.
-- The bet or duel: two characters bet on who is right; the obvious favourite loses or wins in a way nobody expected.
+- The insider and the believer: a naive character trusts what everyone is told, a cunning, confident character knows how it really works and reveals it ("what nobody tells you about..."). The hook names a familiar thing and promises the hidden truth; the twist is the reveal; the punchline is the believer's reaction or the insider's cynical last word. If the channel has two recurring characters, the same duo in every video builds a fan base; with one host, he is the insider and the viewer is the believer.
+- The bet or duel (needs two characters): two characters bet on who is right; the obvious favourite loses or wins in a way nobody expected.
 - The disaster: something goes spectacularly wrong from the first second; the story is how it got worse and how it ended absurdly.
 - The secret: the hero hides something or discovers something hidden; the last line reveals it.
 
 RETENTION RULES:
 - Every sentence either answers the previous question while opening a new one, or raises the stakes. Cut any sentence that only explains.
-- Show conflict between characters: they want different things, argue, bet, sabotage. Dialogue lines with personality beat narration.
+- Show conflict between characters: they want different things, argue, bet, sabotage. When characters speak with their own voices, dialogue lines with personality beat narration.
 - Concrete beats abstract: one specific object, number, place or reaction is worth a paragraph of description.
 - One situation, a story you could retell in one plain sentence that ends with "...and then it turned out that...".
 - Never give away the answer in the hook: open the question, then delay the real answer to the middle (first the common belief or the wrong answer, then "but actually"). An answer in the third sentence kills the video.
@@ -292,7 +292,7 @@ def script_checks(script: str, target_words: int, wpm: int = WORDS_PER_MIN) -> d
     avg = round(wc / len(sentences), 1) if sentences else 0
     return {
         "avg_sentence": avg,
-        "choppy": bool(sentences) and avg < 6.5,
+        "choppy": bool(sentences) and avg < 6.5 * wpm / WORDS_PER_MIN,  # Russian sentences have fewer words
         "word_count": wc,
         "minutes": round(wc / wpm, 1),
         "target_words": target_words,
@@ -346,8 +346,12 @@ For every idea score from 1 to 10, honestly and harshly:
 - unpredictable: after the first line, could you guess the ending? (10 = no way, 1 = obvious)
 - payoff: would the twist and the last line make you laugh, gasp or replay?
 Ideas that read like an advert or where the hero simply wins the obvious way get at most 3 for unpredictable.
+Judge as this channel's real audience described below, not by your own taste: an idea that breaks the channel's niche or the owner's rules is worth nothing however catchy it is.
 Add comment_ru: one short honest sentence in Russian.
 Then choose the idea you would really watch to the end (chosen_index, counting from 0) and explain in reason_ru in 2 sentences in Russian.
+
+CHANNEL (the owner's description, may be in Russian):
+{niche}{audience}
 
 IDEAS:
 {ideas}"""
@@ -545,6 +549,7 @@ class Ctx:
             return ""
         lines = "\n".join(f"- {self.char_name(it)}" + (f" ({it['kind']})" if it.get("kind") else "")
                           + f": {it.get('appearance', '')}"
+                          + (f" What it is and how it is used (owner, may be in Russian): {it['description_ru']}" if it.get("description_ru") else "")
                           + (f" Owner's notes, follow them (may be in Russian): {it['extra_ru']}" if it.get("extra_ru") else "")
                           for it in self.items)
         return ("\n\nITEMS AND PRODUCTS FOR THIS VIDEO (the owner chose them, they have exact reference photos):\n"
@@ -621,8 +626,12 @@ class Ctx:
                 f"- Episode {e['num']} \"{e.get('title', '')}\": {e.get('summary', '')}"
                 + (f" Unresolved: {'; '.join(e['open_threads'])}." if e.get("open_threads") else "")
                 + (f" Ended on: {e['cliffhanger']}" if e.get("cliffhanger") else "") for e in recent))
-            recap = ("After the hook (not before it), give a very short recap of the previous episode in 1-2 "
+            recap = ("No recap: open right on the consequence of the previous episode's ending." if self.short_format else
+                     "After the hook (not before it), give a very short recap of the previous episode in 1-2 "
                      "sentences, then pick up its ending: answer or develop the hook it left.")
+        elif self.episode > 1:
+            recap = ("Earlier episodes are not recorded here: continue the story naturally from the series bible, "
+                     "without retelling or contradicting it.")
         else:
             recap = ("This is the first episode: introduce the hero, the world and the main conflict of the season "
                      "quickly through action, not exposition.")
@@ -660,7 +669,8 @@ class Ctx:
             return ""
         ex = (self.project.get("short_examples") or "").strip()
         if not ex:
-            if any((ch.get("speech_ru") or "").strip() for ch in self.characters):
+            if (any((ch.get("speech_ru") or "").strip() for ch in self.characters) or self.short_seconds < 45
+                    or self.project.get("made_for_kids") or self.project.get("fiction")):
                 # The built-in samples are calm science explainers: next to a character with his own manner
                 # they pull the script towards a textbook voice and textbook topics.
                 return ""
@@ -742,17 +752,29 @@ class Ctx:
                      "Never smooth his slang or pet words out when you polish.")
         return text
 
+    def tiny_short(self) -> str:
+        """A Short of 30 seconds or less has room for only 3-4 sentences: the full engine does not fit."""
+        if self.short_seconds > 30:
+            return ""
+        return (f"\n\nVERY SHORT SHORT ({self.short_seconds} seconds, about {self.words} words, 3-4 sentences): this beats the "
+                "story engine and the series rules above. Hook, one turn (the common belief broken), punchline. The answer may "
+                "come in the third sentence. No escalation stage, no recap, no subscribe line; in a series the punchline "
+                "itself is the hook for the next episode.")
+
     def ask(self, prompt_file: str, schema: dict, max_tokens: int = 32000, extra: str = "", **values) -> dict:
         lang = LANG_OVERRIDE.get(self.lang, "")
         if self.short_format:  # the line about the extra Short is for long videos only
             lang = "\n".join(x for x in lang.split("\n") if not x.startswith("- The Short is "))
         system = (fill(load_prompt("00_system.txt"), niche=self.niche) + lang
-                  + (SHORT_OVERRIDE.format(seconds=self.short_seconds, words=self.words) if self.short_format else "")
+                  + (SHORT_OVERRIDE.format(seconds=self.short_seconds, words=self.words) + self.tiny_short()
+                     if self.short_format else "")
                   + (KIDS_OVERRIDE if self.project.get("made_for_kids")
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
                   + self.lessons_block() + self.golden_block(prompt_file) + OWNER_FIRST)
-        user = fill(load_prompt(prompt_file), niche=self.niche, minutes=max(1, int(self.minutes)), words=self.words,
+        length = f"{self.short_seconds}-second" if self.short_format else f"{max(1, int(self.minutes))}-minute"
+        user = fill(load_prompt(prompt_file), niche=self.niche, minutes=max(1, int(self.minutes)), length=length,
+                    words=self.words,
                     words_min=int(self.words * 0.9), words_max=int(self.words * 1.1), **values) + extra \
             + self.voice_rule(prompt_file)
         result = llm.call_json(self.settings, system, user, schema, self.usage, max_tokens)
@@ -874,7 +896,9 @@ def _critic_pick(c: Ctx, ideas: list, r: dict, idx: int) -> int:
                         f"Story: {x.get('premise', '')}\nTwist: {x.get('twist', '')}" for i, x in enumerate(ideas))
     try:
         cr = llm.call_json(c.settings, "You judge YouTube Shorts ideas. Answer only with JSON.",
-                           IDEA_CRITIC.format(ideas=text), SCHEMA_IDEA_CRITIC, c.usage, 6000)
+                           IDEA_CRITIC.format(ideas=text, niche=c.niche.strip()[:3000], audience=(
+                               "\nThe audience is small children and their parents: kind, safe, happy endings are required; "
+                               "judge surprise by the unexpected way the story gets there." if c.project.get("made_for_kids") else "")), SCHEMA_IDEA_CRITIC, c.usage, 6000)
         c.save_usage()
     except UserError as e:
         c.log(f"Строгий зритель не ответил ({e}), беру выбор сценариста.")
@@ -986,7 +1010,9 @@ def _evaluate(c: Ctx, script: str, round_no: int) -> dict:
     thr = float(c.settings["quality_threshold"])
     min_crit = int(c.settings["min_criterion_score"])
     r["passed"] = r["overall"] >= thr and r["min_score"] >= min_crit and r["checks"]["length_ok"] \
-        and not r["checks"]["bad_openers"] and not r["checks"].get("choppy")
+        and not r["checks"]["bad_openers"] \
+        and not (r["checks"].get("choppy") and not c.short_format and not c.voice_rule("04_review.txt"))
+    # Short punchy lines are the point of a Short and of a host's own manner of speech, so they are not a fault there.
     r["evaluated_script"] = script
     return r
 
@@ -1151,7 +1177,7 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
                 visible.append(who[ch["speaker"]])  # whoever speaks is on screen
             camera = shot_text[shots[start + i]]
             prompt = (p or {}).get("prompt") or f"A scene illustrating: {ch['text']}"
-            if camera.split(",")[0].lower() not in prompt.lower():
+            if " ".join(camera.split()[:2]).lower().strip(",.:") not in prompt.lower() and not prompt.lower().startswith("camera"):
                 prompt = f"Camera: {camera}. {prompt}"
             out.append({
                 "text": ch["text"],
@@ -1289,7 +1315,7 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
             ch = next((x for x in c.characters if x["id"] == who and x.get("voice_id")), None)
             if ch:
                 settings = {**c.settings, "elevenlabs_voice_id": ch["voice_id"]}
-            chars = tts.synthesize(settings, sc["text"], mp3, prev_t, next_t)
+            chars = tts.synthesize(settings, sc["text"], mp3, prev_t, next_t, c.lang)
             c.add_usage("tts_chars", chars)
         media.to_wav(mp3, wav)
         return i
@@ -1313,7 +1339,10 @@ def st_voice(c: Ctx):
     gap, pgap = float(c.settings["scene_gap"]), float(c.settings["paragraph_gap"])
     if c.short_format:
         gap, pgap = 0.1, 0.2  # Shorts need a fast, continuous voice
-    parts = [(c.dir / "audio" / f"scene_{i:03d}.wav", pgap if sc["paragraph_end"] else gap)
+    # A long sentence cut at a comma is one breath: no scene pause inside it.
+    mid = lambda t: not re.search(r"[.!?…][\"”’')\]»]*\s*$", t)
+    parts = [(c.dir / "audio" / f"scene_{i:03d}.wav",
+              pgap if sc["paragraph_end"] else min(gap, 0.04) if mid(sc["text"]) else gap)
              for i, sc in enumerate(scenes)]
     durations = media.concat_wavs(parts, c.dir / "narration.wav")
     result = {"durations": durations, "total": sum(durations)}
@@ -1362,15 +1391,20 @@ def _item_refs_for(c: Ctx, scene: dict) -> list:
     return out[:images.MAX_ITEM_IMAGES]
 
 
+def _named_in(name: str, text: str) -> bool:
+    """A whole-word match, so "Max" is not found inside "maximum"."""
+    return bool(re.search(r"(?<!\w)" + re.escape(name.lower()) + r"(?!\w)", text.lower()))
+
+
 def _thumb_items(c: Ctx, prompt: str) -> list:
-    named = [n for it in c.items for n in (it.get("name", ""), it.get("name_en", "")) if n and n.lower() in prompt.lower()]
+    named = [n for it in c.items for n in (it.get("name", ""), it.get("name_en", "")) if n and _named_in(n, prompt)]
     return _item_refs_for(c, {"items": named})
 
 
 def _thumb_refs(c: Ctx, prompt: str) -> list:
     """The thumbnail shows the channel's own hero: the characters named in its prompt, else the host or the first one."""
     names = [n for ch in c.characters for n in (ch.get("name", ""), ch.get("name_en", "")) if n]
-    named = [n for n in names if n.lower() in prompt.lower()]
+    named = [n for n in names if _named_in(n, prompt)]
     if not named and c.characters:
         main = c.host() or c.characters[0]
         named = [main.get("name") or main.get("name_en", "")]
@@ -1413,14 +1447,13 @@ def _location_plates(c: Ctx, scenes_by_kind: list) -> dict:
 
 
 # Image models sometimes draw a vertical picture as a smaller one on white paper; this asks for the whole frame.
-FULL_BLEED = ("Full-bleed image filling the entire frame edge to edge: no white borders, no margins, no frame, "
-              "no letterbox bars, not a photo or poster on a background")
+FULL_BLEED = "Full-bleed scene filling the entire frame edge to edge"
 
 
-def _wrong_shape(path: Path) -> bool:
+def _wrong_shape(path: Path, vertical: bool = True) -> bool:
     from PIL import Image
     with Image.open(path) as im:
-        return im.width > im.height * 0.8
+        return im.width > im.height * 0.8 if vertical else im.height > im.width * 0.8
 
 
 def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallback: Path = None, refs: list = None,
@@ -1430,20 +1463,22 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
     if c.demo:
         media.demo_image(out, idx, vertical)
         return
-    style = c.settings.get("image_style", "")
-    full = f"{prompt.strip().rstrip('.')}. {style}. {FULL_BLEED}"
+    style = (c.settings.get("image_style") or "").strip().rstrip(".")
+    # The style goes first: image models read only the start of a long prompt, and the end is often cut off.
+    full = (f"{style}. " if style else "") + f"{prompt.strip().rstrip('.')}. {FULL_BLEED}"
     if refs or place or items:
         try:
             raw = images.generate_with_reference(c.settings, full, refs or [], vertical, place=place, items=items)
             media.to_png(raw, out)
             media.trim_borders(out)
-            if vertical and _wrong_shape(out):
+            if _wrong_shape(out, vertical):
                 # The editing model sometimes keeps the shape of a reference photo: one more try, then the
                 # picture is cropped to fill the frame.
-                c.log(f"Картинка {idx + 1}: получилась горизонтальной, рисую ещё раз вертикально…")
+                c.log(f"Картинка {idx + 1}: получилась не той формы, рисую ещё раз…")
                 c.add_usage("image_cost", images.REFERENCE_PRICE)
                 balance.record("fal", images.REFERENCE_PRICE)
-                raw = images.generate_with_reference(c.settings, "Tall vertical 9:16 portrait composition. " + full,
+                raw = images.generate_with_reference(c.settings, ("Tall vertical 9:16 portrait composition. " if vertical
+                                                                  else "Wide horizontal 16:9 landscape composition. ") + full,
                                                      refs or [], vertical, place=place, items=items)
                 media.to_png(raw, out)
                 media.trim_borders(out)
@@ -1990,7 +2025,16 @@ def regenerate_image(jid: str, kind: str, index: int, prompt: str = None):
         data = read_json(d / "scenes.json")
         scenes = data["scenes"]
     if prompt:
-        scenes[index]["prompt"] = prompt
+        sc = scenes[index]
+        if prompt != sc.get("prompt"):
+            # Characters and items named in the new description get their reference photos; removed ones lose them.
+            chars = read_json(d / "characters.json", []) or []
+            its = read_json(d / "items.json", []) or []
+            sc["characters"] = [ch.get("name") for ch in chars
+                                if any(n and _named_in(n, prompt) for n in (ch.get("name"), ch.get("name_en")))]
+            sc["items"] = [it.get("name") for it in its
+                           if any(n and _named_in(n, prompt) for n in (it.get("name"), it.get("name_en")))]
+        sc["prompt"] = prompt
         write_json(d / ("short_script.json" if kind == "short" else "scenes.json"), data)
     prefix = "short" if kind == "short" else "scene"
     (d / "images" / f"{prefix}_{index:03d}.png").unlink(missing_ok=True)

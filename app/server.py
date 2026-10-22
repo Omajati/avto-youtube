@@ -186,23 +186,26 @@ def create_job(data: dict = Body(...)):
     count = max(1, min(int(data.get("count") or 1), 20))
     topic = (data.get("topic") or "").strip()
     proj = projects.get((data.get("project_id") or "").strip())
+    fmt = data.get("format") if data.get("format") in ("long", "short") else proj.get("format", "long")
     opts = {
         "project_id": proj.get("id", ""),
         "language": data.get("language") if data.get("language") in projects.LANGUAGES else proj.get("language", "en"),
-        "format": data.get("format") if data.get("format") in ("long", "short") else proj.get("format", "long"),
+        "format": fmt,
         "make_short": bool(data.get("make_short", proj.get("make_short", True))),
         "review_pause": bool(data.get("review_pause", False)),
         "idea_pause": bool(data.get("idea_pause", False)),
         "duration_min": float(data.get("duration_min") or proj.get("duration_min") or s["duration_min"]),
-        "niche": _job_niche(data.get("niche"), proj.get("niche") or s["niche"]),
+        "niche": _job_niche(data.get("niche"), proj.get("niche") or _channel_niche(data, proj) or s["niche"]),
         "demo": bool(data.get("demo", False)),
-        "channel_id": (data.get("channel_id") or "").strip() or proj.get("channel_id", ""),
-        "subs_video": bool(data.get("subs_video", proj.get("subs_video", s.get("subtitles_long")))),
+        # "" means "Без канала" was picked on purpose; only a missing key falls back to the project's channel.
+        "channel_id": _job_channel(data, proj),
+        "subs_video": bool(data.get("subs_video", proj.get("subs_short" if fmt == "short" else "subs_video",
+                                                        s.get("subtitles_short" if fmt == "short" else "subtitles_long")))),
         "subs_short": bool(data.get("subs_short", proj.get("subs_short", s.get("subtitles_short")))),
         "anim_mode": (data.get("anim_mode") if data.get("anim_mode") in animate.MODES
                       else proj.get("anim_mode") or s.get("anim_mode", "off")),
         "anim_short": bool(data.get("anim_short", proj.get("anim_short", s.get("anim_short")))),
-        "anim_count": animate.clamp_count(data.get("anim_count") or proj.get("anim_count") or animate.COUNT_DEFAULT),
+        "anim_count": animate.clamp_count(data.get("anim_count") or proj.get("anim_count") or s.get("anim_count") or animate.COUNT_DEFAULT),
         "anim_pause": bool(data.get("anim_pause", proj.get("anim_pause", False))),
         "fx_mode": data.get("fx_mode") if data.get("fx_mode") in effects.MODES else proj.get("fx_mode") or s.get("fx_mode", "light"),
         "short_seconds": _short_seconds(data.get("short_seconds") or proj.get("short_seconds")),
@@ -247,11 +250,22 @@ def create_job(data: dict = Body(...)):
                     if src.exists():
                         shutil.copy(src, jd / "items" / f"{it['id']}_{i}.png")
                         photos.append(f"items/{it['id']}_{i}.png")
-                snap.append({k: it.get(k, "") for k in ("id", "name", "name_en", "kind", "appearance", "extra_ru")}
+                snap.append({k: it.get(k, "") for k in ("id", "name", "name_en", "kind", "description_ru", "appearance", "extra_ru")}
                             | {"photos": photos})
             pipeline.write_json(jd / "items.json", snap)
     worker.wake()
     return created
+
+
+def _job_channel(data: dict, proj: dict) -> str:
+    if "channel_id" in data:
+        return (data.get("channel_id") or "").strip()
+    return proj.get("channel_id", "")
+
+
+def _channel_niche(data: dict, proj: dict) -> str:
+    cid = _job_channel(data, proj)
+    return (youtube.get_profile(cid).get("niche") or "").strip() if cid else ""
 
 
 def _next_episode(proj: dict) -> int:
@@ -1263,7 +1277,11 @@ def test_tts(data: dict = Body(default={})):
                                 "Her sails were set. But not a single soul was on board.")
     proj = projects.get(data.get("project_id") or "")
     if proj:
-        # Try the project's own voice with the project's voice settings.
+        # The same order as in a real video: channel, then project, then the host character.
+        if proj.get("channel_id"):
+            prof = youtube.get_profile(proj["channel_id"])
+            if prof.get("voice_id"):
+                s["elevenlabs_voice_id"] = prof["voice_id"]
         if proj.get("voice_id"):
             s["elevenlabs_voice_id"] = proj["voice_id"]
         if proj.get("tts_model"):
@@ -1271,12 +1289,16 @@ def test_tts(data: dict = Body(default={})):
         for k in projects.VOICE_NUM:
             if proj.get(k) not in (None, ""):
                 s[k] = float(proj[k])
+        if proj.get("voice_mode") == "host":
+            host = next((c for c in projects.list_chars(set(proj.get("characters") or [])) if c.get("voice_id")), None)
+            if host:
+                s["elevenlabs_voice_id"] = host["voice_id"]
         if proj.get("language") == "ru" and not data.get("text"):
             text = ("Зимой тысяча восемьсот семьдесят второго года в Атлантике нашли корабль. "
                     "Паруса подняты, груз на месте. Но на борту не было ни души.")
     out = DATA_DIR / "test_voice.mp3"
     out.with_suffix(".json").unlink(missing_ok=True)
-    tts.synthesize(s, text, out)
+    tts.synthesize(s, text, out, language=proj.get("language", "") if proj else "")
     return Response(out.read_bytes(), media_type="audio/mpeg")
 
 
