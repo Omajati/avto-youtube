@@ -64,6 +64,7 @@ async function route() {
     else if (page === "items") await viewItems();
     else if (page === "prompts") await viewPrompts(id);
     else if (page === "music") await viewMusic();
+    else if (page === "remake") await viewRemake(id);
     else if (page === "help") viewHelp();
     else if (page === "balance") await viewBalance();
     else await viewJobs();
@@ -141,7 +142,7 @@ function draftRestore() {
 }
 
 // ------------------------------------------------------------------ recent pages as tabs
-const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", projects: "📁", characters: "🧑‍🎨", items: "📦", settings: "⚙️", prompts: "📝", music: "🎵", help: "❓", balance: "💰" };
+const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", projects: "📁", characters: "🧑‍🎨", items: "📦", settings: "⚙️", prompts: "📝", music: "🎵", remake: "🔁", help: "❓", balance: "💰" };
 function getTabs() { try { return JSON.parse(lsGet("ay_tabs", "[]")) || []; } catch (e) { return []; } }
 function rememberTab() {
   const hash = location.hash || "#/jobs";
@@ -2145,3 +2146,105 @@ $("#quit").onclick = async e => {
 };
 
 route();
+
+
+// ------------------------------------------------------------------ remake of someone else's video
+const RM_STATUS = { new: "Не запускалась", running: "⏳ Идёт работа", done: "✅ Готово", error: "⚠️ Ошибка" };
+
+async function viewRemake(id) {
+  if (id) return viewRemakeOne(id);
+  const r = await api("/api/remakes");
+  main.innerHTML = `<h1>🔁 Переделка ролика</h1>
+  <div class="card">
+    <p>Загрузите готовый ролик с русской речью, например чужой шортс с вшитыми субтитрами. Программа распознает речь, переведёт её на живой английский, озвучит выбранным голосом, закроет или сотрёт старые субтитры, наложит английские и напишет название, описание и теги под поиск. Можно ещё отразить картинку и чуть изменить кадр, чтобы ролик не выглядел копией.</p>
+    <p class="muted small">Стоимость за минуту ролика: распознавание речи около $0.004, перевод и описание около $0.02, озвучка около 900 символов ElevenLabs. Стирание субтитров нейросетью оплачивается отдельно в Replicate. Для своих роликов из программы удобнее кнопка «🌐 Английская версия» на странице ролика: там субтитры стирать не нужно.</p>
+    <label class="btn primary" style="display:inline-block;cursor:pointer">📤 Загрузить видео mp4<input type="file" id="rmfile" accept="video/*" style="display:none"></label>
+    <span id="rmup" class="muted small"></span>
+  </div>
+  <div class="card"><h2>Переделки</h2>${r.items.length ? `<table>${r.items.map(x => `<tr><td><a href="#/remake/${x.id}">${esc(x.title || x.name)}</a><div class="muted small">${esc(x.name)} · ${fmtTime(x.duration)}</div></td><td>${RM_STATUS[x.status] || esc(x.status)}</td></tr>`).join("")}</table>` : `<p class="muted">Пока ничего не загружено.</p>`}</div>`;
+  $("#rmfile").onchange = async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    $("#rmup").textContent = `Загружаю ${f.name} (${(f.size / 1048576).toFixed(1)} МБ)…`;
+    try {
+      const m = await api(`/api/remakes?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
+      location.hash = `#/remake/${m.id}`;
+    } catch (err) { $("#rmup").textContent = ""; toast(err.message, true); }
+  };
+}
+
+async function viewRemakeOne(id) {
+  clearInterval(timer); timer = null;
+  const [m, info] = await Promise.all([api(`/api/remakes/${id}`), api("/api/remakes")]);
+  const o = m.opts || {};
+  const box = m.box || { y: 75, h: 12 };
+  const running = m.status === "running";
+  const vertical = m.height > m.width;
+  const mins = Math.max(m.duration / 60, 0.1);
+  main.innerHTML = `<div class="row"><a href="#/remake" class="muted small">← Все переделки</a></div>
+  <h1>${esc(m.title || m.name)}</h1>
+  ${m.title_ru ? `<div class="muted">${esc(m.title_ru)}</div>` : ""}
+  <div class="row" style="margin:8px 0">${RM_STATUS[m.status] || esc(m.status)}<span class="muted small">${esc(m.name)} · ${m.width}×${m.height} · ${fmtTime(m.duration)}</span></div>
+  ${m.status === "error" ? `<div class="banner bad">${nl(m.error || "")}</div>` : ""}
+  ${m.files["video.mp4"] ? `<div class="card"><h2>Результат</h2>
+    <video controls src="/api/remakes/${id}/file/video.mp4?t=${m.finished || ""}" style="max-width:${vertical ? 320 : 640}px;width:100%"></video>
+    <div class="row" style="margin-top:8px"><a class="btn" href="/api/remakes/${id}/file/video.mp4" download="remake.mp4">⬇️ Скачать видео</a>
+      ${m.files["thumbnail.jpg"] ? `<a class="btn" href="/api/remakes/${id}/file/thumbnail.jpg" target="_blank">🖼 Обложка</a>` : ""}
+      <button data-open>📂 Открыть папку</button></div>
+    <div id="rmseo" class="small" style="margin-top:10px"></div></div>` : ""}
+  <div class="card"><h2>Настройки переделки</h2>
+    <div class="grid2"><div>
+      <label class="f">Голос для английской озвучки</label>
+      <select id="rm-v" ${running ? "disabled" : ""}><option value="">Загружаю голоса…</option></select>
+      <label class="f">Старые субтитры</label>
+      <select id="rm-s" ${running ? "disabled" : ""}>${Object.entries(info.subs_modes).map(([k, n]) => `<option value="${k}" ${k === (o.subs_mode || "blur") ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+      <div id="rm-ai" class="muted small" style="display:none">${info.replicate ? "Нейросеть найдёт и сотрёт текст на кадрах и дорисует фон. На лицах и сложном фоне иногда остаются разводы. Видео отправляется в ваш аккаунт Replicate и удаляется оттуда после обработки." : "⚠️ Нужен ключ Replicate: Настройки → 3. Картинки → Replicate → Ключ (выбирать Replicate для картинок не обязательно)."}</div>
+      <label class="check"><input type="checkbox" id="rm-r" ${o.restyle !== false ? "checked" : ""} ${running ? "disabled" : ""}> Изменить вид: отразить зеркально, приблизить кадр на 6%, чуть ярче цвета</label>
+      <label class="check"><input type="checkbox" id="rm-n" ${o.new_subs !== false ? "checked" : ""} ${running ? "disabled" : ""}> Английские субтитры на видео</label>
+      <label class="f">Фоновая музыка</label>
+      <select id="rm-m" ${running ? "disabled" : ""}><option value="library">Подобрать из раздела «Музыка»</option><option value="off" ${o.music === "off" ? "selected" : ""}>Без музыки</option></select>
+      <p class="muted small">Русский голос из ролика полностью убирается вместе с оригинальным звуком, поэтому под английский голос ставится музыка из вашей библиотеки.</p>
+    </div><div>
+      <div id="rm-boxui"><label class="f">Где старые субтитры <span class="hint">двигайте ползунки, пока жёлтая рамка не закроет текст на кадре</span></label>
+      <div style="position:relative;display:inline-block;max-width:100%"><img src="/api/remakes/${id}/file/preview.jpg" style="max-height:420px;max-width:100%;display:block">
+        <div id="rm-box" style="position:absolute;left:0;right:0;border:3px solid #f5c400;background:rgba(245,196,0,.25)"></div></div>
+      <label class="f">Сверху: <span id="rm-yv"></span>%</label><input type="range" id="rm-y" min="0" max="95" step="1" value="${box.y}" ${running ? "disabled" : ""}>
+      <label class="f">Высота: <span id="rm-hv"></span>%</label><input type="range" id="rm-h" min="3" max="60" step="1" value="${box.h}" ${running ? "disabled" : ""}></div>
+    </div></div>
+    <p class="muted small">Примерно: распознавание речи ~$${(0.004 * mins).toFixed(3)}, перевод и описание ~$${(0.02 * mins).toFixed(2)}, озвучка ~${Math.round(900 * mins).toLocaleString("ru")} символов ElevenLabs.</p>
+    <div class="row"><button class="primary" id="rm-go" ${running ? "disabled" : ""}>${m.status === "new" ? "▶ Запустить переделку" : "↻ Переделать заново"}</button><span class="grow"></span><button class="danger" id="rm-del" ${running ? "disabled" : ""}>Удалить</button></div>
+  </div>
+  <div class="card"><h2>Журнал</h2><pre class="log" style="white-space:pre-wrap;max-height:300px;overflow:auto">${esc(m.log || "Пока пусто.")}</pre></div>`;
+  const draw = () => {
+    const y = +$("#rm-y").value, h = +$("#rm-h").value;
+    $("#rm-box").style.top = y + "%"; $("#rm-box").style.height = h + "%";
+    $("#rm-yv").textContent = y; $("#rm-hv").textContent = h;
+    $("#rm-boxui").style.display = $("#rm-s").value === "blur" ? "" : "none";
+    $("#rm-ai").style.display = $("#rm-s").value === "ai" ? "" : "none";
+  };
+  ["#rm-y", "#rm-h"].forEach(k => $(k).oninput = draw);
+  $("#rm-s").onchange = draw; draw();
+  const vsel = $("#rm-v");
+  loadVoices().then(vs => { vsel.innerHTML = `<option value="">— выберите голос —</option>` + voiceOptions(vs, o.voice_id || "", "en"); vsel.value = o.voice_id || ""; })
+    .catch(e => { vsel.innerHTML = `<option value="">Голоса не загрузились: ${esc(e.message)}</option>`; });
+  $("#rm-go").onclick = async () => {
+    if (!vsel.value) return toast("Выберите голос", true);
+    const op = vsel.options[vsel.selectedIndex];
+    await api(`/api/remakes/${id}/start`, { json: { voice_id: vsel.value, voice_name: op.dataset.name || op.text, subs_mode: $("#rm-s").value,
+      restyle: $("#rm-r").checked, new_subs: $("#rm-n").checked, music: $("#rm-m").value, box: { y: +$("#rm-y").value, h: +$("#rm-h").value } } })
+      .then(() => viewRemakeOne(id)).catch(e => toast(e.message, true));
+  };
+  $("#rm-del").onclick = async () => { if (!confirm("Удалить эту переделку со всеми файлами?")) return; await api(`/api/remakes/${id}`, { method: "DELETE" }); location.hash = "#/remake"; };
+  const op = main.querySelector("[data-open]");
+  if (op) op.onclick = () => api("/api/open", { json: { what: "remake", id } }).catch(e => toast(e.message, true));
+  if (m.files["youtube.txt"]) {
+    const t = await (await fetch(`/api/remakes/${id}/file/youtube.txt`)).text();
+    $("#rmseo").innerHTML = `<pre style="white-space:pre-wrap">${esc(t)}</pre>${copyBtn(t)}`;
+  }
+  if (running) timer = setInterval(async () => {
+    const n = await api(`/api/remakes/${id}`).catch(() => null);
+    if (!n || location.hash !== `#/remake/${id}`) return;
+    if (n.status !== "running") return viewRemakeOne(id);
+    const log = main.querySelector("pre.log"); if (log) log.textContent = n.log;
+  }, 3000);
+}

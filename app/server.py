@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, animate, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, projects, tts, updater, uploader, worker, youtube
+from . import analytics, animate, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, projects, remake, tts, updater, uploader, worker, youtube
 from .config import (DATA_DIR, MUSIC_DIR, PROMPTS_DEFAULT_DIR, PROMPTS_DIR, load_settings,
                      public_settings, save_settings)
 from .net import UserError
@@ -1146,11 +1146,55 @@ def _open(path: Path):
         raise UserError(f"Не получилось открыть папку. Она находится здесь: {path}")
 
 
+# ---------------------------------------------------------------- remake of someone else's video
+
+@app.get("/api/remakes")
+def remakes_list():
+    return {"items": remake.list_all(), "subs_modes": remake.SUBS_MODES,
+            "replicate": bool(load_settings().get("replicate_key"))}
+
+
+@app.post("/api/remakes")
+async def remakes_create(request: Request, name: str = ""):
+    raw = await request.body()
+    if len(raw) < 1000:
+        raise UserError("Файл пустой. Выберите видео mp4.")
+    return remake.create(Path(name).name, raw)
+
+
+@app.get("/api/remakes/{rid}")
+def remakes_get(rid: str):
+    return remake.get(rid)
+
+
+@app.post("/api/remakes/{rid}/start")
+def remakes_start(rid: str, data: dict = Body(...)):
+    remake.start(rid, data)
+    return remake.get(rid)
+
+
+@app.delete("/api/remakes/{rid}")
+def remakes_delete(rid: str):
+    remake.delete(rid)
+    return {"ok": True}
+
+
+@app.get("/api/remakes/{rid}/file/{name}")
+def remakes_file(rid: str, name: str):
+    d = remake._dir(rid)
+    p = d / "preview.jpg" if name == "preview.jpg" else d / "output" / Path(name).name
+    if not p.exists():
+        raise HTTPException(404)
+    return FileResponse(p, headers={"Cache-Control": "no-cache"})
+
+
 @app.post("/api/open")
 def open_folder(data: dict = Body(...)):
     what = data.get("what")
     if what == "job":
         _open(pipeline.job_dir(data["id"]) / "output")
+    elif what == "remake":
+        _open(remake._dir(data["id"]) / "output")
     elif what == "music":
         _open(MUSIC_DIR)
     elif what == "prompts":

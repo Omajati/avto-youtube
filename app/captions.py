@@ -159,12 +159,12 @@ def write_srt(cues: list, out: Path):
     out.write_text("\n".join(lines), encoding="utf-8")
 
 
-def write_ass(cues: list, out: Path, width: int, height: int, vertical: bool, family: str):
+def write_ass(cues: list, out: Path, width: int, height: int, vertical: bool, family: str, margin_v: int = None):
     if vertical:
         # Shorts: big centered words, a bit below the middle (away from the YouTube buttons).
-        size, align, margin_v, outline, upper = 96, 2, int(height * 0.30), 6, True
+        size, align, margin_v, outline, upper = 96, 2, int(height * 0.30) if margin_v is None else margin_v, 6, True
     else:
-        size, align, margin_v, outline, upper = 60, 2, 70, 4, False
+        size, align, margin_v, outline, upper = 60, 2, 70 if margin_v is None else margin_v, 4, False
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
