@@ -836,7 +836,9 @@ class Ctx:
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
                   + self.lessons_block() + self.golden_block(prompt_file) + self.library_block(prompt_file)
-                  + (SCRIPT_CRAFT if prompt_file in GOLDEN_STAGES else "") + OWNER_FIRST)
+                  + (SCRIPT_CRAFT if prompt_file in GOLDEN_STAGES else "") + OWNER_FIRST
+                  + (OWNER_TOPIC.format(topic=own_topic(self).replace("{", "(").replace("}", ")"))
+                     if prompt_file in GOLDEN_STAGES and own_topic(self) else ""))
         length = f"{self.short_seconds}-second" if self.short_format else f"{max(1, int(self.minutes))}-minute"
         user = fill(load_prompt(prompt_file), niche=self.niche, minutes=max(1, int(self.minutes)), length=length,
                     words=self.words,
@@ -873,6 +875,20 @@ def ideas_count(settings: dict) -> int:
         return 5
 
 
+def own_topic(c: Ctx) -> str:
+    """The topic the owner wrote himself ("" when the program chooses, and for series episodes)."""
+    return "" if c.episode else (c.job.get("topic") or "").strip()
+
+
+OWNER_TOPIC = (
+    "\n\nOWNER'S TOPIC (beats every other rule here, including the niche's topic rules and the characters):\n"
+    "The owner chose this video's topic himself: \"{topic}\"\n"
+    "The video is about exactly this topic: same subject, same angle, every point the owner named. Never replace "
+    "it, never drift to a neighbouring subject, never twist its meaning. Characters only add their voice, manner "
+    "and reactions on top of this topic and script; they never change what the video is about. All the craft "
+    "rules apply only to make THIS topic interesting.")
+
+
 def _idea_block(c: Ctx) -> str:
     topic = (c.job.get("topic") or "").strip()
     if not topic and c.episode:
@@ -883,24 +899,24 @@ def _idea_block(c: Ctx) -> str:
                  "continue the series naturally (see SERIES above)"
                  + (f" and follow the owner's plan: \"{topic}\"." if topic else "."))
     elif topic:
-        block = (f"The channel owner suggested this topic (it may be written in Russian):\n\"{topic}\"\n"
-                 "Stay very close to this topic: every idea must be about exactly what the owner wrote, not a "
-                 "neighbouring subject. The first idea is the owner's topic itself, turned into a video as written "
-                 "(keep every point the owner named). The other ideas are close variations of it: the same subject "
-                 "with a different hook, a different key fact or a different example, so the owner can pick the "
-                 "best wording of their own topic.")
+        block = (f"The channel owner chose the topic himself (it may be written in Russian):\n\"{topic}\"\n"
+                 "Give exactly ONE idea: the owner's topic itself, exactly as written. Do not change its subject, "
+                 "angle, claim, heroes or any point the owner named, do not replace it with a 'better' or "
+                 "neighbouring topic and do not add a new plot. Your job is only to package it: a title, the "
+                 "premise in the owner's own meaning, a hook and the key facts that serve this exact topic.")
     else:
         block = ("Choose freely within the channel niche and follow its rules about topics exactly. Make the ideas "
                  "diverse within those rules.")
-    return block + c.history_block()
+    # The owner's own topic is taken even if it resembles an earlier video: he chose it knowingly.
+    return block + ("" if own_topic(c) else c.history_block())
 
 
 def _ask_ideas(c: Ctx, n: int, avoid: list = None) -> dict:
     extra = SHORT_IDEAS_EXTRA if c.short_format else ""
     extra += f"\n\nGive exactly {n} ideas, no more and no fewer."
-    if (c.job.get("topic") or "").strip() and not c.episode:
-        extra += ("\n\nThe owner gave a topic: variety only inside that topic, never leave it for another subject."
-                  + (" The owner's topic itself is already in the list, so give new close variations of it." if avoid else ""))
+    if own_topic(c) and avoid:  # the owner pressed "more topics" himself
+        extra += ("\n\nThe owner gave a topic: variety only inside that topic, never leave it for another subject. "
+                  "The owner's topic itself is already in the list, so give new close variations of it.")
     if avoid:
         extra += ("\n\nThese ideas were already proposed for this video and the owner wants NEW ones: no repeated "
                   "stories, situations or twists:\n" + "\n".join(f"- {t}" for t in avoid))
@@ -908,11 +924,11 @@ def _ask_ideas(c: Ctx, n: int, avoid: list = None) -> dict:
 
 
 def st_idea(c: Ctx):
-    n = ideas_count(c.settings)
+    n = 1 if own_topic(c) else ideas_count(c.settings)
     if c.demo:
         r = _demo("idea")
     else:
-        c.log(f"Придумываю {n} тем и выбираю лучшую…")
+        c.log("Оформляю вашу тему, другие темы не придумываю…" if n == 1 else f"Придумываю {n} тем и выбираю лучшую…")
         r = _ask_ideas(c, n)
     ideas = r.get("ideas") or []
     if not ideas:
@@ -923,10 +939,10 @@ def st_idea(c: Ctx):
     idx = r.get("chosen_index", 0)
     if not isinstance(idx, int) or not 0 <= idx < len(ideas):
         idx = max(range(len(ideas)), key=lambda i: ideas[i]["total"])
-    own_topic = bool((c.job.get("topic") or "").strip()) and not c.episode
-    if own_topic:
+    if own_topic(c):
+        ideas[:] = ideas[:1]
         idx = 0  # the first idea is the owner's own topic as written: he already chose it
-        c.log("Беру вашу тему как есть (остальные варианты можно выбрать вручную).")
+        c.log("Беру вашу тему как есть.")
     elif c.short_format and not c.demo and len(ideas) > 1:
         idx = _critic_pick(c, ideas, r, idx)
     r["chosen_index"] = idx
@@ -996,6 +1012,8 @@ def _chosen_idea(c: Ctx) -> dict:
 
 def needs_idea_choice(job: dict) -> bool:
     opts = job.get("options", {})
+    if (job.get("topic") or "").strip() and not opts.get("episode"):
+        return False  # the owner wrote the topic himself: there is nothing to choose
     return bool(opts.get("idea_pause")) and not opts.get("idea_picked")
 
 

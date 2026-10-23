@@ -1,6 +1,6 @@
 {
- "version": 77,
- "label": "редактор не теряет правки",
- "notes": "Редактор: финальная оценка без ложных правок, учёт прошлых раундов",
+ "version": 78,
+ "label": "ваша тема без изменений",
+ "notes": "Своя тема берётся как есть",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
