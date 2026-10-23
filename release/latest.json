@@ -1,6 +1,6 @@
 {
- "version": 72,
- "label": "правила и описание ниши одной кнопкой",
- "notes": "Хранилище сценариев: одна кнопка обновляет правила и описание ниши по всем разборам",
+ "version": 73,
+ "label": "дешёвое оживление MiniMax",
+ "notes": "Оживление: новая модель MiniMax H3 Max Turbo (768p и 480p), почти вдвое дешевле Kling",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

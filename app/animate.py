@@ -15,6 +15,18 @@ VIDEO_MODELS = {
         "endpoint": "fal-ai/ltx-2-19b/distilled/image-to-video",
         "price": 0.04,
     },
+    "h3turbo": {
+        "name": "MiniMax H3 Max Turbo 768p — почти вдвое дешевле Kling, живое движение",
+        "endpoint": "minimax/h3-max-turbo/image-to-video",
+        "resolution": "768P",
+        "price": 0.04,
+    },
+    "h3turbo480": {
+        "name": "MiniMax H3 Max Turbo 480p — самое дешёвое, картинка мягче",
+        "endpoint": "minimax/h3-max-turbo/image-to-video",
+        "resolution": "480P",
+        "price": 0.025,
+    },
     "kling25": {
         "name": "Kling 2.5 Turbo Pro — лучшая цена за качество (рекомендую)",
         "endpoint": "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
@@ -114,7 +126,10 @@ def generate(settings, img: Path, prompt: str, need: float, vertical: bool, chec
     m = VIDEO_MODELS[mid]
     full = f"{prompt.strip().rstrip('.')}. {MOTION_PROMPT}"
     image = _data_uri(img)
-    if mid == "ltx2":
+    if m.get("resolution"):  # MiniMax H3: the picture's shape comes from the image itself
+        body = {"prompt": full, "image_url": image, "duration": clip_seconds(settings, need),
+                "resolution": m["resolution"], "prompt_expansion_mode": "disabled", "enable_safety_checker": True}
+    elif mid == "ltx2":
         body = {"prompt": full, "image_url": image, "num_frames": _ltx_frames(need), "fps": 25,
                 "video_size": "portrait_16_9" if vertical else "landscape_16_9", "generate_audio": False,
                 "camera_lora": "dolly_in"}
