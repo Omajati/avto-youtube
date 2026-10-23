@@ -208,6 +208,7 @@ def create_job(data: dict = Body(...)):
         "anim_short": bool(data.get("anim_short", proj.get("anim_short", s.get("anim_short")))),
         "anim_count": animate.clamp_count(data.get("anim_count") or proj.get("anim_count") or s.get("anim_count") or animate.COUNT_DEFAULT),
         "anim_pause": bool(data.get("anim_pause", proj.get("anim_pause", False))),
+        "images_pause": bool(data.get("images_pause", proj.get("images_pause", False))),
         "fx_mode": data.get("fx_mode") if data.get("fx_mode") in effects.MODES else proj.get("fx_mode") or s.get("fx_mode", "light"),
         "short_seconds": _short_seconds(data.get("short_seconds") or proj.get("short_seconds")),
         "music_mode": data.get("music_mode") if data.get("music_mode") in musiclib.MODES else proj.get("music_mode") or "library",
@@ -303,6 +304,8 @@ def job_detail(jid: str):
         "thumb": pipeline.read_json(d / "thumb.json", {}) or {},
         "log": log,
         "images": imgs,
+        "own_images": pipeline.read_json(d / "own_images.json", []) or [],
+        "images_waiting": pipeline.needs_images_choice(j),
         "files": {
             "video": (d / "output" / "video.mp4").exists(),
             "short": (d / "output" / "short.mp4").exists(),
@@ -411,6 +414,47 @@ def job_image(jid: str, data: dict = Body(...)):
         db.update(jid, status="queued", error="")
         worker.wake()
     return {"ok": True}
+
+
+@app.post("/api/jobs/{jid}/own-image")
+async def job_own_image(jid: str, request: Request, kind: str = "scene", index: int = 0):
+    """The owner's own picture for a scene (made elsewhere). The video is then assembled with it."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
+    raw = await request.body()
+    if len(raw) > 40 * 1024 * 1024:
+        raise UserError("Картинка больше 40 МБ.")
+    pipeline.own_image(jid, "short" if kind == "short" else "scene", int(index), raw)
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{jid}/own-images-done")
+def job_own_images_done(jid: str):
+    """After a pause for own pictures (or after replacing pictures): missing ones are drawn, the video is assembled."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Ролик уже собирается.")
+    opts = dict(j["options"], images_picked=True)
+    db.update(jid, options=opts, status="queued", error="")
+    worker.wake()
+    return {"ok": True}
+
+
+@app.get("/api/jobs/{jid}/scenes.txt")
+def job_scenes_txt(jid: str):
+    """Scene list to draw the pictures elsewhere: number, what is said, what to draw."""
+    _job_or_404(jid)
+    d = pipeline.job_dir(jid)
+    rows = []
+    for title, name, prefix in (("ВИДЕО", "scenes.json", "Сцена"), ("ШОРТС", "short_script.json", "Шортс, сцена")):
+        sc = (pipeline.read_json(d / name) or {}).get("scenes") or []
+        if sc:
+            rows.append(f"===== {title} =====")
+            rows += [f"{prefix} {i + 1}\nТекст: {x.get('text', '')}\nЧто нарисовать: {x.get('prompt_ru', '')}\n"
+                     f"Prompt: {x.get('prompt', '')}\n" for i, x in enumerate(sc)]
+    return Response("\n".join(rows) or "Сцен ещё нет.", media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="scenes-{jid}.txt"'})
 
 
 @app.post("/api/jobs/{jid}/thumbnail")

@@ -230,6 +230,7 @@ async function viewNew() {
         <select id="anim">${animModes().map(([k, n]) => `<option value="${k}" ${k === s.anim_mode ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
         <div id="anim-n-box"><label class="f">Сколько сцен оживить <span class="hint">Конкретные сцены можно выбрать потом на странице ролика</span></label><input type="number" id="anim-n" min="1" max="60" value="${s.anim_count || 3}"></div></div>
       <div><label class="f">&nbsp;</label><label class="check long-only"><input type="checkbox" id="anim-s" ${s.anim_short ? "checked" : ""}> Оживить и шортс <span class="muted small">(столько же первых сцен)</span></label>
+        <label class="check"><input type="checkbox" id="img-p"> Свои картинки: пауза перед рисованием <span class="muted small">(после озвучки ролик остановится, вы загрузите картинки, сделанные в другом месте, и нажмёте «Продолжить»; недостающие программа дорисует сама)</span></label>
         <label class="check"><input type="checkbox" id="anim-p"> Пауза перед анимацией: я сам выберу сцены <span class="muted small">(когда картинки готовы, ролик остановится, вы отметите любые сцены и нажмёте «Продолжить»)</span></label></div>
     </div>
     <label class="f">Музыка <span class="hint">Сочинение новой платное, около $0.30 за минуту, трек сохранится в «Музыку»</span></label>
@@ -290,6 +291,7 @@ async function viewNew() {
     $("#anim-s").checked = p ? p.anim_short : s.anim_short;
     $("#anim-n").value = (p && p.anim_count) || s.anim_count || 3;
     $("#anim-p").checked = !!(p && p.anim_pause);
+    $("#img-p").checked = !!(p && p.images_pause);
     $("#subs-v").checked = p ? p.subs_video : s.subtitles_long;
     $("#subs-s").checked = p ? p.subs_short : s.subtitles_short;
     if ($("#chan")) $("#chan").value = (p && p.channel_id && yt.channels.find(c => c.id === p.channel_id)) ? p.channel_id : "";
@@ -333,7 +335,7 @@ async function viewNew() {
   };
   $("#go").onclick = async () => {
     if (!curProj && projs.length && !confirm("Проект не выбран. Ролик возьмёт общую нишу из настроек и общий голос, а не нишу и голос вашего проекта. Всё равно запустить?\n\nЧтобы взять настройки проекта, нажмите «Отмена» и выберите проект вверху страницы.")) return;
-    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan") ? $("#chan").value : undefined, subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, anim_pause: $("#anim-p").checked, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
+    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan") ? $("#chan").value : undefined, subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, anim_pause: $("#anim-p").checked, images_pause: $("#img-p").checked, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
     draftClear(); toast("Запущено"); location.hash = jobs.length === 1 ? `#/job/${jobs[0].id}` : "#/jobs";
   };
   $("#demo").onclick = async () => {
@@ -834,6 +836,7 @@ async function viewProject(id) {
       <label class="check pj-long" style="margin-top:38px"><input type="checkbox" data-q="make_short" ${p.make_short ? "checked" : ""}> Делать шортс</label>
       <label class="check pj-long"><input type="checkbox" data-q="anim_short" ${p.anim_short ? "checked" : ""}> Оживлять шортс</label>
       <label class="check"><input type="checkbox" data-q="anim_pause" ${p.anim_pause ? "checked" : ""}> Пауза перед анимацией: выбирать сцены самому</label>
+      <label class="check"><input type="checkbox" data-q="images_pause" ${p.images_pause ? "checked" : ""}> Свои картинки: пауза перед рисованием <span class="muted small">(загружаете картинки из другого сервиса, программа озвучивает и монтирует по сценарию)</span></label>
       <label class="check pj-long"><input type="checkbox" data-q="subs_video" ${p.subs_video ? "checked" : ""}> Субтитры на длинном видео</label>
       <label class="check"><input type="checkbox" data-q="subs_short" ${p.subs_short ? "checked" : ""}> <span id="pj-subs-l">Субтитры на шортсе</span></label>
       <label class="check"><input type="checkbox" data-q="made_for_kids" ${p.made_for_kids ? "checked" : ""}> Ролики для детей <span class="muted small">(сказочный добрый тон; на YouTube ставится отметка «для детей», по закону это обязательно для детского контента)</span></label>
@@ -1093,7 +1096,11 @@ function renderHead(d) {
   if (j.status === "error") act.push(`<button class="primary" data-act="retry">↻ Попробовать ещё раз</button>`);
   const ideaWait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked && !((j.topic || "").trim() && !j.options.episode);
   const animWait = d.anim && d.anim.waiting;
-  if (j.status === "review" && !ideaWait && !animWait) act.push(`<button class="primary" data-act="approve">✓ Сценарий хороший, продолжить</button>`);
+  const imgWait = d.images_waiting;
+  const ownPending = !imgWait && (d.own_images || []).length && ["done", "error", "paused"].includes(j.status) && !d.stages.video;
+  if (imgWait) act.push(`<button class="primary" data-own-go="1">▶ Продолжить: дорисовать недостающие и смонтировать</button>`);
+  if (ownPending) act.push(`<button class="primary" data-own-go="1">🎬 Собрать видео с моими картинками</button>`);
+  if (j.status === "review" && !ideaWait && !animWait && !imgWait) act.push(`<button class="primary" data-act="approve">✓ Сценарий хороший, продолжить</button>`);
   if (j.options.project_id && d.stages.review && j.status !== "running") act.push(`<button data-gold="video" title="Сценарист будет изучать этот текст перед новыми роликами проекта">⭐ ${d.format === "short" ? "Шортс" : "Сценарий"} в копилку удачных</button>`);
   if (j.options.project_id && d.format !== "short" && d.stages.short_script && j.status !== "running") act.push(`<button data-gold="short">⭐ Шортс в копилку</button>`);
   if (d.stages.images && j.status !== "running" && !j.options.translate_from && (j.options.language || "en") !== "en") act.push(`<button data-tr="1" title="Те же картинки и анимация, английский текст, голос, субтитры и описание">🌐 Английская версия</button>`);
@@ -1111,12 +1118,18 @@ function renderHead(d) {
     </div>
     ${j.status !== "done" ? `<div class="bar"><div style="width:${j.progress}%"></div></div>` : ""}
     ${j.status === "error" ? `<div class="banner bad">${nl(j.error)}</div>` : ""}
+    ${d.images_waiting ? `<div class="banner info">⏸ Сценарий и озвучка готовы. Откройте шаг «Сцены и описания картинок»: там текст каждой сцены и что на ней нарисовать (можно скачать списком). Загрузите свои картинки по одной кнопкой «📤 Своя» или все сразу, потом нажмите «Продолжить». Сцены без вашей картинки программа нарисует сама. Загружено ваших: ${(d.own_images || []).length}.</div>` : ""}
     ${j.options.translate_from ? `<div class="banner info">🌐 Английская версия ролика <a href="#/job/${esc(j.options.translate_from)}">${esc(j.options.translate_from)}</a>: те же картинки и анимация${(j.options.flipped || []).length ? ", кадры отражены и камера движется по-другому" : ""}, новый текст, голос, субтитры, описание и обложка.</div>` : ""}
     ${ideaWait ? `<div class="banner info">Темы готовы, программа ждёт вашего выбора. Откройте шаг «Выбор темы», отметьте понравившуюся тему и нажмите «Взять эту тему». Сценарий ещё не писался, деньги почти не потрачены.</div>` : ""}
     ${animWait ? `<div class="banner info">🎬 Картинки и озвучка готовы, программа ждёт вашего выбора анимации. Откройте шаг «Анимация сцен» ниже: программа уже отметила сцены, которые оживила бы сама. Добавьте или снимите любые галочки и нажмите «Оживить выбранные и продолжить». Перед оплатой покажется цена.</div>` : ""}
-    ${j.status === "review" && !ideaWait && !animWait ? `<div class="banner info">Текст готов и проверен редактором. Программа остановилась и ждёт вас: сцены, картинки и озвучка ещё не делались. Прочитайте текст в шаге «Проверка редактором» → «Итоговый текст для озвучки». Если нужно, исправьте его там же и нажмите «Сохранить мой текст». Когда всё устраивает, нажмите «Сценарий хороший, продолжить». Или нажмите «Переделать» у шага «Текст сценария», чтобы ИИ написал заново.</div>` : ""}
+    ${j.status === "review" && !ideaWait && !animWait && !d.images_waiting ? `<div class="banner info">Текст готов и проверен редактором. Программа остановилась и ждёт вас: сцены, картинки и озвучка ещё не делались. Прочитайте текст в шаге «Проверка редактором» → «Итоговый текст для озвучки». Если нужно, исправьте его там же и нажмите «Сохранить мой текст». Когда всё устраивает, нажмите «Сценарий хороший, продолжить». Или нажмите «Переделать» у шага «Текст сценария», чтобы ИИ написал заново.</div>` : ""}
     <div class="row" style="margin-top:12px">${act.join("")}</div>
   </div>`;
+  $("#jhead").querySelectorAll("[data-own-go]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    await api(`/api/jobs/${j.id}/own-images-done`, { method: "POST" }).then(() => toast("Продолжаю: дорисую недостающие картинки и смонтирую видео")).catch(e => { toast(e.message, true); b.disabled = false; });
+    lastStagesKey = "";
+  });
   $("#jhead").querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
     const a = b.dataset.act;
     if (a === "delete" && !confirm("Удалить этот ролик вместе со всеми файлами?")) return;
@@ -1222,6 +1235,29 @@ function renderStages(d) {
       lastStagesKey = "";
     };
   }
+  const ownUp = async (kind, idx, file) => {
+    const r = await fetch(`/api/jobs/${j.id}/own-image?kind=${kind}&index=${idx}`, { method: "POST", body: file });
+    if (!r.ok) { let m = "Не удалось загрузить картинку"; try { m = (await r.json()).detail || m; } catch (e) {} throw new Error(m); }
+  };
+  el.querySelectorAll("[data-own]").forEach(inp => inp.onchange = async () => {
+    const [kind, idx] = inp.dataset.own.split(":");
+    if (!inp.files[0]) return;
+    try { await ownUp(kind, +idx, inp.files[0]); toast(`Ваша картинка поставлена в сцену ${+idx + 1}`); } catch (e) { toast(e.message, true); }
+    lastStagesKey = "";
+  });
+  const bulk = el.querySelector("#own-bulk");
+  if (bulk) bulk.onchange = async () => {
+    const files = [...bulk.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    let ok = 0, next = 0;
+    for (const f of files) {
+      const m = f.name.match(/\d+/);
+      const idx = m ? +m[0] - 1 : next;
+      next = idx + 1;
+      try { await ownUp("scene", idx, f); ok++; } catch (e) { toast(`${f.name}: ${e.message}`, true); }
+    }
+    toast(`Загружено картинок: ${ok} из ${files.length}`);
+    lastStagesKey = "";
+  };
   el.querySelectorAll("[data-regen]").forEach(b => b.onclick = async () => {
     const [kind, idx] = b.dataset.regen.split(":");
     const current = kind === "thumbnail" ? d.stages.extras.thumbnail_prompt
@@ -1470,11 +1506,16 @@ const RENDER = {
   scenes(r, d) {
     if (!r) return "";
     const durs = d.stages.voice?.durations;
-    return `<p class="muted">${r.scenes.length} сцен, по одной картинке на каждую. Кнопка «Перерисовать» нарисует картинку заново.</p>
+    const own = new Set(d.own_images || []);
+    const busy = d.job.status === "running";
+    return `<p class="muted">${r.scenes.length} сцен, по одной картинке на каждую. «Перерисовать» нарисует картинку заново, «📤 Своя» поставит вашу картинку (она обрежется под кадр).</p>
+    <div class="row" style="margin-bottom:8px"><a class="btn sm" href="/api/jobs/${d.job.id}/scenes.txt">⬇ Список сцен для генерации в другом месте</a>
+      <label class="btn sm" style="cursor:pointer">📤 Загрузить свои картинки пачкой<input type="file" accept="image/*" multiple id="own-bulk" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label>
+      <span class="muted small">Номер сцены берётся из имени файла (1.png, scene_12.jpg, 03.webp); без номера по порядку.</span></div>
     <table><tr><th>#</th><th>Картинка</th><th>Текст сцены и что на картинке</th><th></th></tr>
     ${r.scenes.map((s, i) => `<tr><td>${i + 1}${durs ? `<div class="muted small">${durs[i].toFixed(1)}с</div>` : ""}</td><td>${img(d, `scene_${String(i).padStart(3, "0")}.png`, d.format === "short" ? "vsc" : "sc")}</td>
       <td><div>${esc(s.prompt_ru)}</div>${s.location || s.shot ? `<div class="muted small">${s.location ? `📍 ${esc(s.location)}` : ""}${s.shot ? ` 🎥 ${esc(({ wide: "общий план", medium: "средний план", pov: "от первого лица", closeup: "крупный план", ots: "из-за плеча", detail: "деталь крупно", low: "снизу", high: "сверху", profile: "в профиль" })[s.shot] || s.shot)}` : ""}</div>` : ""}<div class="en">${esc(s.text)}</div>${fxTag(s)}</td>
-      <td><button class="sm" data-regen="scene:${i}">Перерисовать</button></td></tr>`).join("")}</table>`;
+      <td><button class="sm" data-regen="scene:${i}">Перерисовать</button><label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="scene:${i}" style="display:none" ${busy ? "disabled" : ""}></label>${own.has(`scene:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
   },
   extras(r, d) {
     if (!r) return "";
@@ -1521,7 +1562,7 @@ const RENDER = {
       <div>Почему этот момент</div><div>${esc(r.why_ru)}</div></div>
       <h3>Текст на русском</h3><pre class="text">${esc(r.script_ru)}</pre>
       <details><summary>Текст на английском</summary><pre class="text">${esc(r.script)}</pre></details>
-      <h3>Сцены шортса</h3><table>${r.scenes.map((s, i) => `<tr><td>${i + 1}</td><td>${img(d, `short_${String(i).padStart(3, "0")}.png`, "vsc")}</td><td>${esc(s.prompt_ru)}<div class="en">${esc(s.text)}</div></td><td><button class="sm" data-regen="short:${i}">Перерисовать</button></td></tr>`).join("")}</table>`;
+      <h3>Сцены шортса</h3><table>${r.scenes.map((s, i) => `<tr><td>${i + 1}</td><td>${img(d, `short_${String(i).padStart(3, "0")}.png`, "vsc")}</td><td>${esc(s.prompt_ru)}<div class="en">${esc(s.text)}</div></td><td><button class="sm" data-regen="short:${i}">Перерисовать</button><label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="short:${i}" style="display:none"></label>${(d.own_images || []).includes(`short:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
   },
   approval(r, d) {
     if (r) return `<p class="muted">Сценарий одобрен${d.job.options.review_pause ? " вами" : " автоматически (пауза для проверки не была включена)"}.</p>`;

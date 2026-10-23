@@ -1747,7 +1747,18 @@ def make_package(jid: str, text: str = None, side: str = None, font: str = None,
         export(jid)
 
 
+def needs_images_choice(job: dict) -> bool:
+    """The owner asked to stop before pictures to upload his own, and has not pressed «Continue» yet."""
+    opts = job.get("options", {})
+    return (job.get("status") == "review" and bool(opts.get("images_pause")) and not opts.get("images_picked")
+            and bool(job.get("id")) and (job_dir(job["id"]) / "voice.json").exists())
+
+
 def st_images(c: Ctx):
+    job = db.get(c.id) or {"options": c.opts}
+    if job["options"].get("images_pause") and not job["options"].get("images_picked"):
+        raise StopForReview("⏸ Сценарий, сцены и озвучка готовы. Загрузите свои картинки в шаге «Сцены и описания "
+                            "картинок» и нажмите «Продолжить»: недостающие программа дорисует сама.")
     img = c.dir / "images"
     img.mkdir(exist_ok=True)
     scenes = c.data("scenes")["scenes"]
@@ -2247,6 +2258,47 @@ def reset_from(jid: str, stage: str):
         db.update(jid, approved=0)
 
 
+def _drop_scene_outputs(d: Path, kind: str, index: int):
+    """Everything made from one scene picture: its clip, animation and the assembled video."""
+    prefix = "short" if kind == "short" else "scene"
+    (d / "anim" / f"{prefix}_{index:03d}.mp4").unlink(missing_ok=True)
+    (d / "animate.json").unlink(missing_ok=True)
+    (d / ("clips_short" if kind == "short" else "clips") / f"{prefix}_{index:03d}.mp4").unlink(missing_ok=True)
+    (d / "images.json").unlink(missing_ok=True)
+    (d / ("short_video.json" if kind == "short" else "video.json")).unlink(missing_ok=True)
+    (d / "output" / ("short.mp4" if kind == "short" else "video.mp4")).unlink(missing_ok=True)
+
+
+def own_image(jid: str, kind: str, index: int, raw: bytes):
+    """The owner's own picture for one scene: cropped to fill the frame, then the video is assembled with it."""
+    from PIL import Image, ImageOps
+    import io
+    d = job_dir(jid)
+    job = db.get(jid) or {}
+    if kind == "short":
+        scenes = (read_json(d / "short_script.json") or {}).get("scenes") or []
+        vertical = True
+    else:
+        scenes = (read_json(d / "scenes.json") or {}).get("scenes") or []
+        vertical = (job.get("options") or {}).get("format") == "short"
+    if not 0 <= index < len(scenes):
+        raise UserError(f"Сцены {index + 1} нет: в этом ролике {len(scenes)} сцен.")
+    try:
+        im = ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB")
+    except Exception:
+        raise UserError("Это не картинка или формат не поддерживается. Подойдут JPG, PNG или WEBP.")
+    size = (1080, 1920) if vertical else (1920, 1080)
+    im = ImageOps.fit(im, size, Image.LANCZOS)
+    out = d / "images" / f"{'short' if kind == 'short' else 'scene'}_{index:03d}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    im.save(out)
+    _drop_scene_outputs(d, kind, index)
+    own = read_json(d / "own_images.json", []) or []
+    key = f"{kind}:{index}"
+    if key not in own:
+        write_json(d / "own_images.json", own + [key])
+
+
 def regenerate_image(jid: str, kind: str, index: int, prompt: str = None):
     """Delete one image (and its clip) so the next run re-creates it with an optional new prompt."""
     d = job_dir(jid)
@@ -2278,12 +2330,10 @@ def regenerate_image(jid: str, kind: str, index: int, prompt: str = None):
         write_json(d / ("short_script.json" if kind == "short" else "scenes.json"), data)
     prefix = "short" if kind == "short" else "scene"
     (d / "images" / f"{prefix}_{index:03d}.png").unlink(missing_ok=True)
-    (d / "anim" / f"{prefix}_{index:03d}.mp4").unlink(missing_ok=True)
-    (d / "animate.json").unlink(missing_ok=True)
-    (d / ("clips_short" if kind == "short" else "clips") / f"{prefix}_{index:03d}.mp4").unlink(missing_ok=True)
-    (d / "images.json").unlink(missing_ok=True)
-    (d / ("short_video.json" if kind == "short" else "video.json")).unlink(missing_ok=True)
-    (d / "output" / ("short.mp4" if kind == "short" else "video.mp4")).unlink(missing_ok=True)
+    _drop_scene_outputs(d, kind, index)
+    own = read_json(d / "own_images.json", []) or []
+    if f"{kind}:{index}" in own:
+        write_json(d / "own_images.json", [x for x in own if x != f"{kind}:{index}"])
 
 
 # ---------------------------------------------------------------- demo data
@@ -2464,7 +2514,7 @@ def make_translation(jid: str, lang: str = "en", voice_id: str = "", voice_name:
     o = dict(src["options"])
     for k in ("episode", "title_ru", "idea_picked", "anim_picked", "translate_from", "flipped", "voice_id", "voice_name"):
         o.pop(k, None)
-    o.update(language=lang, translate_from=jid, review_pause=False, idea_pause=False, anim_pause=False,
+    o.update(language=lang, translate_from=jid, review_pause=False, idea_pause=False, anim_pause=False, images_pause=False,
              anim_picked=True, channel_id=channel_id, voice_id=voice_id, voice_name=voice_name, restyle=bool(restyle))
     short_ok = o.get("format") != "short" and o.get("make_short") and (sd / "short_script.json").exists()
     o["make_short"] = bool(short_ok)

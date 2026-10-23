@@ -1,6 +1,6 @@
 {
- "version": 82,
- "label": "жёсткий чек-лист редактора",
- "notes": "Жёсткий чек-лист редактора и пример исправления шортса",
+ "version": 83,
+ "label": "свои картинки в монтаже",
+ "notes": "Свои картинки: пауза, загрузка по сценам и пачкой, список сцен",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
