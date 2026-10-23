@@ -1,6 +1,6 @@
 {
- "version": 79,
- "label": "дешёвые одинаковые места",
- "notes": "Экономная модель для картинок по образцу",
+ "version": 80,
+ "label": "кнопка продолжить для своей темы",
+ "notes": "Исправлена кнопка продолжить для своей темы",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

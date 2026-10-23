@@ -941,7 +941,8 @@ def st_idea(c: Ctx):
         idx = max(range(len(ideas)), key=lambda i: ideas[i]["total"])
     if own_topic(c):
         ideas[:] = ideas[:1]
-        idx = 0  # the first idea is the owner's own topic as written: he already chose it
+        idx = 0
+        c.opts["idea_picked"] = True  # the owner chose the topic himself: no topic choice is waited for  # the first idea is the owner's own topic as written: he already chose it
         c.log("Беру вашу тему как есть.")
     elif c.short_format and not c.demo and len(ideas) > 1:
         idx = _critic_pick(c, ideas, r, idx)

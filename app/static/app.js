@@ -1091,7 +1091,7 @@ function renderHead(d) {
   if (["running", "queued"].includes(j.status)) act.push(`<button data-act="pause">⏸ Пауза</button>`);
   if (j.status === "paused") act.push(`<button class="primary" data-act="resume">▶ Продолжить</button>`);
   if (j.status === "error") act.push(`<button class="primary" data-act="retry">↻ Попробовать ещё раз</button>`);
-  const ideaWait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked;
+  const ideaWait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked && !((j.topic || "").trim() && !j.options.episode);
   const animWait = d.anim && d.anim.waiting;
   if (j.status === "review" && !ideaWait && !animWait) act.push(`<button class="primary" data-act="approve">✓ Сценарий хороший, продолжить</button>`);
   if (j.options.project_id && d.stages.review && j.status !== "running") act.push(`<button data-gold="video" title="Сценарист будет изучать этот текст перед новыми роликами проекта">⭐ ${d.format === "short" ? "Шортс" : "Сценарий"} в копилку удачных</button>`);
@@ -1265,7 +1265,7 @@ function renderStages(d) {
   if (ideaBtn) ideaBtn.onclick = async () => {
     const pick = el.querySelector('input[name="idea-pick"]:checked');
     if (!pick) return toast("Отметьте тему", true);
-    const wait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked;
+    const wait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked && !((j.topic || "").trim() && !j.options.episode);
     if (!wait && !confirm("Сменить тему? Сценарий, картинки и озвучка этого ролика сделаются заново.")) return;
     ideaBtn.disabled = true;
     try { await api(`/api/jobs/${j.id}/idea`, { json: { index: +pick.value } }); toast("Тема выбрана, пишу сценарий"); }
@@ -1407,7 +1407,7 @@ const RENDER = {
   idea(r, d) {
     if (!r) return "";
     const j = d.job, busy = j.status === "running";
-    const wait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked;
+    const wait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked && !((j.topic || "").trim() && !j.options.episode);
     const rate = x => x.viewer ? (+x.viewer.stop_scroll || 0) + (+x.viewer.unpredictable || 0) + (+x.viewer.payoff || 0) : x.total * 3;
     const order = r.ideas.map((x, i) => i).sort((a, b) => (b === r.chosen_index) - (a === r.chosen_index) || rate(r.ideas[b]) - rate(r.ideas[a]));
     const row = i => { const x = r.ideas[i]; return `<tr class="${i === r.chosen_index ? "chosen" : ""}">
