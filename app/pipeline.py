@@ -1605,6 +1605,7 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
     full = (f"{style}. " if style else "") + f"{prompt.strip().rstrip('.')}. {FULL_BLEED}"
     if refs or place or items:
         try:
+            price = images.reference_price(c.settings, refs, place, items)
             raw = images.generate_with_reference(c.settings, full, refs or [], vertical, place=place, items=items)
             media.to_png(raw, out)
             media.trim_borders(out)
@@ -1612,16 +1613,16 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
                 # The editing model sometimes keeps the shape of a reference photo: one more try, then the
                 # picture is cropped to fill the frame.
                 c.log(f"Картинка {idx + 1}: получилась не той формы, рисую ещё раз…")
-                c.add_usage("image_cost", images.REFERENCE_PRICE)
-                balance.record("fal", images.REFERENCE_PRICE)
+                c.add_usage("image_cost", price)
+                balance.record("fal", price)
                 raw = images.generate_with_reference(c.settings, ("Tall vertical 9:16 portrait composition. " if vertical
                                                                   else "Wide horizontal 16:9 landscape composition. ") + full,
                                                      refs or [], vertical, place=place, items=items)
                 media.to_png(raw, out)
                 media.trim_borders(out)
             c.add_usage("images", 1)
-            c.add_usage("image_cost", images.REFERENCE_PRICE)
-            balance.record("fal", images.REFERENCE_PRICE)
+            c.add_usage("image_cost", price)
+            balance.record("fal", price)
             return
         except UserError as e:
             if "ключ" in str(e) or "денег" in str(e) or "лимит" in str(e):
@@ -1700,8 +1701,11 @@ def st_images(c: Ctx):
         for scs, vertical, prefix in [(scenes, c.vertical, "scene")] + ([(short["scenes"], True, "short")] if short else []):
             for i, sc in enumerate(scs):
                 pl = plates.get(((sc.get("location") or "").strip().lower(), vertical))
+                out = img / f"{prefix}_{i:03d}.png"
+                if pl and sc.get("shot") in ("closeup", "detail") and not refs.get(out) and not item_refs.get(out):
+                    continue  # a close-up or a detail shows almost no background: the cheap model draws it
                 if pl:
-                    places[img / f"{prefix}_{i:03d}.png"] = pl
+                    places[out] = pl
     extras = c.data("extras") or {}
     if extras.get("thumbnail_prompt"):
         jobs.append((extras["thumbnail_prompt"], img / "thumbnail_src.png", c.vertical, 999))

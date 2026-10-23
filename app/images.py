@@ -190,6 +190,38 @@ REFERENCE_MODEL = "fal-ai/nano-banana/edit"
 MAX_REFERENCE_IMAGES = 3  # the editing model works best with a few pictures: one per character
 MAX_ITEM_IMAGES = 2  # and one per item, on top of the characters
 REFERENCE_PRICE = 0.04  # approximate USD per image
+# The model that draws pictures by reference (characters, items, places). FLUX.2 Dev Edit is billed per megapixel
+# of every input and of the output, so it is cheapest with one reference (a place) and takes at most 4 pictures.
+REF_MODELS = {
+    "nano": ("fal-ai/nano-banana/edit", "Nano Banana: лучше всего держит лица и места, ~$0.04 за картинку"),
+    "flux2": ("fal-ai/flux-2/edit", "Экономно: FLUX.2 Dev Edit, когда образцов 1-2"),
+}
+FLUX2_MAX_INPUTS = 2  # with more inputs FLUX.2 costs more than Nano Banana, so those pictures go to Nano Banana
+FLUX2_PER_MP = 0.012
+
+
+def _ref_model(settings) -> str:
+    return settings.get("ref_model") if settings.get("ref_model") in REF_MODELS else "nano"
+
+
+def _flux2_size(vertical: bool, square: bool) -> dict:
+    return {"width": 1024, "height": 1024} if square else \
+        {"width": 768, "height": 1344} if vertical else {"width": 1344, "height": 768}
+
+
+def _inputs(refs, place, items) -> int:
+    return (1 if place else 0) + len((refs or [])[:MAX_REFERENCE_IMAGES]) + len((items or [])[:MAX_ITEM_IMAGES])
+
+
+def _use_flux2(settings, refs, place, items) -> bool:
+    return _ref_model(settings) == "flux2" and _inputs(refs, place, items) <= FLUX2_MAX_INPUTS
+
+
+def reference_price(settings, refs: list = None, place=None, items: list = None) -> float:
+    """Approximate USD for one picture drawn by reference."""
+    if not _use_flux2(settings, refs, place, items):
+        return REFERENCE_PRICE
+    return round((_inputs(refs, place, items) + 1.03) * FLUX2_PER_MP, 4)  # every input is resized to 1 MP
 
 
 def _sheet(paths: list):
@@ -220,6 +252,7 @@ def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = 
         raise UserError("Для картинок по портрету нужен ключ fal.ai (Настройки → Картинки).")
     refs = list(refs[:MAX_REFERENCE_IMAGES])
     items = list((items or [])[:MAX_ITEM_IMAGES])
+    flux2 = _use_flux2(settings, refs, place, items)
     pics = ([place] if place else []) + refs + items
     urls = []
     for pic in pics:
@@ -231,6 +264,9 @@ def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = 
         urls.append("data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode())
 
     def which(start, n):
+        if flux2:  # FLUX.2 names its inputs @image1, @image2...
+            return (f"@image{start} shows" if n == 1
+                    else " and ".join(f"@image{i}" for i in range(start, start + n)) + " show")
         if len(pics) == 1:
             return "The reference image shows"
         return (f"Reference image {start} shows" if n == 1 else f"Reference images {start}-{start + n - 1} show")
@@ -263,10 +299,14 @@ def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = 
         "prompt": " ".join(parts),
         "image_urls": urls,
         "num_images": 1,
-        "aspect_ratio": "1:1" if square else "9:16" if vertical else "16:9",
         "output_format": "png",
     }
-    r = net.request("fal.ai", "POST", f"https://fal.run/{REFERENCE_MODEL}",
+    if flux2:
+        body.update(image_size=_flux2_size(vertical, square), enable_safety_checker=True)
+    else:
+        body["aspect_ratio"] = "1:1" if square else "9:16" if vertical else "16:9"
+    model = REF_MODELS["flux2" if flux2 else "nano"][0]
+    r = net.request("fal.ai", "POST", f"https://fal.run/{model}",
                     headers={"Authorization": f"Key {key}"}, json=body, timeout=300)
     data = r.json()
     imgs = data.get("images") or []
