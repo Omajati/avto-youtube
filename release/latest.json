@@ -1,6 +1,6 @@
 {
- "version": 73,
- "label": "дешёвое оживление MiniMax",
- "notes": "Оживление: новая модель MiniMax H3 Max Turbo (768p и 480p), почти вдвое дешевле Kling",
+ "version": 74,
+ "label": "удержание шортсов",
+ "notes": "Шортсы: хук первыми словами, без прощания в конце, проверка «где бы я пролистал»",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

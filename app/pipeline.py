@@ -200,9 +200,13 @@ RETENTION RULES:
 WRITING:
 - Tell it like a good storyteller to a friend: complete, connected sentences of natural length (mostly 6-15 words) that follow each other ("so", "but", "and then", "because"). Energy comes from the situation and the jokes, not from chopping sentences.
 - Never write telegraphic fragments, noun lists or teaser filler ("Not the strangest part.", "The verdict?") unless a real surprise follows immediately.
-- No subscribe begging in the middle; one short natural line inviting to subscribe at the very end, after the punchline, in the narrator's voice.
+- No subscribe line and no sign-off at all: the Short ends on the punchline, the last word is the punchline. An animated subscribe button is added to the video automatically. Closing lines like "ладно, поехали дальше", "подписывайся", "вот такие дела" tell the viewer the video is over, and they swipe away before the end, which kills retention.
+- The first words are the hook itself. A framing opening ("Вёз я вчера мужика...", "Сегодня расскажу...", "Знаете, что...") wastes the two seconds that decide everything: first the sharpest claim, accusation or absurd fact aimed at the viewer, then the story that proves it.
+- The twist must be logical and earned: the viewer should think "oh, of course", not "that is random". A silly coincidence or an unrelated surprise is not a twist.
 - Scenes change every 3-5 seconds, so image prompts must be bold and readable on a phone: one clear subject, close framing, strong contrast.
-- Title: max 60 characters, curiosity-driven, never reveals the twist. Tags and description are for Shorts."""
+- Title: max 60 characters, curiosity-driven, never reveals the twist. Tags and description are for Shorts.
+
+SWIPE TEST (the editor applies it to every Short): read the script line by line as a bored viewer with a thumb over the screen. Mark the first line where you would swipe away (too slow, predictable, explaining, a warm-up, a sign-off) and rewrite or cut it; repeat until no such line is left. Average viewed percentage is the main number YouTube judges a Short by."""
 
 
 DEFAULT_SHORT_EXAMPLES = {
@@ -779,7 +783,10 @@ class Ctx:
                 "This voice rule beats the generic writing rules of the task (for example \"use second person "
                 "sparingly\" or sensory description). A short scene from the character's own life (a passenger, "
                 "a day at work) is allowed as his way of telling, when his description or the niche suggests it; "
-                "facts presented as real stay true.")
+                "facts presented as real stay true."
+                + (" In a Short his story never opens the video: the first words are the hook aimed at the viewer, the "
+                   "passenger scene comes right after as proof; and his pet phrases never come after the punchline as a "
+                   "sign-off." if self.short_format or prompt_file == "07_short.txt" else ""))
         if prompt_file == "01_ideas.txt":
             text += ("\nTopics come from this character's world as the owner described him: everyday, relatable things "
                      "any viewer knows from their own life and that fit his job and life as described, seen through his eyes and told as his bitter truth or as a lie he exposes. "
