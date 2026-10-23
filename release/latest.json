@@ -1,6 +1,6 @@
 {
- "version": 81,
- "label": "обычный режим картинок как раньше",
- "notes": "Крупные планы без образца только в экономном режиме",
+ "version": 82,
+ "label": "жёсткий чек-лист редактора",
+ "notes": "Жёсткий чек-лист редактора и пример исправления шортса",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

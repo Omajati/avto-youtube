@@ -228,6 +228,15 @@ The only job of a script is to be watched to the end. A line that is merely corr
 DROP-OFF TEST (the editor applies it to every script): read the script as a bored viewer and mark every line where you would leave: predictable, explaining, a warm-up, repeating, abstract without an example, a sign-off. Rewrite or cut each one until none is left."""
 
 
+SHORT_FIX_EXAMPLE = """
+
+WORKED EXAMPLE OF FIXING A SHORT (learn the technique, never copy the topic or lines):
+BEFORE (weak, viewers left at half): "Вчера девушка в такси пять раз написала мужику. Мужик не получил ничего. «Я первой не пишу. Принципиально», говорит. ... Даже холодильник пищит, когда ему нужно внимание. Эти держатся. Скинь другу, который ждёт её сообщения."
+Problems: a warm-up first sentence; a confusing line (did she write or not?); a funny situation with no insight; the video ends on a call to action, so viewers swipe before the end.
+AFTER: "Ты не пишешь первой не из гордости. Ты боишься. Сейчас докажу. Девушка у меня в такси: «Я первой не пишу. Принципиально». А в зеркале вижу: набрала «привет». Стёрла. Набрала. Стёрла. Пять раз. Спрашиваю: «Страшно?» «Вдруг он поймёт, что нравится». Вот и весь принцип. Это не гордость, это страх отказа в красивой обёртке. А он сидит и думает то же самое. Двое ждут знак, и оба умрут от старости прямо в чате. Даже холодильник пищит, когда ему нужно внимание. Холодильник смелее вас."
+Why it works: the first words accuse the viewer and promise proof; the story is the proof; one clear image (typed, deleted); one sharp insight; the last line is a punchline set up one line earlier; about 70 words."""
+
+
 DEFAULT_SHORT_EXAMPLES = {
     "ru": """Пример 1.
 Попробуй пощекотать себя прямо сейчас. Не выходит? И не выйдет, как ни старайся.
@@ -301,6 +310,14 @@ SERIES_RULES = """
 - Title: you may add "Episode {num}" only at the end of the title if it fits; the title must still be a strong click on its own."""
 
 
+FRAMING_OPENERS = ("вчера", "сегодня", "однажды", "как-то", "как то", "вёз я", "вез я", "еду я", "знаете", "короче,",
+                   "итак", "расскажу", "сейчас расскажу", "давайте", "one day", "yesterday", "today i", "so,",
+                   "let me tell", "i want to tell", "have you ever wondered")
+SIGN_OFFS = ("подпиш", "подписыва", "скинь", "перешли", "отправь друг", "поделись", "ставь лайк", "поставь лайк",
+             "поехали дальше", "на этом всё", "на этом все", "вот такие дела", "пиши в комментари", "пишите в комментари",
+             "subscribe", "like and", "share this", "send this to", "see you", "comment below", "that's all")
+
+
 def script_checks(script: str, target_words: int, wpm: int = WORDS_PER_MIN) -> dict:
     """Automatic checks that don't need a model."""
     wc = word_count(script)
@@ -311,6 +328,10 @@ def script_checks(script: str, target_words: int, wpm: int = WORDS_PER_MIN) -> d
                                "всем привет", "привет всем", "в этом видео", "добро пожаловать", "с вами снова")
                    if p in lower]
     long_sentences = sum(1 for s in sentences if word_count(s) > 30)
+    first = (sentences[0] if sentences else "").lower().lstrip("«\"'— ")
+    framing = [p for p in FRAMING_OPENERS if first.startswith(p)]
+    tail = " ".join(sentences[-4:]).lower()[-260:]
+    bad_ending = [p for p in SIGN_OFFS if p in tail]
     # Chopped "telegraph" text (many 2-4 word sentences) is hard to follow by ear.
     avg = round(wc / len(sentences), 1) if sentences else 0
     return {
@@ -324,7 +345,25 @@ def script_checks(script: str, target_words: int, wpm: int = WORDS_PER_MIN) -> d
         "long_sentences": long_sentences,
         "first_sentence": sentences[0] if sentences else "",
         "bad_openers": bad_openers,
+        "framing_opener": framing,  # a Short must open with the hook itself, not "yesterday a passenger..."
+        "bad_ending": bad_ending,  # a Short must end on the punchline, not on a call to action or a sign-off
     }
+
+
+def check_problems(checks: dict, short: bool) -> list:
+    """The automatic checks the editor's text failed, in words the editor model acts on."""
+    out = []
+    if checks.get("bad_openers"):
+        out.append(f"the opening greets the viewer ({', '.join(checks['bad_openers'])}): start with the hook itself")
+    if short and checks.get("framing_opener"):
+        out.append(f"the first words are a framing warm-up (\"{checks['first_sentence'][:80]}\"): the first sentence "
+                   "must be the sharpest claim or accusation aimed at the viewer; the story comes after it as proof")
+    if short and checks.get("bad_ending"):
+        out.append(f"the ending is a call to action or a sign-off ({', '.join(checks['bad_ending'])}): cut it, the "
+                   "last line must be the punchline")
+    if not checks.get("length_ok"):
+        out.append(f"length is {checks.get('word_count')} words, the target is about {checks.get('target_words')}")
+    return out
 
 
 # ---------------------------------------------------------------- JSON schemas
@@ -836,7 +875,8 @@ class Ctx:
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
                   + self.lessons_block() + self.golden_block(prompt_file) + self.library_block(prompt_file)
-                  + (SCRIPT_CRAFT if prompt_file in GOLDEN_STAGES else "") + OWNER_FIRST
+                  + (SCRIPT_CRAFT if prompt_file in GOLDEN_STAGES else "")
+                  + (SHORT_FIX_EXAMPLE if (self.short_format and prompt_file in GOLDEN_STAGES) or prompt_file == "07_short.txt" else "") + OWNER_FIRST
                   + (OWNER_TOPIC.format(topic=own_topic(self).replace("{", "(").replace("}", ")"))
                      if prompt_file in GOLDEN_STAGES and own_topic(self) else ""))
         length = f"{self.short_seconds}-second" if self.short_format else f"{max(1, int(self.minutes))}-minute"
@@ -1086,6 +1126,26 @@ REVIEW_FOCUS = (
     "criteria first. If the hook promises something the story never delivers (\"why you still won't sleep "
     "well\"), either deliver it clearly in the ending or change the hook so it promises exactly what the story "
     "pays off: the last paragraph must answer the hook's question in plain words.")
+EDITOR_GATES = (
+    "\n\nHARD GATES (check each one before scoring; a failed gate caps the named score at 4, whatever else is good):\n"
+    "1) HOOK GATE: the first sentence is the sharpest claim, accusation, number or absurd fact of the video, aimed at "
+    "the viewer. A warm-up (\"Вчера девушка в такси...\", \"Сегодня расскажу\", \"Однажды\", a name, the weather) "
+    "fails: hook <= 4.\n"
+    "2) PROMISE GATE: the hook opens a question or makes a claim, and the ending answers or proves it in plain words. "
+    "Unanswered or replaced by another point: payoff <= 4.\n"
+    "3) LISTEN-ONCE GATE: every line is understood on the first listen with eyes closed. A line that can be read two "
+    "ways (\"она пять раз написала, он ничего не получил\" when she typed and deleted) fails: clarity <= 4.\n"
+    "4) ENDING GATE (Shorts): the last line is the punchline. Any call to action or sign-off at the end (\"скинь "
+    "другу\", \"подписывайся\", \"поехали дальше\") fails: payoff <= 4. The share request belongs in the description.\n"
+    "5) ONE-THOUGHT GATE: the whole video serves one thought you can say in one sentence; a second topic fails: "
+    "pacing <= 4.\n"
+    "6) INSIGHT GATE (channels about psychology, money, relationships, advice): at least one sharp line names what is "
+    "really going on (\"это не гордость, это страх отказа в красивой обёртке\"). Only a funny situation with no "
+    "insight: surprise <= 5.\n"
+    "7) WATER GATE: no sentence that only repeats, explains the joke or recaps. Each one found: pacing -1.\n"
+    "8) OWNER GATE: the owner's topic, niche rules and the characters' manner of speech are followed exactly; any "
+    "conflict: voice or clarity <= 4.\n"
+    "Name every failed gate in issues_ru.")
 SCORE_ONLY = (
     "\n\nTHIS IS THE FINAL CHECK, SCORE ONLY: do not rewrite. Return revised_script as an empty string. "
     "issues_ru and verdict_ru describe only this exact text as it is now; never write that you fixed, "
@@ -1111,7 +1171,11 @@ def _evaluate(c: Ctx, script: str, round_no: int, history: list = None, score_on
         r = _demo("review", script=script)
     else:
         c.log(f"Редактор: раунд {round_no}, {'финальная оценка' if score_only else 'проверяю по чек-листу'}…")
-        extra = _review_history(history or []) + (SCORE_ONLY if score_only else REVIEW_FOCUS)
+        failed = check_problems(script_checks(script, c.words, c.wpm), c.short_format)
+        extra = (_review_history(history or []) + EDITOR_GATES
+                 + ("\n\nAUTOMATIC CHECKS FAILED ON THIS TEXT (each one caps the matching score at 4 and must be fixed "
+                    "in revised_script):\n- " + "\n- ".join(failed) if failed else "")
+                 + (SCORE_ONLY if score_only else REVIEW_FOCUS))
         r = c.ask("04_review.txt", SCHEMA_REVIEW, 8000 if score_only else 32000, extra=extra,
                   outline=_outline_text(c), script=script, word_count=word_count(script))
         if score_only:
@@ -1129,6 +1193,7 @@ def _evaluate(c: Ctx, script: str, round_no: int, history: list = None, score_on
     min_crit = int(c.settings["min_criterion_score"])
     r["passed"] = r["overall"] >= thr and r["min_score"] >= min_crit and r["checks"]["length_ok"] \
         and not r["checks"]["bad_openers"] \
+        and not (c.short_format and (r["checks"]["framing_opener"] or r["checks"]["bad_ending"])) \
         and not (r["checks"].get("choppy") and not c.short_format and not c.voice_rule("04_review.txt"))
     # Short punchy lines are the point of a Short and of a host's own manner of speech, so they are not a fault there.
     r["evaluated_script"] = script
