@@ -911,7 +911,22 @@ POSITIONS_RULE = (
     "A person alone in a car is drawn behind the wheel unless told otherwise, so for a passenger frame the shot "
     "from the front seats looking back at the rear seat, keep the steering wheel out of the passenger's part of "
     "the picture and write \"she is not driving\". The same for a counter, a desk or a stage: who stands behind "
-    "it and who in front.")
+    "it and who in front. Never solve this by emptying a place that the story fills: in a moving car the driver is "
+    "always at the wheel, so for a passenger frame show the driver's shoulder, hands on the wheel or eyes in the "
+    "mirror, or frame so the front seat is out of the picture; never write \"the driver's seat is empty\".")
+STORY_LOGIC = (
+    "\n\nSTORY LOGIC (every picture is checked against it; a picture that breaks it is a failure):\n"
+    "- Each picture shows the same world as the story at that moment: who is where, what is happening, what time "
+    "it is. A taxi that is driving has its driver at the wheel; a conversation has both people present; a scene "
+    "that continues keeps the same people, clothes, light and weather.\n"
+    "- Never invent absences, extra people, impossible states or things the narration does not imply (an empty "
+    "driver's seat in a moving car, a stranger in the back seat, daylight in a night scene, a third hand).\n"
+    "- A recurring character who is physically there and partly visible (back of the head, hands on the wheel, "
+    "eyes in the mirror) is listed in characters, so his look stays the same.\n"
+    "- If the given camera angle is unnatural in this place (a top-down view inside a car), use the nearest "
+    "natural angle that still differs from the neighbouring pictures.\n"
+    "- Symbols and metaphors (a gift box for \"страх в красивой обёртке\") are fine, but stay in the scene's world "
+    "or clearly cut away to them; never mix them into a literal scene in a way that makes no sense.")
 OWNER_FIRST = ("\n\nPRIORITY: the channel niche above and the characters' descriptions and manner of speech are the "
                "owner's own rules. Where they differ from the general rules of this prompt (topics, tone, audience, "
                "structure, how the narrator talks), the owner's rules win.")
@@ -1360,7 +1375,7 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
             if any(ch.get("speaker") for ch in part):
                 fx += ("\n\nFragments marked [Name says] are lines spoken by that character: show that character "
                        "speaking or reacting, close enough to read the face.")
-            r = c.ask("05_scenes.txt", SCHEMA_PROMPTS, 32000, extra=fx + POSITIONS_RULE, title=title, characters=chars,
+            r = c.ask("05_scenes.txt", SCHEMA_PROMPTS, 32000, extra=fx + POSITIONS_RULE + STORY_LOGIC, title=title, characters=chars,
                       locations=locs, chunks=listing, orientation=orientation)
         by_index = {p.get("index"): p for p in r.get("prompts", [])}
         for i, ch in enumerate(part):

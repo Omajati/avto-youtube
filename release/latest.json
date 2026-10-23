@@ -1,6 +1,6 @@
 {
- "version": 85,
- "label": "описания картинок в окне",
- "notes": "Описания картинок в окне с копированием",
+ "version": 86,
+ "label": "логика кадров",
+ "notes": "Логика кадров: картинки не противоречат истории",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
