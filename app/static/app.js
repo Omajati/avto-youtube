@@ -2448,12 +2448,12 @@ async function viewLibrary() {
     <p class="muted small">Здесь лежат разборы роликов, которые сработали. Сценарист этой ниши читает правила ниши и последние разборы перед каждым новым роликом: учится приёмам, но не копирует темы и текст. Новые ниши появляются в списке сами, когда вы создаёте проект.</p>
     <label class="f">Описание ниши <span class="hint">то же поле, что в проекте</span></label>
     <textarea id="lb-niche" rows="4">${esc(proj.niche || "")}</textarea>
-    <div class="row" style="margin-top:6px"><button id="lb-niche-save">Сохранить описание</button></div>
+    <div class="row" style="margin-top:6px"><button id="lb-niche-save">Сохранить описание</button>${lib.niche_prev != null ? `<button id="lb-niche-undo" title="Вернуть описание, которое было до последнего обновления продюсером">↩ Вернуть прежнее описание</button>` : ""}</div>
   </div>
   <div class="card"><h2>Правила ниши</h2>
-    <p class="muted small">Продюсер собирает их из всех разборов этой ниши. Можно поправить текст руками: тогда сценарист будет читать ваш вариант.</p>
-    <textarea id="lb-pb" rows="10" placeholder="Пока пусто. Сохраните сюда несколько разборов и нажмите «Собрать правила».">${esc(lib.playbook_ru || "")}</textarea>
-    <div class="row" style="margin-top:6px"><button class="primary" id="lb-build" ${lib.items.length ? "" : "disabled"}>✨ Собрать правила из разборов</button><button id="lb-pb-save">Сохранить мои правки</button>
+    <p class="muted small">Кнопка ниже изучает все разборы этой ниши и пишет правила, а заодно описание ниши вверху страницы. Если описание уже заполнено, продюсер его дополнит и ничего вашего не выкинет. Правила можно поправить руками: тогда сценарист будет читать ваш вариант.</p>
+    <textarea id="lb-pb" rows="10" placeholder="Пока пусто. Сохраните сюда несколько разборов и нажмите кнопку ниже.">${esc(lib.playbook_ru || "")}</textarea>
+    <div class="row" style="margin-top:6px"><button class="primary" id="lb-build" ${lib.items.length ? "" : "disabled"}>✨ Обновить правила и описание ниши</button><button id="lb-pb-save">Сохранить мои правки</button>
       ${lib.playbook_at ? `<span class="muted small">обновлено ${new Date(lib.playbook_at * 1000).toLocaleString("ru")}</span>` : ""}</div>
   </div>
   ${topics.length ? `<div class="card"><h2>Темы из разборов</h2><p class="muted small">Идеи, которые продюсер предложил по мотивам удачных роликов. Можно брать как свою тему на странице нового ролика.</p>${prList(topics)}</div>` : ""}
@@ -2470,11 +2470,15 @@ async function viewLibrary() {
   </div>`;
   $("#lb-proj").onchange = e => { try { localStorage.setItem("ay_lib_project", e.target.value); } catch (er) { } viewLibrary(); };
   $("#lb-niche-save").onclick = () => api(`/api/projects/${pid}`, { json: { niche: $("#lb-niche").value } }).then(() => toast("Описание ниши сохранено")).catch(e => toast(e.message, true));
+  if ($("#lb-niche-undo")) $("#lb-niche-undo").onclick = async () => {
+    if (!confirm("Вернуть описание ниши, которое было до обновления продюсером?")) return;
+    try { const r = await api(`/api/projects/${pid}/library/niche-undo`, { method: "POST" }); $("#lb-niche").value = r.niche; toast("Прежнее описание возвращено"); } catch (e) { toast(e.message, true); }
+  };
   $("#lb-pb-save").onclick = () => api(`/api/projects/${pid}/library/playbook`, { json: { playbook_ru: $("#lb-pb").value } }).then(() => toast("Правила сохранены")).catch(e => toast(e.message, true));
   $("#lb-build").onclick = async () => {
-    const b = $("#lb-build"); b.disabled = true; b.textContent = "⏳ Собираю правила…";
-    try { await api(`/api/projects/${pid}/library/build`, { method: "POST" }); toast("Правила собраны"); viewLibrary(); }
-    catch (e) { toast(e.message, true); b.disabled = false; b.textContent = "✨ Собрать правила из разборов"; }
+    const b = $("#lb-build"); b.disabled = true; b.textContent = "⏳ Изучаю все разборы ниши…";
+    try { await api(`/api/projects/${pid}/library/build`, { method: "POST" }); toast("Правила и описание ниши обновлены"); viewLibrary(); }
+    catch (e) { toast(e.message, true); b.disabled = false; b.textContent = "✨ Обновить правила и описание ниши"; }
   };
   main.querySelectorAll("[data-lbdel]").forEach(b => b.onclick = async () => {
     if (!confirm("Убрать этот разбор из хранилища?")) return;

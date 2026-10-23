@@ -689,12 +689,19 @@ def _library_file(pid: str):
     return d / "library.json"
 
 
+def _raw_library(pid: str) -> dict:
+    try:
+        return json.loads(_library_file(pid).read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def library(pid: str) -> dict:
     """{"items": [...], "playbook_ru": str, "playbook": str (English rules for the writer)}"""
     try:
         d = json.loads(_library_file(pid).read_text("utf-8"))
         return {"items": d.get("items") or [], "playbook_ru": d.get("playbook_ru", ""), "playbook": d.get("playbook", ""),
-                "playbook_at": d.get("playbook_at", 0)}
+                "playbook_at": d.get("playbook_at", 0), "niche_prev": d.get("niche_prev")}
     except (OSError, ValueError):
         return {"items": [], "playbook_ru": "", "playbook": "", "playbook_at": 0}
 
@@ -728,8 +735,10 @@ def remove_library(pid: str, eid: str):
     _save_library(pid, lib)
 
 
-def set_playbook(pid: str, playbook_ru: str, playbook: str = None):
-    lib = library(pid)
+def set_playbook(pid: str, playbook_ru: str, playbook: str = None, niche_prev: str = None):
+    lib = {**_raw_library(pid), **library(pid)}
+    if niche_prev is not None:
+        lib["niche_prev"] = niche_prev  # the niche text before the producer rewrote it, to undo
     lib["playbook_ru"] = (playbook_ru or "").strip()
     if playbook is not None:
         lib["playbook"] = playbook.strip()

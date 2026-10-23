@@ -1249,13 +1249,25 @@ def library_playbook(pid: str, data: dict = Body(...)):
     return projects.set_playbook(pid, data.get("playbook_ru", ""))
 
 
+@app.post("/api/projects/{pid}/library/niche-undo")
+def library_niche_undo(pid: str):
+    prev = projects.library(pid).get("niche_prev")
+    if prev is None:
+        raise UserError("Прежнего описания нет.")
+    projects.save(pid, {"niche": prev})
+    return {"niche": prev}
+
+
 @app.post("/api/projects/{pid}/library/build")
 def library_build(pid: str):
     proj = projects.get(pid)
     if not proj:
         raise UserError("Проект не найден")
     pb = producer.build_playbook(load_settings(), proj.get("niche", ""), projects.library(pid)["items"])
-    return projects.set_playbook(pid, pb.get("playbook_ru", ""), pb.get("playbook", ""))
+    if (pb.get("niche") or "").strip():
+        projects.save(pid, {"niche": pb["niche"].strip()})
+    lib = projects.set_playbook(pid, pb.get("playbook_ru", ""), pb.get("playbook", ""), niche_prev=proj.get("niche", ""))
+    return lib
 
 
 @app.post("/api/open")

@@ -495,20 +495,33 @@ def library_entries(aid: str, indexes: list = None, with_channel: bool = True) -
     return out
 
 
-SCHEMA_PLAYBOOK = {"type": "object", "properties": {"playbook_ru": {"type": "string"}, "playbook": {"type": "string"}},
-                   "required": ["playbook_ru", "playbook"]}
+SCHEMA_PLAYBOOK = {"type": "object", "properties": {"playbook_ru": {"type": "string"}, "playbook": {"type": "string"},
+                                                     "niche": {"type": "string"}},
+                   "required": ["playbook_ru", "playbook", "niche"]}
 
 
 def build_playbook(settings: dict, niche: str, items: list) -> dict:
-    """The rules of this niche distilled from every saved analysis."""
+    """The rules of this niche distilled from every saved analysis, plus a new or updated niche description."""
     if not items:
         raise UserError("В хранилище этой ниши пока нет разборов.")
     brief = "\n\n".join(f"### {x.get('title', '')} ({x.get('views') or '?'} views, {x.get('kind', '')})\n"
+                        f"What it is about: {x.get('summary_ru', '')}\n"
                         f"Why it worked: {x.get('why_ru', '')}\nHook: {x.get('hook_ru', '')}\n"
-                        f"Techniques: {'; '.join(x.get('techniques') or [])}" for x in items[-40:])
-    user = (f"Channel niche (the owner's description, may be in Russian):\n{niche[:3000]}\n\nAnalyses of videos that "
-            f"worked in this niche:\n\n{brief}\n\nDistil the playbook of this niche: what topics win, how hooks are "
-            "built, the structure and rhythm, the tone and the character, packaging (titles, thumbnails), and the "
-            "mistakes to avoid. playbook_ru: for the owner, in Russian, 10-20 short numbered rules. playbook: the same "
-            "rules in English for the scriptwriter, imperative and concrete.")
+                        f"Techniques: {'; '.join(x.get('techniques') or [])}\n"
+                        f"Topic ideas: {'; '.join((x.get('topics_ru') or [])[:6])}" for x in items[-40:])
+    current = niche.strip()
+    task_niche = (
+        "niche: the channel's niche description, which the scriptwriter reads before every video. The owner already "
+        "wrote one (below). Update it: keep every fact, rule, character, tone and wish of the owner exactly, never "
+        "drop or contradict them; add what the analyses show about the audience, the topics that win, the angle and "
+        "the format. Write it in the same language as the owner's text, as flowing paragraphs, 120-300 words."
+        if current else
+        "niche: a new niche description for the scriptwriter, written in Russian as flowing paragraphs, 120-250 words: "
+        "what the channel is about, for whom, which topics and angles win, the tone and the format, what to avoid.")
+    user = (f"Channel niche (the owner's description):\n{current[:4000] or '(empty)'}\n\nAnalyses of videos that "
+            f"worked in this niche:\n\n{brief}\n\nReturn:\n"
+            "playbook_ru: the playbook of this niche for the owner, in Russian, 10-20 short numbered rules: what topics "
+            "win, how hooks are built, the structure and rhythm, the tone and the character, packaging (titles, "
+            "thumbnails), and the mistakes to avoid.\nplaybook: the same rules in English for the scriptwriter, "
+            "imperative and concrete.\n" + task_niche)
     return llm.call_json(settings, "You are a YouTube producer. Answer only with JSON.", user, SCHEMA_PLAYBOOK, {}, 16000)
