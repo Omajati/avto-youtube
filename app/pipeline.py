@@ -1061,13 +1061,42 @@ def st_script(c: Ctx):
     write_json(c.out("script"), r)
 
 
-def _evaluate(c: Ctx, script: str, round_no: int) -> dict:
+REVIEW_FOCUS = (
+    "\n\nHOW TO REWRITE (beats the instructions above): change only what fixes a listed problem and keep every "
+    "sentence that already works word for word, so a fix in one place never breaks another. Fix the lowest "
+    "criteria first. If the hook promises something the story never delivers (\"why you still won't sleep "
+    "well\"), either deliver it clearly in the ending or change the hook so it promises exactly what the story "
+    "pays off: the last paragraph must answer the hook's question in plain words.")
+SCORE_ONLY = (
+    "\n\nTHIS IS THE FINAL CHECK, SCORE ONLY: do not rewrite. Return revised_script as an empty string. "
+    "issues_ru and verdict_ru describe only this exact text as it is now; never write that you fixed, "
+    "strengthened or changed anything.")
+
+
+def _review_history(rounds: list) -> str:
+    """What earlier rounds already found, so the next rewrite does not bring old problems back."""
+    if not rounds:
+        return ""
+    lines = []
+    for i, r in enumerate(rounds, 1):
+        weak = [f"{s.get('criterion')} {s.get('score')}" for s in r.get("scores", []) if int(s.get("score", 10)) < 8]
+        lines.append(f"Round {i}: {r.get('overall')}/10; weak: {', '.join(weak) or 'none'}; problems: "
+                     + "; ".join((r.get("issues_ru") or [])[:8]))
+    return ("\n\nEARLIER EDITOR ROUNDS (the script below is already their rewrite). Problems found before must "
+            "not come back, and criteria that stayed low round after round need a real change, not polish:\n"
+            + "\n".join(lines))
+
+
+def _evaluate(c: Ctx, script: str, round_no: int, history: list = None, score_only: bool = False) -> dict:
     if c.demo:
         r = _demo("review", script=script)
     else:
-        c.log(f"Редактор: раунд {round_no}, проверяю по чек-листу…")
-        r = c.ask("04_review.txt", SCHEMA_REVIEW, 32000, outline=_outline_text(c), script=script,
-                  word_count=word_count(script))
+        c.log(f"Редактор: раунд {round_no}, {'финальная оценка' if score_only else 'проверяю по чек-листу'}…")
+        extra = _review_history(history or []) + (SCORE_ONLY if score_only else REVIEW_FOCUS)
+        r = c.ask("04_review.txt", SCHEMA_REVIEW, 8000 if score_only else 32000, extra=extra,
+                  outline=_outline_text(c), script=script, word_count=word_count(script))
+        if score_only:
+            r["revised_script"] = ""
     if not c.voice_rule("04_review.txt"):  # voice is judged only when the owner described a manner of speech
         r["scores"] = [s for s in r.get("scores", []) if s.get("criterion") != "voice"]
     scores = {s["criterion"]: s for s in r.get("scores", []) if s.get("criterion") in CRITERIA_RU}
@@ -1101,7 +1130,7 @@ def st_review(c: Ctx):
             break
         if len(rounds) >= max_rounds + 1:
             break
-        r = _evaluate(c, current, len(rounds) + 1)
+        r = _evaluate(c, current, len(rounds) + 1, rounds)
         r["revised_script"] = (r.get("revised_script") or "").strip() or current
         rounds.append(r)
         write_json(c.dir / "review_progress.json", {"rounds": rounds})
@@ -1114,7 +1143,7 @@ def st_review(c: Ctx):
         if len(rounds) >= max_rounds:
             # Last allowed rewrite: score it once more so the numbers shown belong to the final text.
             current = r["revised_script"]
-            last = _evaluate(c, current, len(rounds) + 1)
+            last = _evaluate(c, current, len(rounds) + 1, rounds, score_only=True)
             last["revised_script"] = current
             last["score_only"] = True
             rounds.append(last)

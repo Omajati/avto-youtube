@@ -1,6 +1,6 @@
 {
- "version": 76,
- "label": "честная цена картинок",
- "notes": "Подсказка о цене одинаковых мест",
+ "version": 77,
+ "label": "редактор не теряет правки",
+ "notes": "Редактор: финальная оценка без ложных правок, учёт прошлых раундов",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
