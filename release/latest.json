@@ -1,6 +1,6 @@
 {
- "version": 83,
- "label": "свои картинки в монтаже",
- "notes": "Свои картинки: пауза, загрузка по сценам и пачкой, список сцен",
+ "version": 84,
+ "label": "имя героя не озвучивается",
+ "notes": "Имя ведущего перед репликой не озвучивается",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

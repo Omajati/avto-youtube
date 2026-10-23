@@ -631,6 +631,16 @@ class Ctx:
             return None
         return next((ch for ch in self.characters if ch.get("voice_id")), None)
 
+    def strip_host_labels(self, script: str) -> str:
+        """In host mode the hero tells everything himself: a stray "Исмаил:" before a line would be read aloud."""
+        host = self.host()
+        if not host:
+            return script
+        names = [re.escape(n.strip()) for n in (host.get("name"), host.get("name_en")) if n and n.strip()]
+        if not names:
+            return script
+        return re.sub(r"(?im)^[ \t]*[*_]*(?:" + "|".join(names) + r")[*_]*[ \t]*:[ \t]*", "", script)
+
     def voiced(self) -> list:
         """Characters with their own voice, unless the project wants only the narrator (or one hero tells it all)."""
         if self.project.get("voice_mode") in ("narrator", "host"):
@@ -1383,7 +1393,7 @@ def st_scenes(c: Ctx):
     if c.opts.get("translate_from"):
         return _translate_scenes(c)
     script = c.data("review")["final_script"]
-    chunks = split_chunks(script, c.scene_words("short_words_per_scene" if c.short_format else "words_per_scene"),
+    chunks = split_chunks(c.strip_host_labels(script), c.scene_words("short_words_per_scene" if c.short_format else "words_per_scene"),
                           c.speakers())
     c.log(f"Сценарий разбит на {len(chunks)} сцен, пишу описания картинок…")
     scenes = _prompts_for(c, chunks, c.vertical, (c.data("outline") or {}).get("title", ""))
@@ -1478,6 +1488,7 @@ def st_short_script(c: Ctx):
     if c.lang == "ru" and not r.get("script_ru"):
         r["script_ru"] = r["script"]
     r["checks"] = script_checks(r["script"], int(125 * c.wpm / WORDS_PER_MIN), c.wpm)
+    r["script"] = c.strip_host_labels(r["script"])
     chunks = split_chunks(r["script"], c.scene_words("short_words_per_scene"), c.speakers())
     r["scenes"] = _prompts_for(c, chunks, True, r.get("title", ""))
     _name_speakers(c, r["scenes"])
