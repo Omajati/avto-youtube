@@ -1425,7 +1425,7 @@ def _logic_check(c: Ctx, scenes: list):
                            for i, s in enumerate(scenes))
     c.log("Контролёр логики проверяет описания всех картинок…")
     try:
-        r = llm.call_json(c.settings, "You are the continuity supervisor of an animated video. Answer only with JSON.",
+        r = llm.call_json(_check_settings(c.settings), "You are the continuity supervisor of an animated video. Answer only with JSON.",
                           "Read the whole video: narration of each scene and the description of its picture. Find every "
                           "picture that contradicts the story or common sense: a person missing who must be there (a "
                           "moving taxi without its driver, a dialogue with one side gone), an extra or random person, a "
@@ -1457,8 +1457,12 @@ def _logic_check(c: Ctx, scenes: list):
 
 
 def _check_settings(settings: dict) -> dict:
-    """The picture checker looks at many pictures: the same provider, a light effort."""
-    return dict(settings, anthropic_effort="low")
+    """The checkers look at many pictures: the same provider, a light effort, and Sonnet instead of the
+    expensive Opus or Fable (checking needs a sharp eye, not the best writer)."""
+    s = dict(settings, anthropic_effort="low")
+    if (s.get("anthropic_model") or "").startswith(("claude-opus", "claude-fable")):
+        s["anthropic_model"] = "claude-sonnet-5-5"
+    return s
 
 
 def _picture_ok(c: Ctx, path: Path, scene: dict, vertical: bool) -> dict:
@@ -1472,13 +1476,14 @@ def _picture_ok(c: Ctx, path: Path, scene: dict, vertical: bool) -> dict:
              & {n.lower() for n in scene.get("characters") or []}]
     who = "\n".join(f"- {c.char_name(ch)}: {ch.get('appearance', '')}" for ch in chars) or "- (no recurring characters)"
     r = llm.call_json(_check_settings(c.settings), "You check pictures for an animated video. Answer only with JSON.",
-                      "Look at the picture as a strict viewer. It must show what the description says and make sense "
-                      "with the narration. Fail it (ok=false) only for real problems a viewer would notice: a missing "
-                      "or extra person, a person in the wrong place or seat (for example nobody at the wheel of a moving "
-                      "car, the passenger driving), a recurring character who clearly looks different from the "
-                      "description, readable text, letters or a watermark, deformed faces, hands or bodies, a picture "
-                      "that does not fill the frame, or a picture that shows something else than the description. "
-                      "Small style differences are fine. If it fails, list the problems in Russian and write "
+                      "Look at the picture as an ordinary viewer scrolling past it for 3 seconds. Fail it (ok=false) "
+                      "ONLY for a serious problem that viewer would notice and find wrong: a missing or extra person, a "
+                      "double of a character, a person in an impossible place (nobody at the wheel of a moving car, the "
+                      "passenger driving, a giant face outside the window), a recurring character who is clearly a "
+                      "different person, a deformed face, an extra arm or hand, a big caption or watermark across the "
+                      "picture, or a picture of something else than the story moment. Everything else passes: natural "
+                      "small text on objects (a TAXI sign, a number plate, a label, a screen), details that differ from "
+                      "the description, camera distance, small props, framing and borders (the program crops them), style. If it fails, list the problems in Russian and write "
                       "fixed_prompt: the full description rewritten so the image model avoids these problems (keep "
                       "camera, place, light; state positions explicitly; no art style).\n\nNARRATION: "
                       f"{scene.get('text', '')}\nDESCRIPTION: {scene.get('prompt', '')}\nRECURRING CHARACTERS IN IT:\n{who}\n"
@@ -1488,7 +1493,7 @@ def _picture_ok(c: Ctx, path: Path, scene: dict, vertical: bool) -> dict:
 
 
 def _check_pictures(c: Ctx, items: list, refs: dict, places: dict, item_refs: dict):
-    """items: (scene dict, picture path, vertical, index). Bad pictures are redrawn up to two times."""
+    """items: (scene dict, picture path, vertical, index). A bad picture is redrawn once."""
     own = set(read_json(c.dir / "own_images.json", []) or [])
     todo = [x for x in items if x[1].exists()
             and f"{'short' if x[1].name.startswith('short') else 'scene'}:{x[3]}" not in own]
@@ -1502,7 +1507,7 @@ def _check_pictures(c: Ctx, items: list, refs: dict, places: dict, item_refs: di
         c.check()
         scene, path, vertical, idx = x
         label = f"{'Шортс, сцена' if path.name.startswith('short') else 'Сцена'} {idx + 1}"
-        for attempt in range(3):
+        for attempt in range(2):  # one redraw at most: a second rarely helps and doubles the cost
             try:
                 r = _picture_ok(c, path, scene, vertical)
             except UserError as e:
@@ -1514,8 +1519,8 @@ def _check_pictures(c: Ctx, items: list, refs: dict, places: dict, item_refs: di
                         stats["fixed"] += 1
                 return
             problems = "; ".join(r.get("problems_ru") or []) or "есть ошибки"
-            if attempt == 2:
-                c.log(f"{label}: после двух перерисовок остались ошибки ({problems}). Можно перерисовать вручную.")
+            if attempt == 1:
+                c.log(f"{label}: после перерисовки остались ошибки ({problems}). Можно перерисовать вручную.")
                 return
             with lock:
                 if attempt == 0:

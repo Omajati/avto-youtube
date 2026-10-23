@@ -1,6 +1,6 @@
 {
- "version": 89,
- "label": "пауза для утверждения своей темы",
- "notes": "Пауза для утверждения своей темы",
+ "version": 90,
+ "label": "дешевле контроль, новые модели OpenAI",
+ "notes": "Контроль мягче и дешевле, GPT Image 2.5",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

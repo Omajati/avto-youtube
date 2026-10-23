@@ -61,7 +61,7 @@ DEFAULTS = {
     "image_provider": "fal",
     "fal_model": "fal-ai/flux/dev",
     "replicate_model": "black-forest-labs/flux-dev",
-    "openai_image_model": "gpt-image-1-mini",
+    "openai_image_model": "gpt-image-2.5-flare",
     "openai_image_quality": "medium",
     "together_model": "black-forest-labs/FLUX.1-schnell",
     "runware_model": "runware:101@1",

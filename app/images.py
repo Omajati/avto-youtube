@@ -56,8 +56,8 @@ PROVIDERS = {
         "model_field": "openai_image_model",
         "signup": "https://platform.openai.com/api-keys",
         "models": [
-            ("gpt-image-1-mini", "GPT Image mini — дешевле", 0.015),
-            ("gpt-image-1", "GPT Image — как в ChatGPT", 0.06),
+            ("gpt-image-2.5-flare", "GPT Image 2.5 Flare — быстро, ~$0.01–0.02", 0.015),
+            ("gpt-image-2.5-sunburst", "GPT Image 2.5 Sunburst — тщательнее, медленнее, ~$0.01–0.02", 0.015),
         ],
     },
 }
@@ -173,7 +173,13 @@ def _together(key, model, prompt, vertical):
     return _download("Together AI", data[0]["url"])
 
 
+# OpenAI shut gpt-image-1 down on 23 October 2026, the others follow on 1 December 2026.
+OPENAI_RETIRED = {"gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5", "chatgpt-image-latest", "dall-e-2", "dall-e-3"}
+
+
 def _openai(key, model, prompt, vertical, quality="medium"):
+    if not model or model in OPENAI_RETIRED or model.startswith("gpt-image-1.5"):
+        model = "gpt-image-2.5-flare"
     body = {"model": model, "prompt": prompt, "size": "1024x1536" if vertical else "1536x1024",
             "quality": quality, "n": 1}
     r = net.request("OpenAI Images", "POST", "https://api.openai.com/v1/images/generations",
