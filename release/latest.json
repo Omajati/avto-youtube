@@ -1,6 +1,6 @@
 {
- "version": 86,
- "label": "логика кадров",
- "notes": "Логика кадров: картинки не противоречат истории",
+ "version": 87,
+ "label": "автоконтроль логики и картинок",
+ "notes": "Автоконтроль: логика сцен и проверка каждой картинки с перерисовкой",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

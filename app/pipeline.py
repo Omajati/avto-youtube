@@ -1404,6 +1404,147 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
     return out
 
 
+SCHEMA_LOGIC = {"type": "object", "properties": {"fixes": {"type": "array", "items": {"type": "object", "properties": {
+    "index": {"type": "integer"}, "problem_ru": {"type": "string"}, "prompt": {"type": "string"},
+    "characters": {"type": "array", "items": {"type": "string"}}}}}}}
+SCHEMA_PIC_CHECK = {"type": "object", "properties": {
+    "ok": {"type": "boolean"}, "problems_ru": {"type": "array", "items": {"type": "string"}},
+    "fixed_prompt": {"type": "string"}}}
+
+
+def auto_check_on(c: Ctx) -> bool:
+    return bool(c.settings.get("auto_check", True)) and not c.demo
+
+
+def _logic_check(c: Ctx, scenes: list):
+    """One read of the whole story with all picture descriptions: contradictions are fixed before anything is drawn."""
+    if not auto_check_on(c) or not scenes:
+        return
+    names = ", ".join(c.char_name(ch) for ch in c.characters) or "(none)"
+    o = c.data("outline") or {}
+    locs = "\n".join(f"- {x['name']}: {x['visual']}" for x in o.get("locations", [])) or "- (none)"
+    listing = "\n\n".join(f"{i}. NARRATION: {s['text']}\n   LOCATION: {s.get('location', '')}\n   CHARACTERS: "
+                           f"{', '.join(s.get('characters') or []) or '-'}\n   PICTURE: {s['prompt']}"
+                           for i, s in enumerate(scenes))
+    c.log("Контролёр логики проверяет описания всех картинок…")
+    try:
+        r = llm.call_json(c.settings, "You are the continuity supervisor of an animated video. Answer only with JSON.",
+                          "Read the whole video: narration of each scene and the description of its picture. Find every "
+                          "picture that contradicts the story or common sense: a person missing who must be there (a "
+                          "moving taxi without its driver, a dialogue with one side gone), an extra or random person, a "
+                          "person in the wrong place or seat, an empty seat that the story fills, wrong time of day, light "
+                          "or weather for that moment, clothes or looks that change between scenes, an impossible camera "
+                          "position, a metaphor mixed into a literal scene in a confusing way, readable text or letters.\n"
+                          "For each such picture return its index, the problem in Russian (problem_ru) and the full "
+                          "corrected description in English (prompt) that keeps the camera angle, place, light and every "
+                          "correct detail and states positions explicitly; in characters list which recurring characters "
+                          f"({names}) are visible in the corrected picture, even partly. Do not touch pictures that are fine; "
+                          "if all are fine return an empty list.\n\nLOCATIONS:\n" + locs + "\n\nCHARACTERS:\n"
+                          + "\n".join(f"- {c.char_name(ch)}: {ch.get('appearance', '')}" for ch in c.characters)
+                          + "\n\nSCENES:\n" + listing, SCHEMA_LOGIC, c.usage, 32000)
+        c.save_usage()
+    except UserError as e:
+        c.log(f"Контролёр логики не ответил ({e}), картинки рисуются по исходным описаниям.")
+        return
+    n = 0
+    for f in r.get("fixes") or []:
+        i = f.get("index")
+        if isinstance(i, int) and 0 <= i < len(scenes) and (f.get("prompt") or "").strip():
+            scenes[i]["prompt"] = f["prompt"].strip()
+            if isinstance(f.get("characters"), list):
+                scenes[i]["characters"] = f["characters"]
+            scenes[i]["logic_fix_ru"] = f.get("problem_ru", "")
+            n += 1
+            c.log(f"Контролёр логики, сцена {i + 1}: {f.get('problem_ru', '')}")
+    c.log(f"Контролёр логики: исправлено описаний {n}." if n else "Контролёр логики: противоречий не нашёл.")
+
+
+def _check_settings(settings: dict) -> dict:
+    """The picture checker looks at many pictures: the same provider, a light effort."""
+    return dict(settings, anthropic_effort="low")
+
+
+def _picture_ok(c: Ctx, path: Path, scene: dict, vertical: bool) -> dict:
+    from PIL import Image
+    import io
+    im = Image.open(path).convert("RGB")
+    im.thumbnail((768, 768))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=85)
+    chars = [ch for ch in c.characters if {ch.get("name", "").lower(), ch.get("name_en", "").lower()}
+             & {n.lower() for n in scene.get("characters") or []}]
+    who = "\n".join(f"- {c.char_name(ch)}: {ch.get('appearance', '')}" for ch in chars) or "- (no recurring characters)"
+    r = llm.call_json(_check_settings(c.settings), "You check pictures for an animated video. Answer only with JSON.",
+                      "Look at the picture as a strict viewer. It must show what the description says and make sense "
+                      "with the narration. Fail it (ok=false) only for real problems a viewer would notice: a missing "
+                      "or extra person, a person in the wrong place or seat (for example nobody at the wheel of a moving "
+                      "car, the passenger driving), a recurring character who clearly looks different from the "
+                      "description, readable text, letters or a watermark, deformed faces, hands or bodies, a picture "
+                      "that does not fill the frame, or a picture that shows something else than the description. "
+                      "Small style differences are fine. If it fails, list the problems in Russian and write "
+                      "fixed_prompt: the full description rewritten so the image model avoids these problems (keep "
+                      "camera, place, light; state positions explicitly; no art style).\n\nNARRATION: "
+                      f"{scene.get('text', '')}\nDESCRIPTION: {scene.get('prompt', '')}\nRECURRING CHARACTERS IN IT:\n{who}\n"
+                      f"FORMAT: {'vertical 9:16' if vertical else 'horizontal 16:9'}",
+                      SCHEMA_PIC_CHECK, c.usage, 3000, images=[buf.getvalue()])
+    return r
+
+
+def _check_pictures(c: Ctx, items: list, refs: dict, places: dict, item_refs: dict):
+    """items: (scene dict, picture path, vertical, index). Bad pictures are redrawn up to two times."""
+    own = set(read_json(c.dir / "own_images.json", []) or [])
+    todo = [x for x in items if x[1].exists()
+            and f"{'short' if x[1].name.startswith('short') else 'scene'}:{x[3]}" not in own]
+    if not todo:
+        return
+    c.log(f"Контролёр картинок проверяет {len(todo)} картинок…")
+    stats = {"bad": 0, "fixed": 0}
+    lock = threading.Lock()
+
+    def work(x):
+        c.check()
+        scene, path, vertical, idx = x
+        label = f"{'Шортс, сцена' if path.name.startswith('short') else 'Сцена'} {idx + 1}"
+        for attempt in range(3):
+            try:
+                r = _picture_ok(c, path, scene, vertical)
+            except UserError as e:
+                c.log(f"Контролёр картинок, {label.lower()}: не ответил ({e}).")
+                return
+            if r.get("ok", True):
+                if attempt:
+                    with lock:
+                        stats["fixed"] += 1
+                return
+            problems = "; ".join(r.get("problems_ru") or []) or "есть ошибки"
+            if attempt == 2:
+                c.log(f"{label}: после двух перерисовок остались ошибки ({problems}). Можно перерисовать вручную.")
+                return
+            with lock:
+                if attempt == 0:
+                    stats["bad"] += 1
+            c.log(f"{label}: {problems}. Перерисовываю…")
+            if (r.get("fixed_prompt") or "").strip():
+                scene["prompt"] = r["fixed_prompt"].strip()
+            backup = path.with_suffix(".bad.png")
+            path.replace(backup)
+            try:
+                _make_image(c, scene["prompt"], path, vertical, idx, refs=refs.get(path), place=places.get(path),
+                            items=item_refs.get(path))
+            except UserError as e:
+                backup.replace(path)
+                c.log(f"{label}: перерисовать не вышло ({e}), оставлена прежняя картинка.")
+                return
+            backup.unlink(missing_ok=True)
+
+    with ThreadPoolExecutor(max_workers=max(1, int(c.settings.get("image_parallel") or 4))) as ex:
+        for f in as_completed([ex.submit(work, x) for x in todo]):
+            f.result()
+            c.save_usage()
+    c.log(f"Контролёр картинок: с ошибками было {stats['bad']}, исправлено {stats['fixed']}."
+          if stats["bad"] else "Контролёр картинок: все картинки в порядке.")
+
+
 def st_scenes(c: Ctx):
     if c.opts.get("translate_from"):
         return _translate_scenes(c)
@@ -1412,6 +1553,7 @@ def st_scenes(c: Ctx):
                           c.speakers())
     c.log(f"Сценарий разбит на {len(chunks)} сцен, пишу описания картинок…")
     scenes = _prompts_for(c, chunks, c.vertical, (c.data("outline") or {}).get("title", ""))
+    _logic_check(c, scenes)
     _name_speakers(c, scenes)
     write_json(c.out("scenes"), {"scenes": scenes})
 
@@ -1506,6 +1648,7 @@ def st_short_script(c: Ctx):
     r["script"] = c.strip_host_labels(r["script"])
     chunks = split_chunks(r["script"], c.scene_words("short_words_per_scene"), c.speakers())
     r["scenes"] = _prompts_for(c, chunks, True, r.get("title", ""))
+    _logic_check(c, r["scenes"])
     _name_speakers(c, r["scenes"])
     write_json(c.out("short_script"), r)
 
@@ -1851,6 +1994,17 @@ def st_images(c: Ctx):
             raise UserError(f"Не удалось сделать картинку {idx + 1}. Попробуйте шаг ещё раз или смените сервис.")
         shutil.copy(src, out)
         c.log(f"Картинка {idx + 1}: подставлена соседняя. Можно перегенерировать её вручную.")
+    if auto_check_on(c):
+        checks = [(sc, img / f"scene_{i:03d}.png", c.vertical, i) for i, sc in enumerate(scenes)
+                  if (img / f"scene_{i:03d}.png") in {j[1] for j in todo}]
+        if short:
+            checks += [(sc, img / f"short_{i:03d}.png", True, i) for i, sc in enumerate(short["scenes"])
+                       if (img / f"short_{i:03d}.png") in {j[1] for j in todo}]
+        failed_paths = {j[1] for j in failed}
+        _check_pictures(c, [x for x in checks if x[1] not in failed_paths], refs, places, item_refs)
+        write_json(c.out("scenes"), {"scenes": scenes})  # the checker may have improved descriptions
+        if short:
+            write_json(c.out("short_script"), short)
     make_package(c.id)
     c.save_usage()
     write_json(c.out("images"), {"count": len(jobs), "replaced": len(failed)})
