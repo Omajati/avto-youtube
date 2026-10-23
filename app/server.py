@@ -441,20 +441,11 @@ def job_own_images_done(jid: str):
     return {"ok": True}
 
 
-@app.get("/api/jobs/{jid}/scenes.txt")
-def job_scenes_txt(jid: str):
-    """Scene list to draw the pictures elsewhere: number, what is said, what to draw."""
+@app.get("/api/jobs/{jid}/scene-prompts")
+def job_scene_prompts(jid: str):
+    """Prompts for drawing the scene pictures elsewhere (shown in a window with copy buttons)."""
     _job_or_404(jid)
-    d = pipeline.job_dir(jid)
-    rows = []
-    for title, name, prefix in (("ВИДЕО", "scenes.json", "Сцена"), ("ШОРТС", "short_script.json", "Шортс, сцена")):
-        sc = (pipeline.read_json(d / name) or {}).get("scenes") or []
-        if sc:
-            rows.append(f"===== {title} =====")
-            rows += [f"{prefix} {i + 1}\nТекст: {x.get('text', '')}\nЧто нарисовать: {x.get('prompt_ru', '')}\n"
-                     f"Prompt: {x.get('prompt', '')}\n" for i, x in enumerate(sc)]
-    return Response("\n".join(rows) or "Сцен ещё нет.", media_type="text/plain; charset=utf-8",
-                    headers={"Content-Disposition": f'attachment; filename="scenes-{jid}.txt"'})
+    return pipeline.scene_prompts(jid)
 
 
 @app.post("/api/jobs/{jid}/thumbnail")

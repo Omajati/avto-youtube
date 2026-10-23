@@ -1,6 +1,6 @@
 {
- "version": 84,
- "label": "имя героя не озвучивается",
- "notes": "Имя ведущего перед репликой не озвучивается",
+ "version": 85,
+ "label": "описания картинок в окне",
+ "notes": "Описания картинок в окне с копированием",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

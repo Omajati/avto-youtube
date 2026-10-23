@@ -1118,7 +1118,7 @@ function renderHead(d) {
     </div>
     ${j.status !== "done" ? `<div class="bar"><div style="width:${j.progress}%"></div></div>` : ""}
     ${j.status === "error" ? `<div class="banner bad">${nl(j.error)}</div>` : ""}
-    ${d.images_waiting ? `<div class="banner info">⏸ Сценарий и озвучка готовы. Откройте шаг «Сцены и описания картинок»: там текст каждой сцены и что на ней нарисовать (можно скачать списком). Загрузите свои картинки по одной кнопкой «📤 Своя» или все сразу, потом нажмите «Продолжить». Сцены без вашей картинки программа нарисует сама. Загружено ваших: ${(d.own_images || []).length}.</div>` : ""}
+    ${d.images_waiting ? `<div class="banner info">⏸ Сценарий и озвучка готовы. Откройте шаг «Сцены и описания картинок»: кнопка «📋 Описания картинок для другого сервиса» даст готовые описания для каждой сцены. Загрузите свои картинки по одной кнопкой «📤 Своя» или все сразу, потом нажмите «Продолжить». Сцены без вашей картинки программа нарисует сама. Загружено ваших: ${(d.own_images || []).length}.</div>` : ""}
     ${j.options.translate_from ? `<div class="banner info">🌐 Английская версия ролика <a href="#/job/${esc(j.options.translate_from)}">${esc(j.options.translate_from)}</a>: те же картинки и анимация${(j.options.flipped || []).length ? ", кадры отражены и камера движется по-другому" : ""}, новый текст, голос, субтитры, описание и обложка.</div>` : ""}
     ${ideaWait ? `<div class="banner info">Темы готовы, программа ждёт вашего выбора. Откройте шаг «Выбор темы», отметьте понравившуюся тему и нажмите «Взять эту тему». Сценарий ещё не писался, деньги почти не потрачены.</div>` : ""}
     ${animWait ? `<div class="banner info">🎬 Картинки и озвучка готовы, программа ждёт вашего выбора анимации. Откройте шаг «Анимация сцен» ниже: программа уже отметила сцены, которые оживила бы сама. Добавьте или снимите любые галочки и нажмите «Оживить выбранные и продолжить». Перед оплатой покажется цена.</div>` : ""}
@@ -1245,6 +1245,31 @@ function renderStages(d) {
     try { await ownUp(kind, +idx, inp.files[0]); toast(`Ваша картинка поставлена в сцену ${+idx + 1}`); } catch (e) { toast(e.message, true); }
     lastStagesKey = "";
   });
+  const promptsBtn = el.querySelector("#own-prompts");
+  if (promptsBtn) promptsBtn.onclick = async () => {
+    let r;
+    try { r = await api(`/api/jobs/${j.id}/scene-prompts`); } catch (e) { return toast(e.message, true); }
+    const copy = async (text, btn) => {
+      try { await navigator.clipboard.writeText(text); }
+      catch (e) { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); }
+      if (btn) { btn.textContent = "✓ Скопировано"; setTimeout(() => btn.textContent = "Скопировать", 1500); }
+    };
+    const all = [...r.video.map((p, i) => `Сцена ${i + 1}: ${p}`), ...r.short.map((p, i) => `Шортс, сцена ${i + 1}: ${p}`)].join("\n\n");
+    const rows = (list, label) => list.map((p, i) => `<div class="card" style="padding:10px;margin:6px 0"><div class="row"><b>${label} ${i + 1}</b><span class="grow"></span><button class="sm" data-cp="${esc(p)}">Скопировать</button></div><div class="small" style="margin-top:4px">${esc(p)}</div></div>`).join("");
+    const wrap = document.createElement("div");
+    wrap.className = "vlib"; wrap.dataset.nodraft = 1;
+    wrap.innerHTML = `<div class="box"><button class="x" title="Закрыть">×</button>
+      <h2>Описания картинок для другого сервиса</h2>
+      <p class="muted small">Только то, что нарисовать: стиль, сцена и запрет на надписи. Сгенерируйте картинку, сохраните её с номером сцены в имени (1.png, 2.png…) и загрузите кнопкой «📤 Загрузить свои картинки пачкой».</p>
+      <div class="row" style="margin:8px 0"><button class="primary sm" data-cpall>Скопировать все</button></div>
+      ${rows(r.video, "Сцена")}${r.short.length ? `<h3>Шортс</h3>${rows(r.short, "Шортс, сцена")}` : ""}</div>`;
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.querySelector(".x").onclick = close;
+    wrap.addEventListener("click", e => { if (e.target === wrap) close(); });
+    wrap.querySelectorAll("[data-cp]").forEach(b => b.onclick = () => copy(b.dataset.cp, b));
+    wrap.querySelector("[data-cpall]").onclick = e => { copy(all); e.target.textContent = "✓ Скопировано все"; };
+  };
   const bulk = el.querySelector("#own-bulk");
   if (bulk) bulk.onchange = async () => {
     const files = [...bulk.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -1509,7 +1534,7 @@ const RENDER = {
     const own = new Set(d.own_images || []);
     const busy = d.job.status === "running";
     return `<p class="muted">${r.scenes.length} сцен, по одной картинке на каждую. «Перерисовать» нарисует картинку заново, «📤 Своя» поставит вашу картинку (она обрежется под кадр).</p>
-    <div class="row" style="margin-bottom:8px"><a class="btn sm" href="/api/jobs/${d.job.id}/scenes.txt">⬇ Список сцен для генерации в другом месте</a>
+    <div class="row" style="margin-bottom:8px"><button class="sm" id="own-prompts">📋 Описания картинок для другого сервиса</button>
       <label class="btn sm" style="cursor:pointer">📤 Загрузить свои картинки пачкой<input type="file" accept="image/*" multiple id="own-bulk" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label>
       <span class="muted small">Номер сцены берётся из имени файла (1.png, scene_12.jpg, 03.webp); без номера по порядку.</span></div>
     <table><tr><th>#</th><th>Картинка</th><th>Текст сцены и что на картинке</th><th></th></tr>

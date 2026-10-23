@@ -2280,6 +2280,22 @@ def _drop_scene_outputs(d: Path, kind: str, index: int):
     (d / "output" / ("short.mp4" if kind == "short" else "video.mp4")).unlink(missing_ok=True)
 
 
+def scene_prompts(jid: str) -> dict:
+    """Ready prompts to draw the scene pictures in another service: style first, no text in the picture."""
+    d = job_dir(jid)
+    job = db.get(jid) or {}
+    c = Ctx(job)
+    style = (c.settings.get("image_style") or "").strip().rstrip(".")
+    out = {}
+    for kind, name, vertical in (("video", "scenes.json", c.vertical), ("short", "short_script.json", True)):
+        scenes = (read_json(d / name) or {}).get("scenes") or []
+        out[kind] = [(f"{style}. " if style else "") + f"{(x.get('prompt') or '').strip().rstrip('.')}. "
+                     + ("Vertical 9:16 picture" if vertical else "Horizontal 16:9 picture")
+                     + ", full-bleed scene filling the whole frame. No text, no letters, no captions, no watermark."
+                     for x in scenes]
+    return out
+
+
 def own_image(jid: str, kind: str, index: int, raw: bytes):
     """The owner's own picture for one scene: cropped to fill the frame, then the video is assembled with it."""
     from PIL import Image, ImageOps
