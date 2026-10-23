@@ -1,6 +1,6 @@
 {
- "version": 74,
- "label": "удержание шортсов",
- "notes": "Шортсы: хук первыми словами, без прощания в конце, проверка «где бы я пролистал»",
+ "version": 75,
+ "label": "обучение сценариста",
+ "notes": "Обучение сценариста: правила интересного сценария всегда действуют",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

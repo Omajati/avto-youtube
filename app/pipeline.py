@@ -209,6 +209,25 @@ WRITING:
 SWIPE TEST (the editor applies it to every Short): read the script line by line as a bored viewer with a thumb over the screen. Mark the first line where you would swipe away (too slow, predictable, explaining, a warm-up, a sign-off) and rewrite or cut it; repeat until no such line is left. Average viewed percentage is the main number YouTube judges a Short by."""
 
 
+SCRIPT_CRAFT = """
+
+SCRIPTWRITER TRAINING (always on; the owner's niche and character rules still win where they differ):
+The only job of a script is to be watched to the end. A line that is merely correct, useful or neat but not interesting is a failed line. Before writing, ask: why would a stranger with a thumb over the screen keep watching THIS sentence?
+1) ONE THOUGHT per video, retellable in one plain sentence. Two thoughts are two videos. Everything that does not serve this thought is cut, however good it is.
+2) THE HOOK IS WRITTEN LAST: first build the story, then pull its strongest moment, claim or number to the very first words. No greeting, no self-introduction, no "today I will tell", no announcing what comes; start doing it. Hook types (rotate them between videos, never the same type twice in a row): a shocking number; a claim that sounds wrong; a costly mistake; a scene already in motion; a promise with a condition; a question with a gap the viewer must close; a direct callout of the viewer ("если ты ... , ты теряешь ...").
+3) KEEP THE HOOK'S PROMISE: the video delivers exactly what the hook and the title promise, no bait. A broken promise makes viewers leave and never come back.
+4) OPEN LOOPS: every block answers the previous question and at the same moment opens a new one ("но это было не самое странное", only if something stranger really follows). Close one loop before opening the next; never leave the main question open at the end.
+5) VALUE EARLY AND SPREAD OUT: the first real payoff comes right after the hook, and something new (a fact, number, turn, example, joke, reveal) arrives regularly: every few seconds in a Short, every 40-60 seconds in a long video, with the stakes raised every 60-90 seconds. Put a strong point in the middle, where viewers leave most. A minute of pure explanation with no movement loses the audience.
+6) THOUGHT + EXAMPLE, always as a pair: every claim gets one concrete, familiar example (a person, an object, a number, a situation from ordinary life). A thought without an example is forgotten; an example without a thought is useless.
+7) THE VIEWER, NOT THE AUTHOR: talk about the viewer's life, money, fears and mistakes. The narrator's own story is used only when it is about the viewer too.
+8) WRITTEN FOR THE VOICE: short spoken sentences, living words, the reading level of a 12-year-old, no participle chains, no bureaucratic or textbook phrases. Read every line aloud in your head; if the tongue stumbles, rewrite it.
+9) NO WATER: cut warm-ups, recaps, "как я уже говорил", filler adjectives, repeated thoughts and dead pauses. Nine dense minutes beat twenty empty ones; a tight 25-second Short beats a loose 45-second one.
+10) NO INVENTED FACTS: never invent statistics, studies, quotes or real-world cases presented as true. Use well-known facts, or clearly fictional stories told as stories.
+11) THE ENDING: a sharp final thought or punchline that pays off the hook, ideally looping back to the first sentence. Never end on "подписывайся", "на этом всё" or a sign-off. One call to action at most, and only in a long video.
+12) LONG VIDEOS: hook (0-20 s), why it matters to the viewer right now, 3-4 blocks each with one thought and one example, spoken transitions between blocks ("с этим разобрались, теперь второе, из-за чего всё ломается"), a short assembly of what to do tomorrow, one action. Never promise "watch to the end, the main thing is there"; people stay because it is interesting now.
+DROP-OFF TEST (the editor applies it to every script): read the script as a bored viewer and mark every line where you would leave: predictable, explaining, a warm-up, repeating, abstract without an example, a sign-off. Rewrite or cut each one until none is left."""
+
+
 DEFAULT_SHORT_EXAMPLES = {
     "ru": """Пример 1.
 Попробуй пощекотать себя прямо сейчас. Не выходит? И не выйдет, как ни старайся.
@@ -816,7 +835,8 @@ class Ctx:
                   + (KIDS_OVERRIDE if self.project.get("made_for_kids")
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
-                  + self.lessons_block() + self.golden_block(prompt_file) + self.library_block(prompt_file) + OWNER_FIRST)
+                  + self.lessons_block() + self.golden_block(prompt_file) + self.library_block(prompt_file)
+                  + (SCRIPT_CRAFT if prompt_file in GOLDEN_STAGES else "") + OWNER_FIRST)
         length = f"{self.short_seconds}-second" if self.short_format else f"{max(1, int(self.minutes))}-minute"
         user = fill(load_prompt(prompt_file), niche=self.niche, minutes=max(1, int(self.minutes)), length=length,
                     words=self.words,
