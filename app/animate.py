@@ -131,8 +131,9 @@ def generate(settings, img: Path, prompt: str, need: float, vertical: bool, chec
                 "resolution": m["resolution"], "prompt_expansion_mode": "disabled", "enable_safety_checker": True}
     elif mid == "ltx2":
         body = {"prompt": full, "image_url": image, "num_frames": _ltx_frames(need), "fps": 25,
-                "video_size": "portrait_16_9" if vertical else "landscape_16_9", "generate_audio": False,
-                "camera_lora": "dolly_in"}
+                "video_size": "portrait_16_9" if vertical else "landscape_16_9", "generate_audio": False}
+        # No camera LoRA: fal.ai fails to load those weights at times (422 "Failed to load LoRA weights"), and the
+        # motion prompt already asks for a slow camera move.
     else:
         body = {"prompt": full, "duration": "5" if clip_seconds(settings, need) <= 5 else "10",
                 "negative_prompt": "blur, distort, low quality, text, watermark, morphing faces"}
