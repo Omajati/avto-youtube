@@ -1703,7 +1703,8 @@ def st_images(c: Ctx):
             for i, sc in enumerate(scs):
                 pl = plates.get(((sc.get("location") or "").strip().lower(), vertical))
                 out = img / f"{prefix}_{i:03d}.png"
-                if pl and sc.get("shot") in ("closeup", "detail") and not refs.get(out) and not item_refs.get(out):
+                if pl and c.settings.get("ref_model") == "flux2" and sc.get("shot") in ("closeup", "detail") \
+                        and not refs.get(out) and not item_refs.get(out):
                     continue  # a close-up or a detail shows almost no background: the cheap model draws it
                 if pl:
                     places[out] = pl

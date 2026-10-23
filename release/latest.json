@@ -1,6 +1,6 @@
 {
- "version": 80,
- "label": "кнопка продолжить для своей темы",
- "notes": "Исправлена кнопка продолжить для своей темы",
+ "version": 81,
+ "label": "обычный режим картинок как раньше",
+ "notes": "Крупные планы без образца только в экономном режиме",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
