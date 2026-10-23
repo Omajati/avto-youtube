@@ -1007,8 +1007,7 @@ def st_idea(c: Ctx):
     if own_topic(c):
         ideas[:] = ideas[:1]
         idx = 0
-        c.opts["idea_picked"] = True  # the owner chose the topic himself: no topic choice is waited for  # the first idea is the owner's own topic as written: he already chose it
-        c.log("Беру вашу тему как есть.")
+        c.log("Беру вашу тему как есть, без других вариантов.")
     elif c.short_format and not c.demo and len(ideas) > 1:
         idx = _critic_pick(c, ideas, r, idx)
     r["chosen_index"] = idx
@@ -1078,8 +1077,6 @@ def _chosen_idea(c: Ctx) -> dict:
 
 def needs_idea_choice(job: dict) -> bool:
     opts = job.get("options", {})
-    if (job.get("topic") or "").strip() and not opts.get("episode"):
-        return False  # the owner wrote the topic himself: there is nothing to choose
     return bool(opts.get("idea_pause")) and not opts.get("idea_picked")
 
 

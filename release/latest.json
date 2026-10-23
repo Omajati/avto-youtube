@@ -1,6 +1,6 @@
 {
- "version": 88,
- "label": "починена анимация LTX-2",
- "notes": "Анимация LTX-2 без операторского LoRA",
+ "version": 89,
+ "label": "пауза для утверждения своей темы",
+ "notes": "Пауза для утверждения своей темы",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

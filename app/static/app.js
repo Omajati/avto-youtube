@@ -1094,7 +1094,7 @@ function renderHead(d) {
   if (["running", "queued"].includes(j.status)) act.push(`<button data-act="pause">⏸ Пауза</button>`);
   if (j.status === "paused") act.push(`<button class="primary" data-act="resume">▶ Продолжить</button>`);
   if (j.status === "error") act.push(`<button class="primary" data-act="retry">↻ Попробовать ещё раз</button>`);
-  const ideaWait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked && !((j.topic || "").trim() && !j.options.episode);
+  const ideaWait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked;
   const animWait = d.anim && d.anim.waiting;
   const imgWait = d.images_waiting;
   const ownPending = !imgWait && (d.own_images || []).length && ["done", "error", "paused"].includes(j.status) && !d.stages.video;
@@ -1120,7 +1120,7 @@ function renderHead(d) {
     ${j.status === "error" ? `<div class="banner bad">${nl(j.error)}</div>` : ""}
     ${d.images_waiting ? `<div class="banner info">⏸ Сценарий и озвучка готовы. Откройте шаг «Сцены и описания картинок»: кнопка «📋 Описания картинок для другого сервиса» даст готовые описания для каждой сцены. Загрузите свои картинки по одной кнопкой «📤 Своя» или все сразу, потом нажмите «Продолжить». Сцены без вашей картинки программа нарисует сама. Загружено ваших: ${(d.own_images || []).length}.</div>` : ""}
     ${j.options.translate_from ? `<div class="banner info">🌐 Английская версия ролика <a href="#/job/${esc(j.options.translate_from)}">${esc(j.options.translate_from)}</a>: те же картинки и анимация${(j.options.flipped || []).length ? ", кадры отражены и камера движется по-другому" : ""}, новый текст, голос, субтитры, описание и обложка.</div>` : ""}
-    ${ideaWait ? `<div class="banner info">Темы готовы, программа ждёт вашего выбора. Откройте шаг «Выбор темы», отметьте понравившуюся тему и нажмите «Взять эту тему». Сценарий ещё не писался, деньги почти не потрачены.</div>` : ""}
+    ${ideaWait ? `<div class="banner info">${(j.topic || "").trim() && !j.options.episode ? "Ваша тема оформлена: название, хук и суть. Откройте шаг «Выбор темы», проверьте и нажмите «Взять эту тему». Если не то, нажмите «Переделать с этого шага»." : "Темы готовы, программа ждёт вашего выбора. Откройте шаг «Выбор темы», отметьте понравившуюся тему и нажмите «Взять эту тему»."} Сценарий ещё не писался, деньги почти не потрачены.</div>` : ""}
     ${animWait ? `<div class="banner info">🎬 Картинки и озвучка готовы, программа ждёт вашего выбора анимации. Откройте шаг «Анимация сцен» ниже: программа уже отметила сцены, которые оживила бы сама. Добавьте или снимите любые галочки и нажмите «Оживить выбранные и продолжить». Перед оплатой покажется цена.</div>` : ""}
     ${j.status === "review" && !ideaWait && !animWait && !d.images_waiting ? `<div class="banner info">Текст готов и проверен редактором. Программа остановилась и ждёт вас: сцены, картинки и озвучка ещё не делались. Прочитайте текст в шаге «Проверка редактором» → «Итоговый текст для озвучки». Если нужно, исправьте его там же и нажмите «Сохранить мой текст». Когда всё устраивает, нажмите «Сценарий хороший, продолжить». Или нажмите «Переделать» у шага «Текст сценария», чтобы ИИ написал заново.</div>` : ""}
     <div class="row" style="margin-top:12px">${act.join("")}</div>
@@ -1326,7 +1326,7 @@ function renderStages(d) {
   if (ideaBtn) ideaBtn.onclick = async () => {
     const pick = el.querySelector('input[name="idea-pick"]:checked');
     if (!pick) return toast("Отметьте тему", true);
-    const wait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked && !((j.topic || "").trim() && !j.options.episode);
+    const wait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked;
     if (!wait && !confirm("Сменить тему? Сценарий, картинки и озвучка этого ролика сделаются заново.")) return;
     ideaBtn.disabled = true;
     try { await api(`/api/jobs/${j.id}/idea`, { json: { index: +pick.value } }); toast("Тема выбрана, пишу сценарий"); }
@@ -1468,7 +1468,7 @@ const RENDER = {
   idea(r, d) {
     if (!r) return "";
     const j = d.job, busy = j.status === "running";
-    const wait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked && !((j.topic || "").trim() && !j.options.episode);
+    const wait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked;
     const rate = x => x.viewer ? (+x.viewer.stop_scroll || 0) + (+x.viewer.unpredictable || 0) + (+x.viewer.payoff || 0) : x.total * 3;
     const order = r.ideas.map((x, i) => i).sort((a, b) => (b === r.chosen_index) - (a === r.chosen_index) || rate(r.ideas[b]) - rate(r.ideas[a]));
     const row = i => { const x = r.ideas[i]; return `<tr class="${i === r.chosen_index ? "chosen" : ""}">
