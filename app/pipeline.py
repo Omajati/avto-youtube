@@ -2351,7 +2351,8 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
         c.log(f"Звуковые эффекты: {sum(1 for f in fx if f[2] != 'none')}")
     if subs:
         c.log("Накладываю субтитры на видео…")
-    media.final_mix(joined, narration, music, out, float(c.settings["music_volume"]),
+    vol = opts.get("music_volume")
+    media.final_mix(joined, narration, music, out, float(vol if vol not in (None, "") else c.settings["music_volume"]),
                     float(c.settings["loudness_lufs"]), total,
                     subs=cap["ass"] if subs else None, fonts=cap["fonts"], sfx=sfx_file if has_sfx else None)
     joined.unlink(missing_ok=True)
@@ -2388,7 +2389,18 @@ def _graphics_for(c: Ctx, prefix: str, scenes: list, durations: list, total: flo
 
 def _music_for(c: Ctx, total: float):
     """Background track: none, a fitting one from the music folder, or a new one composed for this video."""
-    mode = c.opts.get("music_mode") or "library"
+    opts = (db.get(c.id) or {}).get("options") or c.opts
+    chosen = opts.get("music_track") or ""
+    if chosen == "none":
+        c.log("Музыка выключена для этого ролика.")
+        return None
+    if chosen:  # the owner picked the track himself on the video page
+        f = musiclib.MUSIC_DIR / Path(chosen).name
+        if f.is_file():
+            c.log(f"Фоновая музыка (ваш выбор): {f.name}")
+            return f
+        c.log(f"Выбранного трека «{chosen}» больше нет в разделе «Музыка», подбираю другой.")
+    mode = opts.get("music_mode") or "library"
     if mode == "off":
         c.log("Музыка выключена для этого ролика.")
         return None
@@ -2412,9 +2424,14 @@ def _music_for(c: Ctx, total: float):
             return own
         except UserError as e:
             c.log(f"Не получилось сочинить музыку ({e}). Беру трек из раздела «Музыка».")
-    track = musiclib.pick(mood)
+    track = None
+    if opts.get("music_picked") and (musiclib.MUSIC_DIR / opts["music_picked"]).is_file():
+        track = musiclib.MUSIC_DIR / opts["music_picked"]  # a new assembly keeps the track picked before
+    track = track or musiclib.pick(mood)
     if track:
         c.log(f"Фоновая музыка: {track.name}")
+        if opts.get("music_picked") != track.name:
+            db.update(c.id, options=dict(opts, music_picked=track.name))
     else:
         c.log("Фоновой музыки нет (раздел «Музыка» пуст), ролик будет без музыки.")
     return track

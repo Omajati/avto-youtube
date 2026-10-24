@@ -93,7 +93,7 @@ def meta():
         "providers": {k: {**v, "models": [{"id": m, "name": n, "price": p} for m, n, p in v["models"]]}
                       for k, v in images.PROVIDERS.items()},
         "tts_models": [{"id": m, "name": n} for m, n in tts.MODELS],
-        "music_modes": musiclib.MODES,
+        "music_modes": musiclib.MODES, "music_volume": float(load_settings().get("music_volume", 0.12)),
         "video_models": [{"id": k, "name": v["name"], "price": v["price"],
                           "clip": round(animate.clip_seconds({"video_model": k}, 5) * v["price"], 2)}
                          for k, v in animate.VIDEO_MODELS.items()],
@@ -587,6 +587,34 @@ def job_assembly(jid: str, data: dict = Body(...)):
     for k in ("graphics", "subs_smart"):
         if k in data:
             opts[k] = bool(data[k])
+    db.update(jid, options=opts)
+    d = pipeline.job_dir(jid)
+    for rel in ("video.json", "short_video.json", "output/video.mp4", "output/short.mp4"):
+        pipeline._remove(d, rel)
+    if j["status"] in ("done", "error", "paused"):
+        db.update(jid, status="queued", error="")
+        worker.wake()
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{jid}/music")
+def job_music(jid: str, data: dict = Body(...)):
+    """The owner's own background track (or none, or automatic) and its volume. Only the assembly is redone: free."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
+    opts = dict(j["options"])
+    track = str(data.get("track") or "")
+    if track and track != "none" and not (MUSIC_DIR / Path(track).name).is_file():
+        raise UserError("Такого трека нет в разделе «Музыка».")
+    opts["music_track"] = Path(track).name if track not in ("", "none") else track
+    if not track:
+        opts.pop("music_picked", None)  # automatic again: pick anew
+    if data.get("volume") not in (None, ""):
+        try:
+            opts["music_volume"] = min(0.6, max(0.0, float(data["volume"])))
+        except (TypeError, ValueError):
+            raise UserError("Громкость должна быть числом.")
     db.update(jid, options=opts)
     d = pipeline.job_dir(jid)
     for rel in ("video.json", "short_video.json", "output/video.mp4", "output/short.mp4"):

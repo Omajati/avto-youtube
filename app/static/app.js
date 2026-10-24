@@ -1338,6 +1338,32 @@ function renderStages(d) {
     b.disabled = false; b.textContent = "Применить";
     lastStagesKey = "";
   });
+  el.querySelectorAll("details.musicbox").forEach(box => {
+    const sel = box.querySelector(".mb-track"), au = box.querySelector(".mb-audio"), o = j.options || {};
+    const fill = (pick) => api("/api/music").then(fs => {
+      sel.querySelectorAll("option.trk").forEach(x => x.remove());
+      const cur = pick || o.music_track || "";
+      sel.insertAdjacentHTML("beforeend", fs.map(f => `<option class="trk" value="${esc(f.name)}" ${f.name === cur ? "selected" : ""}>${esc(f.name)}${f.style ? " · " + esc(f.style) : ""}</option>`).join(""));
+      if (cur) { sel.value = cur; sel.onchange(); }
+    }).catch(e => toast(e.message, true));
+    sel.onchange = () => {
+      const v = sel.value;
+      if (v && v !== "none") { au.src = `/music/${encodeURIComponent(v)}`; au.style.display = ""; } else { au.pause(); au.style.display = "none"; }
+    };
+    box.addEventListener("toggle", () => { if (box.open && !box.dataset.loaded) { box.dataset.loaded = "1"; fill(); } });
+    box.querySelector(".mb-vol").oninput = e => { box.querySelector(".mb-vv").textContent = Math.round(e.target.value * 100) + "%"; };
+    box.querySelector(".mb-up").onchange = async e => {
+      const f = e.target.files[0]; if (!f) return;
+      try { await api(`/api/music/upload?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f }); toast("Трек загружен и выбран"); fill(f.name); }
+      catch (er) { toast(er.message, true); }
+    };
+    box.querySelector(".mb-go").onclick = async e => {
+      const b = e.target; b.disabled = true;
+      await api(`/api/jobs/${j.id}/music`, { json: { track: sel.value, volume: box.querySelector(".mb-vol").value } })
+        .then(() => toast("Музыка выбрана, ролик пересобирается")).catch(er => { toast(er.message, true); b.disabled = false; });
+      lastStagesKey = "";
+    };
+  });
   el.querySelectorAll("details.revoice").forEach(box => {
     const sel = box.querySelector(".rv-voice");
     box.addEventListener("toggle", () => {
@@ -1712,6 +1738,7 @@ const RENDER = {
       ${subsRow(d, "video", vert ? "short_srt" : "srt", vert ? "short_subtitles.srt" : "subtitles.srt")}
       ${speedRow(d, "video", r)}
       ${fxRow(d)}
+      ${musicBox(d, r)}
       <div class="upbox" data-kind="video"></div>${vert ? `<div class="igbox"></div>` : ""}`;
   },
   short_video(r, d) {
@@ -1777,6 +1804,20 @@ function applyEdits(text, edits) {
     }
   }
   return { text: paras.join("\n\n"), missed };
+}
+
+function musicBox(d, r) {
+  const o = d.job.options || {}, busy = d.job.status === "running";
+  const vol = o.music_volume ?? META.music_volume ?? 0.12;
+  return `<details class="musicbox" style="margin-top:10px"><summary><b>🎵 Музыка: ${r.music ? esc(r.music) : "без музыки"}</b></summary>
+    <p class="muted small">Выберите трек из раздела «Музыка» или загрузите свой. Ролик и шортс пересоберутся бесплатно, картинки и голос не меняются. Выбранный трек остаётся и при следующих пересборках.</p>
+    <select class="mb-track"><option value="">Подобрать автоматически по стилю ролика</option><option value="none" ${o.music_track === "none" ? "selected" : ""}>Без музыки</option></select>
+    <audio class="mb-audio" controls preload="none" style="display:none;margin-top:6px;width:100%"></audio>
+    <label class="f">Громкость музыки: <b class="mb-vv">${Math.round(vol * 100)}%</b> <span class="hint">обычно 8–15%, голос всегда главнее</span></label>
+    <input type="range" class="mb-vol" min="0" max="0.4" step="0.01" value="${esc(vol)}">
+    <div class="row" style="margin-top:8px"><button class="primary mb-go" ${busy ? "disabled" : ""}>🎵 Поставить и пересобрать</button>
+      <label class="btn" style="display:inline-block;cursor:pointer">📤 Загрузить свой трек<input type="file" class="mb-up" accept="audio/*" style="display:none"></label>
+      ${busy ? `<span class="muted small">Сначала дождитесь конца работы или поставьте на паузу</span>` : ""}</div></details>`;
 }
 
 function revoiceBox(d) {
