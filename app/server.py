@@ -677,20 +677,23 @@ def job_more_ideas(jid: str):
 
 @app.post("/api/jobs/{jid}/translate")
 def job_translate(jid: str, data: dict = Body(...)):
-    """An English version of a finished video: the same pictures and animation, a new voice and text."""
+    """A version of a finished video in another language: the same pictures and animation, a new voice and text."""
     j = _job_or_404(jid)
     if j["status"] == "running":
         raise UserError("Подождите, пока ролик доделается.")
+    lang = data.get("language") or "en"
+    if lang not in projects.LANGUAGES or lang == pipeline.job_language(j):
+        raise UserError("Выберите язык, на который переводить.")
     voice_id = (data.get("voice_id") or "").strip()
     if not voice_id:
-        raise UserError("Выберите голос для английской версии.")
+        raise UserError("Выберите голос для новой версии.")
     channel_id = (data.get("channel_id") or "").strip()
-    new = pipeline.make_translation(jid, "en", voice_id, (data.get("voice_name") or "").strip(), channel_id,
+    new = pipeline.make_translation(jid, lang, voice_id, (data.get("voice_name") or "").strip(), channel_id,
                                     bool(data.get("restyle", True)), int(data.get("redraw") or 0))
     pid = j["options"].get("project_id")
-    if pid and projects.get(pid):  # the next English version of this project starts with the same choice
-        projects.save(pid, {"en_voice_id": voice_id,
-                            "en_voice_name": (data.get("voice_name") or "").strip(), "en_channel_id": channel_id})
+    if pid and projects.get(pid) and lang != "ru":  # the next version in this language starts with the same choice
+        projects.save(pid, {f"{lang}_voice_id": voice_id, f"{lang}_voice_name": (data.get("voice_name") or "").strip(),
+                            f"{lang}_channel_id": channel_id, "tr_lang": lang})
     worker.wake()
     return new
 
@@ -1560,25 +1563,26 @@ def voices():
 
 
 @app.get("/api/voices/library")
-def voices_library(gender: str = "", use_case: str = "", search: str = "", page: int = 0):
-    return tts.library(load_settings(), gender, use_case, search, page)
+def voices_library(gender: str = "", use_case: str = "", search: str = "", page: int = 0, language: str = "ru"):
+    return tts.library(load_settings(), gender, use_case, search, page, language)
 
 
 @app.post("/api/voices/library/add")
 def voices_library_add(data: dict = Body(...)):
     s = load_settings()
     vid = tts.add_from_library(s, data.get("owner", ""), data.get("voice_id", ""), data.get("name", ""))
-    # Library voices found through the Russian filter are Russian speakers.
-    save_settings({"voice_audience": {**(s.get("voice_audience") or {}), vid: "ru"}})
+    # Library voices found through a language filter are native speakers of that language.
+    lang = data.get("language") if data.get("language") in tts.AUDIENCES[:5] else "ru"
+    save_settings({"voice_audience": {**(s.get("voice_audience") or {}), vid: lang}})
     return {"voice_id": vid, "name": data.get("name", "")}
 
 
 @app.post("/api/voices/{vid}/audience")
 def voice_audience(vid: str, data: dict = Body(...)):
-    """The owner marks who a voice suits: ru, en or both ('auto' forgets the mark)."""
+    """The owner marks who a voice suits: ru, en, de, es, fr or both ('auto' forgets the mark)."""
     s = load_settings()
     marks = dict(s.get("voice_audience") or {})
-    if data.get("audience") in ("ru", "en", "both"):
+    if data.get("audience") in tts.AUDIENCES:
         marks[vid[:64]] = data["audience"]
     else:
         marks.pop(vid, None)
@@ -1589,6 +1593,18 @@ def voice_audience(vid: str, data: dict = Body(...)):
 @app.get("/api/elevenlabs/account")
 def el_account():
     return tts.account_info(load_settings())
+
+
+SAMPLE_TEXT = {
+    "ru": ("Зимой тысяча восемьсот семьдесят второго года в Атлантике нашли корабль. "
+           "Паруса подняты, груз на месте. Но на борту не было ни души."),
+    "de": ("Im Winter achtzehnhundertzweiundsiebzig fand man im Atlantik ein treibendes Schiff. "
+           "Die Segel waren gesetzt, die Ladung an Bord. Aber keine einzige Seele."),
+    "es": ("En el invierno de mil ochocientos setenta y dos, encontraron un barco a la deriva en el Atlántico. "
+           "Las velas estaban izadas. Pero a bordo no había ni un alma."),
+    "fr": ("À l'hiver mille huit cent soixante-douze, on retrouva un navire à la dérive dans l'Atlantique. "
+           "Les voiles étaient hissées. Mais à bord, il n'y avait plus personne."),
+}
 
 
 @app.post("/api/test/tts")
@@ -1614,9 +1630,8 @@ def test_tts(data: dict = Body(default={})):
             host = next((c for c in projects.list_chars(set(proj.get("characters") or [])) if c.get("voice_id")), None)
             if host:
                 s["elevenlabs_voice_id"] = host["voice_id"]
-        if proj.get("language") == "ru" and not data.get("text"):
-            text = ("Зимой тысяча восемьсот семьдесят второго года в Атлантике нашли корабль. "
-                    "Паруса подняты, груз на месте. Но на борту не было ни души.")
+        if proj.get("language") in SAMPLE_TEXT and not data.get("text"):
+            text = SAMPLE_TEXT[proj["language"]]
     out = DATA_DIR / "test_voice.mp3"
     out.with_suffix(".json").unlink(missing_ok=True)
     tts.synthesize(s, text, out, language=proj.get("language", "") if proj else "")

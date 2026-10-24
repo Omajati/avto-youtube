@@ -9,7 +9,8 @@ from .net import UserError
 
 PROJ_DIR = DATA_DIR / "projects"
 
-LANGUAGES = {"en": "Английский (США, весь мир)", "ru": "Русский (СНГ)"}
+LANGUAGES = {"en": "Английский (США, весь мир)", "ru": "Русский (СНГ)", "de": "Немецкий (Германия, Австрия, Швейцария)",
+             "es": "Испанский (Испания, Латинская Америка)", "fr": "Французский (Франция, Бельгия, Канада)"}
 
 # Fields a project can set. Empty value = take it from the general settings.
 FIELDS = {
@@ -20,6 +21,8 @@ FIELDS = {
     # Series: episodes remember what happened before
     "series": False, "series_bible": "", "season_plan": "",
     "en_voice_id": "", "en_voice_name": "", "en_channel_id": "",  # last choice for the English version
+    "de_voice_id": "", "de_voice_name": "", "de_channel_id": "", "es_voice_id": "", "es_voice_name": "", "es_channel_id": "",
+    "fr_voice_id": "", "fr_voice_name": "", "fr_channel_id": "", "tr_lang": "",  # the same for other languages
     "seo_ru": "",  # the owner's permanent tags and search phrases for every video of the project
     "short_examples": "",  # texts of Shorts the owner loves: a style reference for the writer
     "same_place": True,  # one reference picture per location so every scene there shows the same place

@@ -191,7 +191,7 @@ async function viewNew() {
     <label class="f" style="margin-top:0">Проект <span class="hint">Одной кнопкой подставляются язык, ниша, голос, стиль и остальные настройки проекта. <a href="#/projects">Создать или изменить проекты</a></span></label>
     <div class="pgrid" id="projsel">
       <button class="pcard ${curProj ? "" : "on"}" data-proj=""><div class="pic">⚙️</div><div><b>Без проекта</b><div class="muted small">общие настройки</div></div></button>
-      ${projs.map(p => `<button class="pcard ${p.id === curProj ? "on" : ""}" data-proj="${p.id}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${p.language === "ru" ? "русский" : "английский"}</div></div></button>`).join("")}
+      ${projs.map(p => `<button class="pcard ${p.id === curProj ? "on" : ""}" data-proj="${p.id}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${LANG_RU[p.language] || "английский"}</div></div></button>`).join("")}
     </div>
     <div id="charsel"></div><div id="itemsel"></div><input type="hidden" id="fmtv" value="long"><input type="hidden" id="charsv" value=""><input type="hidden" id="itemsv" value="">
     <label class="f">Формат</label>
@@ -372,7 +372,7 @@ async function viewJobs() {
         <div class="body">
           <div class="t">${j.options.episode ? `Серия ${j.options.episode}. ` : ""}${esc(j.options.title_ru || j.title || j.topic || "Тема ещё выбирается…")}${j.options.demo ? " <span class='muted small'>(тест)</span>" : ""}</div>
           <div class="row small">${badge(j.status)} <span class="muted">${esc(j.status === "running" ? j.stage_name : new Date(j.created * 1000).toLocaleString("ru"))}</span></div>
-          ${j.project || j.channel_title ? `<div class="muted small" style="margin-top:4px">${j.project ? `${esc(j.project.icon)} ${esc(j.project.name)}` : ""}${j.project && j.channel_title ? " · " : ""}${j.channel_title ? `📺 ${esc(j.channel_title)}` : ""}${j.options.language === "ru" ? " · RU" : ""}</div>` : ""}
+          ${j.project || j.channel_title ? `<div class="muted small" style="margin-top:4px">${j.project ? `${esc(j.project.icon)} ${esc(j.project.name)}` : ""}${j.project && j.channel_title ? " · " : ""}${j.channel_title ? `📺 ${esc(j.channel_title)}` : ""}${j.options.language && j.options.language !== "en" ? " · " + j.options.language.toUpperCase() : ""}</div>` : ""}
           ${["running", "queued", "paused"].includes(j.status) ? `<div class="bar" style="margin-top:8px"><div style="width:${j.progress}%"></div></div>` : ""}
           ${j.status === "error" ? `<div class="small" style="color:var(--bad);margin-top:6px">${esc(j.error.slice(0, 140))}</div>` : ""}
         </div>
@@ -652,13 +652,18 @@ async function viewItems() {
   await renderItems();
 }
 
-const AUD = { ru: "🇷🇺 Для русской аудитории", en: "🇺🇸 Для английской аудитории", both: "🌍 Не определено (можно пометить в Настройках)" };
+const AUD = { ru: "🇷🇺 Для русской аудитории", en: "🇺🇸 Для английской аудитории", de: "🇩🇪 Для немецкой аудитории", es: "🇪🇸 Для испанской аудитории", fr: "🇫🇷 Для французской аудитории", both: "🌍 Не определено (можно пометить в Настройках)" };
+const LANG_RU = { ru: "русский", en: "английский", de: "немецкий", es: "испанский", fr: "французский" };
+const LANG_IN = { ru: "на русском", en: "на английском", de: "на немецком", es: "на испанском", fr: "на французском" };
+const LANG_FLAG = { ru: "🇷🇺", en: "🇺🇸", de: "🇩🇪", es: "🇪🇸", fr: "🇫🇷" };
+const LIB_LANGS = { ru: "Русские", en: "Английские", de: "Немецкие", es: "Испанские", fr: "Французские" };
 let VOICES = null;
 async function loadVoices(force) { if (!VOICES || force) VOICES = await api("/api/voices"); return VOICES; }
 const KIND = { male: "👨 Мужские", female: "👩 Женские", child: "🧒 Детские", other: "🎙️ Другие" };
 const voiceLabel = v => `${esc(v.name)} — ${v.flag || ""} ${esc(v.country || "")}${v.description ? ", " + esc(v.description) : ""}`;
 function voiceOptions(vs, cur, lang) {
-  const order = lang === "ru" ? ["ru", "both", "en"] : lang === "en" ? ["en", "both", "ru"] : ["ru", "en", "both"];
+  const all = ["ru", "en", "de", "es", "fr"];
+  const order = AUD[lang] && lang !== "both" ? [lang, "both", ...all.filter(a => a !== lang)] : [...all, "both"];
   let html = order.map(a => Object.keys(KIND).map(k => {
     const g = vs.filter(v => v.audience === a && (v.kind || "other") === k);
     return g.length ? `<optgroup label="${AUD[a].split(" (")[0]} · ${KIND[k]}">${g.map(v => `<option value="${v.voice_id}" data-name="${esc(v.name)}" ${v.voice_id === cur ? "selected" : ""}>${voiceLabel(v)}</option>`).join("")}</optgroup>` : "";
@@ -667,14 +672,16 @@ function voiceOptions(vs, cur, lang) {
   return html;
 }
 
-// Russian voices from the public ElevenLabs library. onPick(voice_id, name) gets a voice already added to the account.
-function openVoiceLibrary(onPick) {
+// Voices of one language from the public ElevenLabs library. onPick(voice_id, name) gets a voice already added to the account.
+function openVoiceLibrary(onPick, lang) {
+  lang = LIB_LANGS[lang] ? lang : "ru";
   const wrap = document.createElement("div");
   wrap.className = "vlib"; wrap.dataset.nodraft = 1;
   wrap.innerHTML = `<div class="box"><button class="x" title="Закрыть">×</button>
-    <h2>Русские голоса из библиотеки ElevenLabs</h2>
-    <p class="muted small">Это носители русского языка, поэтому ударения и интонации у них естественные. Нажмите ▶, чтобы послушать. Кнопка «Выбрать» добавит голос в ваш аккаунт ElevenLabs и поставит его. После этого не забудьте нажать «Сохранить».</p>
+    <h2>Голоса из библиотеки ElevenLabs</h2>
+    <p class="muted small">Выберите язык: в списке будут носители этого языка, поэтому ударения и интонации у них естественные. Нажмите ▶, чтобы послушать. Кнопка «Выбрать» добавит голос в ваш аккаунт ElevenLabs и поставит его. После этого не забудьте нажать «Сохранить».</p>
     <div class="row" style="gap:8px;margin:10px 0">
+      <select data-f="language" style="width:auto">${Object.entries(LIB_LANGS).map(([k, n]) => `<option value="${k}" ${k === lang ? "selected" : ""}>${LANG_FLAG[k]} ${n}</option>`).join("")}</select>
       <select data-f="gender" style="width:auto"><option value="">Любой пол</option><option value="male">👨 Мужские</option><option value="female">👩 Женские</option></select>
       <select data-f="use_case" style="width:auto"><option value="">Для чего угодно</option><option value="narrative_story">Рассказы и истории</option><option value="informative_educational">Обучающие, научпоп</option><option value="social_media">Соцсети, шортсы</option><option value="entertainment_tv">ТВ, развлечения</option><option value="characters_animation">Персонажи, мультфильмы</option><option value="advertisement">Реклама</option></select>
       <input data-f="search" placeholder="поиск: низкий, спокойный, диктор…" style="width:240px">
@@ -699,7 +706,7 @@ function openVoiceLibrary(onPick) {
     list.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
       const v = items[+b.dataset.pick]; b.disabled = true; b.textContent = "Добавляю…";
       try {
-        const r = await api("/api/voices/library/add", { json: { owner: v.owner, voice_id: v.voice_id, name: v.name } });
+        const r = await api("/api/voices/library/add", { json: { owner: v.owner, voice_id: v.voice_id, name: v.name, language: f("language") } });
         await loadVoices(true).catch(() => null);
         onPick(r.voice_id, v.name); close(); toast(`Голос «${v.name}» выбран. Нажмите «Сохранить».`);
       } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = "Выбрать"; }
@@ -708,7 +715,7 @@ function openVoiceLibrary(onPick) {
   const load = async (reset) => {
     if (reset) { page = 0; items = []; list.innerHTML = "Загружаю…"; }
     try {
-      const q = new URLSearchParams({ gender: f("gender"), use_case: f("use_case"), search: f("search"), page });
+      const q = new URLSearchParams({ language: f("language"), gender: f("gender"), use_case: f("use_case"), search: f("search"), page });
       const d = await api(`/api/voices/library?${q}`);
       items = items.concat(d.voices); draw(); more.style.display = d.has_more ? "" : "none";
     } catch (e) { list.innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
@@ -740,7 +747,7 @@ async function viewProjects(id) {
       <b class="pdel" data-del="${p.id}" data-count="${p.count}" title="Удалить проект">×</b></a>`).join("")}</div>` : ""}
   <div class="card"><h2>Новый проект из ниши</h2>
     <p class="muted small">Выберите нишу: все настройки подставятся сами, потом их можно поменять. Если проект с этой нишей уже есть, откроется он, а не новая копия. Ненужную нишу уберите крестиком в углу: готовые ниши скрываются (их можно вернуть внизу), ваши удаляются. Проекты при этом не трогаются. Свой проект можно сделать нишей кнопкой «⭐ Сохранить как свою нишу» в проекте: тогда он появится здесь с пометкой «моя ниша», и из него можно быстро делать новые проекты.</p>
-    <div class="pgrid">${Object.entries(niches).filter(([k, p]) => !p.hidden).sort((a, b) => (b[1].mine ? 1 : 0) - (a[1].mine ? 1 : 0)).map(([k, p]) => `<button class="pcard" data-preset="${k}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${p.mine ? "⭐ моя ниша · " : ""}${p.language === "ru" ? "на русском" : "на английском"}${p.project || projs.some(x => x.preset === k) ? " · ✓ уже есть" : ""}</div></div><b class="pdel" data-ndel="${k}" data-mine="${p.mine ? 1 : ""}" title="Убрать из списка ниш">×</b></button>`).join("")}
+    <div class="pgrid">${Object.entries(niches).filter(([k, p]) => !p.hidden).sort((a, b) => (b[1].mine ? 1 : 0) - (a[1].mine ? 1 : 0)).map(([k, p]) => `<button class="pcard" data-preset="${k}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${p.mine ? "⭐ моя ниша · " : ""}${LANG_IN[p.language] || "на английском"}${p.project || projs.some(x => x.preset === k) ? " · ✓ уже есть" : ""}</div></div><b class="pdel" data-ndel="${k}" data-mine="${p.mine ? 1 : ""}" title="Убрать из списка ниш">×</b></button>`).join("")}
       <button class="pcard" data-preset="custom"><div class="pic">＋</div><div><b>Свой проект</b><div class="muted small">с нуля</div></div></button></div>
     ${Object.values(niches).some(p => p.hidden) ? `<details style="margin-top:14px"><summary class="muted">Скрытые ниши (${Object.values(niches).filter(p => p.hidden).length})</summary>
       <div class="row" style="gap:6px;margin-top:8px">${Object.entries(niches).filter(([k, p]) => p.hidden).map(([k, p]) => `<button class="sm" data-nshow="${k}" title="Вернуть в список">${esc(p.icon)} ${esc(p.name)} · вернуть</button>`).join("")}</div></details>` : ""}
@@ -806,9 +813,9 @@ async function viewProject(id) {
     <textarea data-q="image_style">${esc(p.image_style)}</textarea>
     <div class="row" style="margin-top:6px">${Object.entries(STYLE_PRESETS).map(([k, v]) => `<button class="sm" data-style="${k}" title="${esc(v.desc)}">${esc(v.name)}</button>`).join("")}</div>
     <div class="grid2"><div>
-      <label class="f">Голос <span class="hint">Голоса разделены на подходящие для русской и для английской аудитории. Сверху — под язык проекта.</span></label>
+      <label class="f">Голос <span class="hint">Голоса разделены по языку аудитории: русский, английский, немецкий, испанский, французский. Сверху — под язык проекта.</span></label>
       <select data-q="voice_id" id="pj-voice"><option value="">Как в общих настройках (${esc(gs.elevenlabs_voice_name || "не выбран")})</option>${p.voice_id ? `<option value="${esc(p.voice_id)}" selected>${esc(p.voice_name || p.voice_id)}</option>` : ""}</select>
-      <div class="row" style="margin-top:6px"><button class="sm" id="pj-voice-prev">▶ Образец</button><button class="sm primary" id="pj-voice-lib">🇷🇺 Подобрать русский голос</button><audio id="pj-voice-audio"></audio></div>
+      <div class="row" style="margin-top:6px"><button class="sm" id="pj-voice-prev">▶ Образец</button><button class="sm primary" id="pj-voice-lib">🌍 Подобрать голос под язык проекта</button><audio id="pj-voice-audio"></audio></div>
       <input type="text" id="pj-voice-id" placeholder="…или вставьте ID голоса из ElevenLabs" style="margin-top:6px">
     </div><div>
       <label class="f">Канал YouTube по умолчанию</label>
@@ -946,7 +953,7 @@ async function viewProject(id) {
     catch (e) { vsel.title = "Список голосов не загрузился: " + e.message; }
   };
   fillVoices(); langSel.addEventListener("change", fillVoices);
-  $("#pj-voice-lib").onclick = () => openVoiceLibrary((vid, name) => { $("#pj-voice-id").value = ""; pickIntoSelect($("#pj-voice"), vid, name); });
+  $("#pj-voice-lib").onclick = () => openVoiceLibrary((vid, name) => { $("#pj-voice-id").value = ""; pickIntoSelect($("#pj-voice"), vid, name); }, langSel.value);
   $("#pj-voice-prev").onclick = () => {
     const v = (VOICES || []).find(x => x.voice_id === ($("#pj-voice").value || gs.elevenlabs_voice_id));
     if (!v || !v.preview_url) return toast("Для этого голоса нет образца. Нажмите «Проверить голос проекта».", true);
@@ -1111,7 +1118,7 @@ function renderHead(d) {
   if (j.status === "review" && !ideaWait && !animWait && !imgWait) act.push(`<button class="primary" data-act="approve">✓ Сценарий хороший, продолжить</button>`);
   if (j.options.project_id && d.stages.review && j.status !== "running") act.push(`<button data-gold="video" title="Сценарист будет изучать этот текст перед новыми роликами проекта">⭐ ${d.format === "short" ? "Шортс" : "Сценарий"} в копилку удачных</button>`);
   if (j.options.project_id && d.format !== "short" && d.stages.short_script && j.status !== "running") act.push(`<button data-gold="short">⭐ Шортс в копилку</button>`);
-  if (d.stages.images && j.status !== "running" && !j.options.translate_from && (j.options.language || "en") !== "en") act.push(`<button data-tr="1" title="Те же картинки и анимация, английский текст, голос, субтитры и описание">🌐 Английская версия</button>`);
+  if (d.stages.images && j.status !== "running" && !j.options.translate_from) act.push(`<button data-tr="1" title="Те же картинки и анимация, текст, голос, субтитры и описание на другом языке: английском, немецком, испанском, французском">🌐 Версия на другом языке</button>`);
   act.push(`<button data-open="1">📂 Открыть папку</button>`);
   act.push(`<button class="danger" data-act="delete">Удалить</button>`);
   $("#jhead").innerHTML = `
@@ -1127,7 +1134,7 @@ function renderHead(d) {
     ${j.status !== "done" ? `<div class="bar"><div style="width:${j.progress}%"></div></div>` : ""}
     ${j.status === "error" ? `<div class="banner bad">${nl(j.error)}</div>` : ""}
     ${d.images_waiting ? `<div class="banner info">⏸ Сценарий и озвучка готовы. Откройте шаг «Сцены и описания картинок»: кнопка «📋 Описания картинок для другого сервиса» даст готовые описания для каждой сцены. Загрузите свои картинки по одной кнопкой «📤 Своя» или все сразу, потом нажмите «Продолжить». Сцены без вашей картинки программа нарисует сама. Загружено ваших: ${(d.own_images || []).length}.</div>` : ""}
-    ${j.options.translate_from ? `<div class="banner info">🌐 Английская версия ролика <a href="#/job/${esc(j.options.translate_from)}">${esc(j.options.translate_from)}</a>: те же картинки и анимация${(j.options.flipped || []).length ? ", кадры отражены и камера движется по-другому" : ""}, новый текст, голос, субтитры, описание и обложка.</div>` : ""}
+    ${j.options.translate_from ? `<div class="banner info">🌐 Версия ролика ${LANG_IN[j.options.language] || ""} (из ролика <a href="#/job/${esc(j.options.translate_from)}">${esc(j.options.translate_from)}</a>): те же картинки и анимация${(j.options.flipped || []).length ? ", кадры отражены и камера движется по-другому" : ""}, новый текст, голос, субтитры, описание и обложка.</div>` : ""}
     ${ideaWait ? `<div class="banner info">${(j.topic || "").trim() && !j.options.episode ? "Ваша тема оформлена: название, хук и суть. Откройте шаг «Выбор темы», проверьте и нажмите «Взять эту тему». Если не то, нажмите «Переделать с этого шага»." : "Темы готовы, программа ждёт вашего выбора. Откройте шаг «Выбор темы», отметьте понравившуюся тему и нажмите «Взять эту тему»."} Сценарий ещё не писался, деньги почти не потрачены.</div>` : ""}
     ${animWait ? `<div class="banner info">🎬 Картинки и озвучка готовы, программа ждёт вашего выбора анимации. Откройте шаг «Анимация сцен» ниже: программа уже отметила сцены, которые оживила бы сама. Добавьте или снимите любые галочки и нажмите «Оживить выбранные и продолжить». Перед оплатой покажется цена.</div>` : ""}
     ${j.status === "review" && !ideaWait && !animWait && !d.images_waiting ? `<div class="banner info">Текст готов и проверен редактором. Программа остановилась и ждёт вас: сцены, картинки и озвучка ещё не делались. Прочитайте текст в шаге «Проверка редактором» → «Итоговый текст для озвучки». Если нужно, исправьте его там же и нажмите «Сохранить мой текст». Когда всё устраивает, нажмите «Сценарий хороший, продолжить». Или нажмите «Переделать» у шага «Текст сценария», чтобы ИИ написал заново.</div>` : ""}
@@ -1156,39 +1163,50 @@ function renderHead(d) {
 }
 
 async function openTranslate(j, d) {
-  const proj = d.project;
+  const proj = d.project || {};
+  const from = j.options.language || "en";
+  const langs = Object.keys(LANG_RU).filter(k => k !== from);
   const yt = await api("/api/youtube").catch(() => ({ channels: [] }));
   const scenes = ((d.stages.scenes || {}).scenes || []).length;
   const wrap = document.createElement("div");
   wrap.className = "vlib"; wrap.dataset.nodraft = 1;
   wrap.innerHTML = `<div class="box" style="max-width:560px"><button class="x" title="Закрыть">×</button>
-    <h2>🌐 Английская версия</h2>
-    <p class="muted small">Программа возьмёт картинки и анимацию этого ролика, переведёт текст по сценам на живой английский, озвучит выбранным голосом, наложит английские субтитры и сделает английские название, описание, теги и новую обложку. Русский ролик останется как был. Платится только перевод (центы), одна картинка обложки и символы ElevenLabs.</p>
-    <label class="f">Голос для английской версии <span class="hint">им говорит рассказчик или ведущий; персонажи со своими голосами в диалогах говорят своими</span></label>
+    <h2>🌐 Версия на другом языке</h2>
+    <p class="muted small">Программа возьмёт картинки и анимацию этого ролика, переведёт текст по сценам на живой язык зрителей, озвучит выбранным голосом, наложит субтитры и сделает название, описание, теги и новую обложку на этом языке. Этот ролик останется как был. Платится только перевод (центы), одна картинка обложки и символы ElevenLabs.</p>
+    <label class="f">Язык</label>
+    <select data-l>${langs.map(k => `<option value="${k}">${LANG_FLAG[k]} ${LANG_RU[k][0].toUpperCase() + LANG_RU[k].slice(1)}</option>`).join("")}</select>
+    <label class="f">Голос <span class="hint">им говорит рассказчик или ведущий; персонажи со своими голосами в диалогах говорят своими. Сверху голоса под выбранный язык</span></label>
     <select data-v><option value="">Загружаю голоса…</option></select>
+    <div class="row" style="margin-top:6px"><button class="sm" data-lib>🌍 Подобрать голос этого языка в библиотеке</button></div>
     <label class="f">Канал YouTube</label>
     <select data-ch><option value="">Без канала (загрузить вручную)</option>${yt.channels.map(c => `<option value="${c.id}">${esc(c.title)}</option>`).join("")}</select>
     <label class="check" style="margin-top:10px"><input type="checkbox" data-rs checked> Изменить вид кадров: отразить картинки и анимацию зеркально и повести камеру в другую сторону (бесплатно; кадры с товарами не отражаются, чтобы надписи не читались задом наперёд)</label>
     <label class="f">Перерисовать заново первые сцены (по тому же описанию, платно за каждую картинку)</label>
     <input type="number" data-rd min="0" max="${scenes}" value="0" style="width:100px">
-    <div class="row" style="margin-top:14px"><button class="primary" data-go>Сделать английскую версию</button></div></div>`;
+    <div class="row" style="margin-top:14px"><button class="primary" data-go>Сделать версию</button></div></div>`;
   document.body.appendChild(wrap);
   const close = () => wrap.remove();
   wrap.querySelector(".x").onclick = close;
   wrap.addEventListener("click", e => { if (e.target === wrap) close(); });
-  const vsel = wrap.querySelector("[data-v]");
-  const cur = (proj && proj.en_voice_id) || "";
-  loadVoices().then(vs => { vsel.innerHTML = `<option value="">— выберите голос —</option>` + voiceOptions(vs, cur, "en"); vsel.value = cur; })
-    .catch(e => { vsel.innerHTML = `<option value="">Голоса не загрузились: ${esc(e.message)}</option>`; });
-  if (proj && proj.en_channel_id) wrap.querySelector("[data-ch]").value = proj.en_channel_id;
+  const vsel = wrap.querySelector("[data-v]"), lsel = wrap.querySelector("[data-l]"), chsel = wrap.querySelector("[data-ch]");
+  if (langs.includes(proj.tr_lang)) lsel.value = proj.tr_lang;
+  const fill = async (cur) => {
+    const l = lsel.value;
+    cur = cur ?? (proj[l + "_voice_id"] || "");
+    chsel.value = proj[l + "_channel_id"] || "";
+    try { const vs = await loadVoices(); vsel.innerHTML = `<option value="">— выберите голос —</option>` + voiceOptions(vs, cur, l); vsel.value = cur; }
+    catch (e) { vsel.innerHTML = `<option value="">Голоса не загрузились: ${esc(e.message)}</option>`; }
+  };
+  fill(); lsel.onchange = () => fill();
+  wrap.querySelector("[data-lib]").onclick = () => openVoiceLibrary((vid, name) => fill(vid).then(() => pickIntoSelect(vsel, vid, name)), lsel.value);
   wrap.querySelector("[data-go]").onclick = async () => {
     const o = vsel.options[vsel.selectedIndex];
     if (!vsel.value) return toast("Выберите голос", true);
-    const r = await api(`/api/jobs/${j.id}/translate`, { json: { voice_id: vsel.value, voice_name: o.dataset.name || o.text,
-      channel_id: wrap.querySelector("[data-ch]").value, restyle: wrap.querySelector("[data-rs]").checked,
+    const r = await api(`/api/jobs/${j.id}/translate`, { json: { language: lsel.value, voice_id: vsel.value, voice_name: o.dataset.name || o.text,
+      channel_id: chsel.value, restyle: wrap.querySelector("[data-rs]").checked,
       redraw: +wrap.querySelector("[data-rd]").value || 0 } }).catch(e => { toast(e.message, true); return null; });
     if (!r) return;
-    close(); toast("Английская версия запущена"); location.hash = `#/job/${r.id}`;
+    close(); toast(`Версия ${LANG_IN[lsel.value]} запущена`); location.hash = `#/job/${r.id}`;
   };
 }
 
@@ -1234,7 +1252,7 @@ function renderStages(d) {
   if (fSave) {
     const ta = el.querySelector("#final-text"), wc = el.querySelector("#final-wc");
     if (keepText !== null && !ta.disabled) ta.value = keepText;
-    const count = () => { wc.textContent = `${(ta.value.match(/[0-9A-Za-zА-Яа-яЁё]+/g) || []).length} слов`; };
+    const count = () => { wc.textContent = `${(ta.value.match(/[\p{L}\p{N}]+/gu) || []).length} слов`; };
     ta.oninput = count; count();
     fSave.onclick = async () => {
       if (!confirm("Сохранить ваш текст? Сцены, озвучка и видео будут сделаны заново. Картинки абзацев, которые вы не меняли, останутся прежними, заново нарисуются только новые и изменённые.")) return;
@@ -1599,7 +1617,7 @@ const RENDER = {
   script(r, d) {
     if (!r) return "";
     if (d && d.job.options.montage) return `<p>Ваш текст: ${r.checks.word_count} слов, примерно ${r.checks.minutes} мин озвучки. Он озвучивается ровно как вставлен, его можно поправить в шаге «Проверка редактором».</p>`;
-    return checksHtml(r.checks) + `<details><summary>Первый вариант текста (английский)</summary><pre class="text">${esc(r.script)}</pre></details>
+    return checksHtml(r.checks) + `<details><summary>Первый вариант текста${d && d.job.options.language !== "ru" ? ` (${LANG_RU[d.job.options.language || "en"] || ""})` : ""}</summary><pre class="text">${esc(r.script)}</pre></details>
     <p class="muted small">Этот текст дальше проверяет и улучшает редактор. Русский перевод итогового текста в шаге «Перевод и описание для YouTube».</p>`;
   },
   review(r, d) {
@@ -1654,7 +1672,7 @@ const RENDER = {
     <div class="row" style="align-items:flex-start">
       <div>${thumbBox}</div>
       <div class="grow" style="min-width:260px">
-        <label class="f">Надпись на превью <span class="hint">По-английски, 2–4 слова. Предложено: ${esc(r.thumbnail_text)} (${esc(r.thumbnail_text_ru)})</span></label>
+        <label class="f">Надпись на превью <span class="hint">На языке ролика, 2–4 слова. Предложено: ${esc(r.thumbnail_text)} (${esc(r.thumbnail_text_ru)})</span></label>
         <input type="text" id="th-text" value="${esc(t.text ?? r.thumbnail_text)}">
         <label class="f">Где надпись</label>
         <select id="th-side"><option value="left" ${t.side !== "right" ? "selected" : ""}>${d.format === "short" ? "Сверху" : "Слева"}</option><option value="right" ${t.side === "right" ? "selected" : ""}>${d.format === "short" ? "Снизу" : "Справа"}</option></select>
@@ -1688,7 +1706,7 @@ const RENDER = {
       <div>Сила первой фразы</div><div>${score(r.hook_score)}</div><div>Концовка</div><div>${score(r.payoff_score)}</div>
       <div>Почему этот момент</div><div>${esc(r.why_ru)}</div></div>
       <h3>Текст на русском</h3><pre class="text">${esc(r.script_ru)}</pre>
-      <details><summary>Текст на английском</summary><pre class="text">${esc(r.script)}</pre></details>
+      <details><summary>Текст ${LANG_IN[d.job.options.language || "en"] || ""}</summary><pre class="text">${esc(r.script)}</pre></details>
       <h3>Сцены шортса</h3><table>${r.scenes.map((s, i) => `<tr><td>${i + 1}</td><td>${img(d, `short_${String(i).padStart(3, "0")}.png`, "vsc")}</td><td>${esc(s.prompt_ru)}<div class="en">${esc(s.text)}</div></td><td><button class="sm" data-regen="short:${i}">Перерисовать</button><label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="short:${i}" style="display:none"></label>${(d.own_images || []).includes(`short:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
   },
   approval(r, d) {
@@ -1935,7 +1953,7 @@ async function viewSettings(id) {
     <div class="row" style="margin-top:10px"><button id="load-voices">Загрузить список голосов</button><span id="el-acc" class="muted small"></span></div>
     <label class="f">Голос <span class="hint">Сейчас: ${esc(s.elevenlabs_voice_name)}. Для историй хорошо подходят спокойные низкие мужские голоса (George, Brian, Daniel).</span></label>
     <select id="voice-sel"><option value="${esc(s.elevenlabs_voice_id)}">${esc(s.elevenlabs_voice_name)}</option></select>
-    <div class="row" style="margin-top:6px"><button class="sm" id="voice-preview">▶ Образец голоса</button><button class="sm primary" id="voice-lib">🇷🇺 Подобрать русский голос</button><audio id="voice-audio"></audio></div>
+    <div class="row" style="margin-top:6px"><button class="sm" id="voice-preview">▶ Образец голоса</button><button class="sm primary" id="voice-lib">🌍 Библиотека голосов (любой язык)</button><audio id="voice-audio"></audio></div>
     <label class="f">…или ID голоса вручную <span class="hint">Если список голосов не загружается: на elevenlabs.io откройте голос, нажмите «…» → Copy voice ID и вставьте сюда. Если ошибка про разрешение (permission), откройте на сайте ElevenLabs ваш API-ключ → Edit и включите доступ «Voices: Read» и «User: Read», либо создайте новый ключ без ограничений.</span></label>
     <input type="text" id="voice-id" placeholder="например JBFqnCBsd6RMkjVDRZzb">
     <div id="voice-marks"></div>
@@ -2142,15 +2160,13 @@ async function viewSettings(id) {
   const renderMarks = () => {
     const box = $("#voice-marks");
     const sel = v => `<select class="sm" data-aud="${v.voice_id}" style="width:auto">
-      <option value="auto" ${v.audience === v.auto_audience ? "selected" : ""}>Само (${{ ru: "RU", en: "EN", both: "?" }[v.auto_audience]})</option>
-      <option value="ru" ${v.audience === "ru" && v.audience !== v.auto_audience ? "selected" : ""}>🇷🇺 Русская</option>
-      <option value="en" ${v.audience === "en" && v.audience !== v.auto_audience ? "selected" : ""}>🇺🇸 Английская</option>
-      <option value="both" ${v.audience === "both" && v.audience !== v.auto_audience ? "selected" : ""}>🌍 Обе</option></select>`;
+      <option value="auto" ${v.audience === v.auto_audience ? "selected" : ""}>Само (${v.auto_audience === "both" ? "?" : v.auto_audience.toUpperCase()})</option>
+      ${[["ru", "🇷🇺 Русская"], ["en", "🇺🇸 Английская"], ["de", "🇩🇪 Немецкая"], ["es", "🇪🇸 Испанская"], ["fr", "🇫🇷 Французская"], ["both", "🌍 Любая"]].map(([k, n]) => `<option value="${k}" ${v.audience === k && v.audience !== v.auto_audience ? "selected" : ""}>${n}</option>`).join("")}</select>`;
     const countries = [...new Set(voices.map(v => v.country))].sort();
     const f = renderMarks.f || (renderMarks.f = { aud: "", kind: "", country: "" });
     const shown = voices.filter(v => (!f.aud || v.audience === f.aud) && (!f.kind || v.kind === f.kind) && (!f.country || v.country === f.country));
     box.innerHTML = `<h3>Голоса: аудитория, тип и страна</h3>
-      <p class="muted small">Программа сама делит голоса на мужские, женские и детские и пишет, под какую страну подходит акцент. Аудиторию определяет так: голоса, у которых в ElevenLabs указан русский язык, идут в русскую; стандартные голоса ElevenLabs (George, Brian и др.) — носители английского. Если не согласны, поменяйте пометку в последнем столбце, она запомнится. Русские голоса удобно добавлять на elevenlabs.io: Voices → Voice Library → фильтр Language: Russian → «Add to my voices», потом нажмите «Загрузить список голосов».</p>
+      <p class="muted small">Программа сама делит голоса на мужские, женские и детские и пишет, под какую страну подходит акцент. Аудиторию определяет по языку и акценту голоса в ElevenLabs: русский, английский, немецкий, испанский или французский; стандартные голоса ElevenLabs (George, Brian и др.) — носители английского. Если не согласны, поменяйте пометку в последнем столбце, она запомнится. Голоса нужного языка проще всего добавить кнопкой «Библиотека голосов»: там можно выбрать язык.</p>
       <div class="row" style="gap:8px;margin:8px 0" data-nodraft>
         <select data-vf="aud" data-nodraft style="width:auto"><option value="">Любая аудитория</option>${Object.entries(AUD).map(([k, n]) => `<option value="${k}" ${f.aud === k ? "selected" : ""}>${n.split(" (")[0]}</option>`).join("")}</select>
         <select data-vf="kind" style="width:auto"><option value="">Все голоса</option>${Object.entries(KIND).map(([k, n]) => `<option value="${k}" ${f.kind === k ? "selected" : ""}>${n}</option>`).join("")}</select>
@@ -2827,7 +2843,7 @@ async function viewMontage() {
         <label class="f">Формат</label>
         <select id="mt-fmt">${opt([["short", "Шортс / рилс (вертикальный 9:16)"], ["long", "Длинный ролик (горизонтальный 16:9)"]], fmt)}</select>
         <label class="f">Язык</label>
-        <select id="mt-lang">${opt([["ru", "Русский"], ["en", "Английский"]], p.language || "ru")}</select>
+        <select id="mt-lang">${opt(Object.entries(LANG_RU).map(([k, n]) => [k, n[0].toUpperCase() + n.slice(1)]), p.language || "ru")}</select>
       </div></div>
       <label class="f">Текст для озвучки <span class="hint">ровно то, что будет прочитано. Пустая строка разделяет абзацы. Реплика героя своим голосом: «Имя: фраза» отдельным абзацем, имя вслух не читается</span></label>
       <textarea id="mt-text" rows="12" placeholder="Вставьте сценарий сюда"></textarea>
@@ -2867,11 +2883,11 @@ async function viewMontage() {
     </div>
     <div class="row"><button class="primary" id="mt-go">🎬 Начать монтаж</button><span class="muted small">Текст не проверяется и не переписывается: озвучивается ровно как вставлен.</span></div>`;
     const ta = $("#mt-text"), wc = $("#mt-wc");
-    const count = () => { const n = (ta.value.match(/[0-9A-Za-zА-Яа-яЁё]+/g) || []).length; wc.textContent = n ? `${n} слов, примерно ${(n / (($("#mt-lang").value === "ru") ? 130 : 150) * 60).toFixed(0)} сек озвучки` : ""; };
+    const count = () => { const n = (ta.value.match(/[\p{L}\p{N}]+/gu) || []).length; wc.textContent = n ? `${n} слов, примерно ${(n / ({ ru: 130, de: 125, es: 160 }[$("#mt-lang").value] || 150) * 60).toFixed(0)} сек озвучки` : ""; };
     ta.oninput = count;
     $("#mt-proj").onchange = e => { cur = e.target.value; lsSet("ay_montage_proj", cur); const t = ta.value, ti = $("#mt-title").value; draw(); $("#mt-text").value = t; $("#mt-title").value = ti; $("#mt-text").oninput(); };
     $("#mt-go").onclick = async () => {
-      if ((ta.value.match(/[0-9A-Za-zА-Яа-яЁё]+/g) || []).length < 3) return toast("Вставьте текст сценария", true);
+      if ((ta.value.match(/[\p{L}\p{N}]+/gu) || []).length < 3) return toast("Вставьте текст сценария", true);
       const v = $("#mt-voice"), vo = v.selectedOptions[0];
       const body = { montage_script: ta.value, topic: $("#mt-title").value, project_id: cur, format: $("#mt-fmt").value, language: $("#mt-lang").value,
         images_pause: main.querySelector('input[name="mt-img"]:checked').value === "own", review_pause: false, idea_pause: false,

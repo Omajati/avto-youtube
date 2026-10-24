@@ -12,8 +12,14 @@ FPS = 30
 W, H = 900, 330          # the overlay canvas, placed centred on a 1080-wide frame
 SS = 2                   # supersampling for smooth edges
 RED, BLUE = (255, 0, 0, 255), (62, 166, 255, 255)
-TEXT = {"ru": ("ПОДПИСАТЬСЯ", "ВЫ ПОДПИСАНЫ", "НРАВИТСЯ"), "en": ("SUBSCRIBE", "SUBSCRIBED", "LIKE")}
-LANGS = {"auto": "Как язык ролика", "ru": "Русский: «Подписаться», «Нравится»", "en": "Английский: Subscribe, Like"}
+TEXT = {"ru": ("ПОДПИСАТЬСЯ", "ВЫ ПОДПИСАНЫ", "НРАВИТСЯ"), "en": ("SUBSCRIBE", "SUBSCRIBED", "LIKE"),
+        "de": ("ABONNIEREN", "ABONNIERT", "GEFÄLLT MIR"), "es": ("SUSCRIBIRSE", "SUSCRITO", "ME GUSTA"),
+        "fr": ("S'ABONNER", "ABONNÉ", "J'AIME")}
+# Pill widths (subscribe, like) so the longer words fit.
+WIDTH = {"ru": (560, 480), "en": (500, 380), "de": (540, 520), "es": (560, 420), "fr": (500, 380)}
+LANGS = {"auto": "Как язык ролика", "ru": "Русский: «Подписаться», «Нравится»", "en": "Английский: Subscribe, Like",
+         "de": "Немецкий: Abonnieren, Gefällt mir", "es": "Испанский: Suscribirse, Me gusta",
+         "fr": "Французский: S'abonner, J'aime"}
 MODES = {"both": "Подписка и лайк", "subscribe": "Только «Подписаться»", "like": "Только «Нравится»", "off": "Выключено"}
 
 
@@ -105,12 +111,12 @@ def subscribe_frame(t: float, lang: str) -> Image.Image:
     cx, cy = W * SS / 2, H * SS / 2 - 20 * SS
     click = 1.25
     if t < click:
-        btn = _pill(560 if lang == "ru" else 500, 130, RED, sub)
+        btn = _pill(WIDTH.get(lang, WIDTH["en"])[0], 130, RED, sub)
     else:
         bell = _bell(56 * SS, (15, 15, 15, 255))
         ang = 18 * math.sin((t - click) * 22) * max(0.0, 1 - (t - click) / 0.8)
         bell = bell.rotate(ang, resample=Image.BICUBIC, center=(bell.width / 2, 6 * SS))
-        btn = _pill(560 if lang == "ru" else 500, 130, (242, 242, 242, 255), done, bell, (15, 15, 15, 255))
+        btn = _pill(WIDTH.get(lang, WIDTH["en"])[0], 130, (242, 242, 242, 255), done, bell, (15, 15, 15, 255))
     scale = 0.3 + 0.7 * _ease_back(t / 0.35)
     if click <= t < click + 0.15:
         scale *= 0.93
@@ -145,7 +151,7 @@ def like_frame(t: float, lang: str) -> Image.Image:
         p = min(1.0, (t - click) / 0.35)
         k = 1 + 0.35 * math.sin(p * math.pi)
         icon = icon.resize((int(icon.width * k), int(icon.height * k)), Image.LANCZOS)
-    btn = _pill(480 if lang == "ru" else 380, 130, (33, 33, 33, 235), label, icon)
+    btn = _pill(WIDTH.get(lang, WIDTH["en"])[1], 130, (33, 33, 33, 235), label, icon)
     scale = 0.3 + 0.7 * _ease_back(t / 0.35)
     if click <= t < click + 0.15:
         scale *= 0.93
@@ -202,7 +208,7 @@ def overlay(video: Path, out: Path, mode: str, lang: str, total: float, width: i
     items = plan(mode, total)
     if not items:
         return False
-    lang = "ru" if lang == "ru" else "en"
+    lang = lang if lang in TEXT else "en"
     k = width / 1080
     ow, oh = int(W * k) // 2 * 2, int(H * k) // 2 * 2
     x, y = (width - ow) // 2, int(height * 0.16)

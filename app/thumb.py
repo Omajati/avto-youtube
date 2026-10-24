@@ -1,5 +1,4 @@
 """YouTube thumbnail with a big headline, and a text file with everything to paste into YouTube."""
-import re
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -210,8 +209,8 @@ def write_package(job_dir: Path, extras: dict, short: dict = None):
             "",
             "ОПИСАНИЕ:",
             f"{short.get('title', '')}\n"
-            + ("Полная история на нашем канале." if re.search("[а-яА-ЯёЁ]", short.get("title", "")) else
-               "The full story is on our channel.") + "\n\n#shorts "
+            + pipeline.SHORT_MORE.get(pipeline.job_language(pipeline.db.get(job_dir.name) or {}), pipeline.SHORT_MORE["en"])
+            + "\n\n#shorts "
             + " ".join("#" + "".join(t.split()) for t in extras.get("tags", [])[:3]),
         ]
     out = job_dir / "output"

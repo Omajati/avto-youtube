@@ -336,7 +336,7 @@ def overlay(video: Path, out: Path, items: list, width: int, height: int, work: 
 
 
 def _norm(w: str) -> str:
-    return re.sub(r"[^0-9a-zа-яё]", "", w.lower().replace("ё", "е"))
+    return re.sub(r"[\W_]", "", w.lower().replace("ё", "е"))
 
 
 def place(plan: list, words: list, durations: list, total: float, vertical: bool) -> list:
@@ -386,7 +386,7 @@ def plan_prompt(scenes: list, vertical: bool, lang: str) -> str:
         limit = f"At most {max(2, min(12, total_words // 90))} animations, spread over the video, at least 20 seconds apart."
     return PLAN_PROMPT.format(
         templates="\n".join(f"- {k}: {v[1]}" for k, v in TEMPLATES.items()), limit=limit,
-        lang="Russian" if lang == "ru" else "English",
+        lang={"ru": "Russian", "de": "German", "es": "Spanish", "fr": "French"}.get(lang, "English"),
         scenes="\n".join(f"{i}. {s.get('text', '')}" for i, s in enumerate(scenes)))
 
 

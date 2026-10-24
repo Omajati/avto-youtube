@@ -110,7 +110,7 @@ def _run(jid, kind, channel_id, privacy, publish_at, profile):
             else:
                 short = pipeline.read_json(d / "short_script.json") or {}
                 title = f"{short.get('title', '')} #shorts"
-                more = "Полная история на нашем канале." if lang == "ru" else "The full story is on our channel."
+                more = pipeline.SHORT_MORE.get(lang, pipeline.SHORT_MORE["en"])
                 # The long video's search-ready description also serves its Short.
                 desc = f"{short.get('title', '')}\n{more}\n\n{extras.get('description', '')}".strip()
                 if "#shorts" not in desc.lower():

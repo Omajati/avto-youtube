@@ -49,7 +49,7 @@ CRITERIA_RU = {
 }
 
 WORDS_PER_MIN = 150
-WPM = {"en": 150, "ru": 125}  # Russian words are longer, so fewer of them fit in a minute
+WPM = {"en": 150, "ru": 125, "de": 125, "es": 160, "fr": 150}  # longer words (Russian, German) fit fewer in a minute
 
 LANG_OVERRIDE = {
     "ru": """
@@ -62,6 +62,27 @@ LANGUAGE OVERRIDE (this rule beats every instruction above and below about langu
 - Fields ending in _ru simply repeat the same Russian text. Exception: script_ru must be an empty string (the script is already in Russian).
 - The Short is 90-115 Russian words; its last line sends viewers to the full story on the channel in Russian.""",
 }
+
+# German, Spanish and French channels: everything the viewer hears or reads is in that language, while the owner
+# (who reads Russian) gets every _ru field and script_ru as a Russian translation.
+FOREIGN = {
+    "de": ("German", "German-speaking viewers in Germany, Austria and Switzerland", "Germans", 100, 125,
+           '"zweitausend Euro", not "2.000 €"; "zum Beispiel", not "z. B."'),
+    "es": ("Spanish", "Spanish-speaking viewers in Spain and Latin America", "Spanish speakers", 120, 145,
+           '"dos mil euros", not "2.000 €"; "por ejemplo", not "p. ej."'),
+    "fr": ("French", "French-speaking viewers in France, Belgium, Switzerland and Canada", "French speakers", 110, 135,
+           '"deux mille euros", not "2 000 €"; "par exemple", not "p. ex."'),
+}
+for _code, (_name, _aud, _people, _lo, _hi, _ex) in FOREIGN.items():
+    LANG_OVERRIDE[_code] = f"""
+
+LANGUAGE OVERRIDE (this rule beats every instruction above and below about language and audience):
+- This channel is {_name}-language. The audience is {_aud}, not US/UK viewers.
+- Write every spoken or published text in natural, lively spoken {_name}: ideas and titles, hooks, the script, the Short, YouTube titles, descriptions, tags, hashtags and thumbnail text. Never write them in English or Russian. Write as a native {_name} author would, with idioms and humour that land for {_people}, not as a translation.
+- The spoken text (script and Short) is read by a voice engine: in it always write numbers, dates, money, percentages and abbreviations in words, the way a native narrator says them ({_ex}). Titles, descriptions and thumbnail text may use digits.
+- Image prompts (fields named prompt and thumbnail_prompt) stay in English, because the image model understands English best.
+- The channel owner reads only Russian: every field ending in _ru is a Russian translation of its {_name} counterpart, and script_ru is the full script translated into Russian.
+- The Short is {_lo}-{_hi} {_name} words; its last line sends viewers to the full story on the channel in {_name}."""
 
 
 class StopForReview(Exception):
@@ -99,7 +120,7 @@ def fill(template: str, **values) -> str:
 
 
 def word_count(text: str) -> int:
-    return len(re.findall(r"[0-9A-Za-zА-Яа-яЁё]+(?:['’-][0-9A-Za-zА-Яа-яЁё]+)*", text))
+    return len(re.findall(r"[^\W_]+(?:['’-][^\W_]+)*", text))
 
 
 def speaker_of(para: str, speakers: dict) -> tuple:
@@ -129,7 +150,7 @@ def split_chunks(script: str, target_words: int, speakers: dict = None) -> list:
     for para in paragraphs:
         who, para = speaker_of(para, speakers or {})
         para = re.sub(r"\s+", " ", para)
-        sentences = re.split(r"(?:(?<=[.!?…])|(?<=[.!?…][\"”’')\]»])|(?<=[.!?…][\"”’')\]»]{2}))\s+(?=[A-ZА-ЯЁ0-9\"“‘'(«—])", para)
+        sentences = re.split(r"(?:(?<=[.!?…])|(?<=[.!?…][\"”’')\]»])|(?<=[.!?…][\"”’')\]»]{2}))\s+(?=[A-ZÀ-ÖØ-ÞА-ЯЁ0-9\"“„‘'(«—¿¡])", para)
         pieces = []
         for s in sentences:
             if word_count(s) > hi:  # long sentence: split at commas/semicolons/dashes
@@ -2335,7 +2356,7 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
         src = c.project if c.project.get("id") else c.settings
         mode = c.opts.get("cta_short") or src.get("cta_short") or "both"
         lang_pick = c.opts.get("cta_lang") or src.get("cta_lang")
-        lang = lang_pick if lang_pick in ("ru", "en") else c.lang
+        lang = lang_pick if lang_pick in cta.TEXT else c.lang
         blocked.setdefault("upper", []).extend((st, st + cta.DURATION[k] + 0.3) for k, st in cta.plan(mode, total))
         with_cta = clips_dir / "joined_cta.mp4"
         try:
@@ -2461,7 +2482,7 @@ def make_chapters(jid: str, usage: dict = None) -> list:
             f"video description so viewers can jump to the answers they want. Each chapter starts at a scene number; "
             f"the first chapter starts at scene 1 (the hook). A chapter starts where a new question or part begins, "
             f"never mid-thought, and chapters are not too short. Write each title as the question this part answers, "
-            f"short (at most 60 characters), concrete and curious, in the video's language ({lang}), for example "
+            f"short (at most 60 characters), concrete and curious, in the video's language ({LANG_NAMES.get(lang, lang)}), for example "
             f"\"Why did people in Mehrgarh drill holes in teeth?\". title_ru: the same in Russian.\n\n{rows}")
     settings = _check_settings(load_settings())
     r = llm.call_json(settings, "You write YouTube chapters. Answer only with JSON.", user, SCHEMA_CHAPTERS,
@@ -2939,7 +2960,12 @@ def _demo(kind: str, script: str = ""):
 
 # -------- a version of a finished video in another language
 
-LANG_NAMES = {"en": "English", "ru": "Russian"}
+LANG_NAMES = {"en": "English", "ru": "Russian", "de": "German", "es": "Spanish", "fr": "French"}
+# The line under a Short's title that sends viewers to the long video.
+SHORT_MORE = {"ru": "Полная история на нашем канале.", "en": "The full story is on our channel.",
+              "de": "Die ganze Geschichte gibt es auf unserem Kanal.", "es": "La historia completa está en nuestro canal.",
+              "fr": "L'histoire complète est sur notre chaîne."}
+LANG_RU = {"en": "английский", "ru": "русский", "de": "немецкий", "es": "испанский", "fr": "французский"}
 SCHEMA_TRANSLATION = {"type": "object", "properties": {
     "title": {"type": "string"}, "lines": {"type": "array", "items": {"type": "string"}}},
     "required": ["title", "lines"]}
@@ -2950,7 +2976,7 @@ MIRROR_MOTION = {"zoom_in": "zoom_out", "zoom_out": "zoom_in", "pan_left": "pan_
 def _translate_lines(c: Ctx, title: str, lines: list) -> tuple:
     """(title, lines) in the job's language, one line per scene, so every picture keeps its words."""
     target = LANG_NAMES.get(c.lang, c.lang)
-    system = (f"You are a top YouTube localizer. You adapt Russian videos for a native {target}-speaking audience "
+    system = (f"You are a top YouTube localizer. You adapt videos (usually Russian or English) for a native {target}-speaking audience "
               "so they sound as if written in that language from the start: natural spoken phrasing, local idioms, "
               "jokes and slang that land the same way, numbers and units the way a native narrator says them. "
               "Keep the meaning, the hook, the twist and the punchline. Answer only with JSON."
@@ -3009,7 +3035,7 @@ def _translate_scenes(c: Ctx):
     if not scenes:
         raise UserError("В исходном ролике нет сцен: перевести нечего.")
     target = LANG_NAMES.get(c.lang, c.lang)
-    c.log(f"Перевожу {len(scenes)} сцен на {'английский' if c.lang == 'en' else target}…")
+    c.log(f"Перевожу {len(scenes)} сцен на {LANG_RU.get(c.lang, target)}…")
     if c.demo:
         title, lines = "Demo", [f"Line {i + 1} in {target}." for i in range(len(scenes))]
     else:
@@ -3065,7 +3091,7 @@ def make_translation(jid: str, lang: str = "en", voice_id: str = "", voice_name:
     sd = job_dir(jid)
     scenes = (read_json(sd / "scenes.json") or {}).get("scenes")
     if not scenes or not (sd / "images.json").exists():
-        raise UserError("Английскую версию можно сделать, когда у ролика готовы картинки.")
+        raise UserError("Версию на другом языке можно сделать, когда у ролика готовы картинки.")
     o = dict(src["options"])
     for k in ("episode", "title_ru", "idea_picked", "anim_picked", "translate_from", "flipped", "voice_id", "voice_name"):
         o.pop(k, None)

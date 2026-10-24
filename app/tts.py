@@ -23,6 +23,9 @@ def _key(settings):
     return k
 
 
+AUDIENCES = ("ru", "en", "de", "es", "fr", "both")
+
+
 def list_voices(settings) -> list:
     r = net.request("ElevenLabs", "GET", f"{BASE}/voices", headers={"xi-api-key": _key(settings)}, timeout=60)
     out = []
@@ -30,20 +33,20 @@ def list_voices(settings) -> list:
         labels = {k.replace(" ", "_"): str(x).strip() for k, x in (v.get("labels") or {}).items() if x}
         auto = _audience(v)
         own = (settings.get("voice_audience") or {}).get(v["voice_id"])
-        audience = own if own in ("ru", "en", "both") else auto
+        audience = own if own in AUDIENCES else auto
         flag, country = _country(labels.get("accent", ""), audience)
         out.append({"voice_id": v["voice_id"], "name": v.get("name", ""), "description": _desc_ru(labels),
                     "kind": _kind(labels, v.get("description") or ""), "flag": flag, "country": country,
                     "preview_url": v.get("preview_url", ""), "auto_audience": auto, "audience": audience})
-    order = {"ru": 0, "en": 1, "both": 2}
+    order = {a: i for i, a in enumerate(AUDIENCES)}
     kinds = {"male": 0, "female": 1, "child": 2, "other": 3}
-    return sorted(out, key=lambda x: (order.get(x["audience"], 3), kinds[x["kind"]], x["name"].lower()))
+    return sorted(out, key=lambda x: (order.get(x["audience"], 9), kinds[x["kind"]], x["name"].lower()))
 
 
-def library(settings, gender: str = "", use_case: str = "", search: str = "", page: int = 0) -> dict:
-    """Russian voices from the public ElevenLabs Voice Library."""
+def library(settings, gender: str = "", use_case: str = "", search: str = "", page: int = 0, language: str = "ru") -> dict:
+    """Voices of one language (ru, en, de, es, fr) from the public ElevenLabs Voice Library."""
     headers = {"xi-api-key": _key(settings)}
-    params = {"page_size": 30, "language": "ru", "page": max(int(page or 0), 0)}
+    params = {"page_size": 30, "language": language if language in AUDIENCES[:5] else "ru", "page": max(int(page or 0), 0)}
     if gender:
         params["gender"] = gender
     if use_case:
@@ -136,6 +139,8 @@ def _country(accent: str, audience: str) -> tuple:
         return "🇷🇺", "Россия и СНГ"
     if audience == "en":
         return "🌐", "Англоязычные страны"
+    if audience in ("de", "es", "fr"):
+        return {"de": ("🇩🇪", "Германия"), "es": ("🇪🇸", "Испания / Латинская Америка"), "fr": ("🇫🇷", "Франция")}[audience]
     return "🌐", "Не указано"
 
 
@@ -143,7 +148,7 @@ _EN_ACCENTS = ("american", "british", "australian", "irish", "english", "canadia
 
 
 def _audience(v: dict) -> str:
-    """Who a voice suits: 'ru' (native Russian), 'en' (native English) or 'both' (not clear / multilingual)."""
+    """Who a voice suits: 'ru', 'en', 'de', 'es', 'fr' (a native speaker) or 'both' (not clear / multilingual)."""
     labels = {k: str(x).lower() for k, x in (v.get("labels") or {}).items()}
     if v.get("category") == "premade":
         return "en"  # the standard ElevenLabs voices are native English speakers
@@ -155,6 +160,10 @@ def _audience(v: dict) -> str:
     accent = labels.get("accent", "")
     if "ru" in langs or "russian" in langs or "russian" in accent or any("а" <= ch <= "я" for ch in v.get("name", "").lower()):
         return "ru"
+    for code, name, extra in (("de", "german", ("austrian", "swiss")), ("es", "spanish", ("mexican", "latin", "castilian", "argentinian", "colombian")),
+                              ("fr", "french", ("parisian", "québécois", "quebecois", "belgian"))):
+        if code in langs or name in langs or name in accent or any(a in accent for a in extra):
+            return code
     if langs & {"en", "english"} or any(a in accent.split() or accent.startswith(a) for a in _EN_ACCENTS):
         return "en"
     return "both"
