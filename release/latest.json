@@ -1,6 +1,6 @@
 {
- "version": 118,
+ "version": 119,
  "label": "реклама одним дублем без искажений",
- "notes": "Реклама одним дублем: товар рисуется один раз, камера едет по кадру, без Kling и без искажений",
+ "notes": "Исправлена ошибка ffmpeg в режиме одним дублем",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

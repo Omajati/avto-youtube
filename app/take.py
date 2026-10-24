@@ -105,7 +105,8 @@ def render_scene(big: Image.Image, a: tuple, b: tuple, frames: int, out: Path, w
                  fade_in: bool = False, fade_out: bool = False, glint: bool = False):
     """One stretch of the camera path from rectangle a to rectangle b, written as an mp4."""
     aspect = w / h
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
+    from .media import ffmpeg
+    cmd = [ffmpeg(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
            "-r", str(fps), "-i", "-", "-c:v", "libx264", "-preset", "medium", "-crf", "17",
            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)]
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
