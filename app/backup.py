@@ -1,4 +1,4 @@
-"""Backups of settings, projects, characters and prompts to a folder on the Desktop, and restoring from them.
+"""Backups of settings, projects (with their script libraries), producer analyses, characters and prompts to a folder on the Desktop, and restoring from them.
 Videos (data/jobs) are not included: they are big and can be made again.
 
 Command line:  python -m app.backup            make a backup
@@ -17,7 +17,7 @@ BACKUP_DIR = Path.home() / "Desktop" / "Авто ютуб — резерв"
 # If macOS doesn't let the program write to the Desktop, copies go next to the program instead.
 FALLBACK_DIR = DATA_DIR.parent / "Авто ютуб — резерв"
 KEEP = 15
-INCLUDE = ["settings.json", "niche_templates.json", "projects", "characters", "items", "prompts", "youtube", "sfx", "music"]
+INCLUDE = ["settings.json", "niche_templates.json", "projects", "producer", "characters", "items", "prompts", "youtube", "sfx", "music"]
 
 
 def make(reason: str = "") -> Path:
