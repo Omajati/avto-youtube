@@ -59,12 +59,40 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
     ls.onchange = () => { lsSetRaw("ay_look", ls.value || null); if (ls.value) document.documentElement.dataset.look = ls.value; else delete document.documentElement.dataset.look; };
   }
   const nav = document.querySelector(".side nav"), btn = document.getElementById("navedit");
+  // Line icons for the strict looks (the emoji stay for the usual look).
+  const P = {
+    new: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/>',
+    jobs: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>',
+    montage: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>',
+    remake: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
+    producer: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+    library: '<path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>',
+    projects: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    characters: '<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0M16 3.1a4 4 0 0 1 0 7.8M22 21a7 7 0 0 0-4-6.3"/>',
+    items: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+    settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+    prompts: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+    music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+    balance: '<rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20M16 15h2"/>',
+    help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h0"/>',
+  };
+  nav.querySelectorAll("a[data-nav]").forEach(a => { const d = P[a.dataset.nav]; if (d) a.insertAdjacentHTML("afterbegin", `<svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`); });
+  const GROUPS = { new: "Создание", producer: "Знания", settings: "Система" };
+  const DEFAULT = ["new", "jobs", "montage", "remake", "producer", "library", "projects", "characters", "items", "settings", "prompts", "music", "balance", "help"];
+  const heads = () => {
+    nav.querySelectorAll(".ngrp").forEach(x => x.remove());
+    if (nav.classList.contains("editing")) return;
+    const cur = [...nav.querySelectorAll("a[data-nav]")].map(a => a.dataset.nav);
+    if (cur.join() !== DEFAULT.join()) return;  // the owner's own order: no group captions
+    Object.entries(GROUPS).forEach(([k, t]) => nav.querySelector(`a[data-nav="${k}"]`).insertAdjacentHTML("beforebegin", `<div class="ngrp">${t}</div>`));
+  };
   if (!nav || !btn) return;
   const links = () => [...nav.querySelectorAll("a[data-nav]")];
-  const save = () => lsSetRaw("ay_nav", JSON.stringify(links().map(a => a.dataset.nav)));
+  const save = () => { lsSetRaw("ay_nav", JSON.stringify(links().map(a => a.dataset.nav))); heads(); };
   let order = []; try { order = JSON.parse(lsGetRaw("ay_nav") || "[]"); } catch (e) { }
   order.forEach(k => { const a = nav.querySelector(`a[data-nav="${k}"]`); if (a) nav.appendChild(a); });
   links().filter(a => !order.includes(a.dataset.nav) && order.length).forEach(a => nav.appendChild(a));  // new sections go last
+  heads();
   links().forEach(a => {
     a.insertAdjacentHTML("beforeend", `<span class="mv"><b data-up title="Выше">▲</b><b data-dn title="Ниже">▼</b></span>`);
     a.querySelector("[data-up]").onclick = e => { e.preventDefault(); e.stopPropagation(); if (a.previousElementSibling) nav.insertBefore(a, a.previousElementSibling); save(); };
@@ -81,6 +109,7 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
   btn.onclick = () => {
     const on = !nav.classList.contains("editing");
     nav.classList.toggle("editing", on); links().forEach(a => a.draggable = on);
+    if (on) nav.querySelectorAll(".ngrp").forEach(x => x.remove()); else heads();
     btn.textContent = on ? "✓ Готово" : "↕ Переставить разделы";
     if (!on) save();
   };
@@ -405,7 +434,7 @@ async function viewJobs() {
     ${jobs.length ? "" : `<div class="card muted">${filter ? "В этом проекте пока нет роликов." : "Пока нет ни одного ролика. Нажмите «Новый ролик»."}</div>`}
     <div class="jobs">${jobs.map(j => `
       <a class="jobcard" href="#/job/${j.id}">
-        <div class="thumb" style="${j.thumb ? `background-image:url('/files/${j.id}/${j.thumb}')` : ""}">${j.thumb ? "" : "🎬"}</div>
+        <div class="thumb" style="${j.thumb ? `background-image:url('/files/${j.id}/${j.thumb}')` : ""}">${j.thumb ? "" : "🎬"}<span class="tpill">${badge(j.status)}</span></div>
         <div class="body">
           <div class="t">${j.options.episode ? `Серия ${j.options.episode}. ` : ""}${esc(j.options.title_ru || j.title || j.topic || "Тема ещё выбирается…")}${j.options.demo ? " <span class='muted small'>(тест)</span>" : ""}</div>
           <div class="row small">${badge(j.status)} <span class="muted">${esc(j.status === "running" ? j.stage_name : new Date(j.created * 1000).toLocaleString("ru"))}</span></div>
@@ -1281,8 +1310,9 @@ function renderStages(d) {
     if (!data && enabled && !body) body = `<p class="muted">${cur ? "Выполняется…" : "Ещё не начато."}</p>`;
     const writing = ["idea", "outline", "script", "review", "approval"].includes(sid);
     const redo = enabled && data && sid !== "approval" && !(j.options.montage && writing) ? `<button class="sm" data-redo="${sid}">↻ Переделать с этого шага</button>` : "";
-    return `<details class="stage ${enabled ? "" : "off"} ${cur ? "cur" : ""}" data-sid="${sid}" ${openStages.has(sid) || (cur && j.status === "error") || (sid === "animate" && d.anim && d.anim.waiting) ? "open" : ""}>
-      <summary><span class="ic">${stageIcon(sid, d)}</span><span class="nm">${esc(st.name)}</span>${redo}</summary>
+    const ico = stageIcon(sid, d), stt = { "✅": "done", "⏳": "run", "❌": "err", "👀": "wait", "—": "off" }[ico] || "todo";
+    return `<details class="stage ${enabled ? "" : "off"} ${cur ? "cur" : ""}" data-st="${stt}" data-sid="${sid}" ${openStages.has(sid) || (cur && j.status === "error") || (sid === "animate" && d.anim && d.anim.waiting) ? "open" : ""}>
+      <summary><span class="ic">${ico}</span><span class="nm">${esc(st.name)}</span>${redo}</summary>
       <div class="content">${body}</div></details>`;
   }).join("");
   el.querySelectorAll("[data-redo]").forEach(b => b.onclick = async ev => {
@@ -2997,3 +3027,21 @@ async function viewMontage() {
     const c = sel.value; sel.innerHTML = sel.options[0].outerHTML + voiceOptions(vs, c, $("#mt-lang").value); sel.value = c;
   }).catch(() => { });
 }
+
+// Строгие оформления: убираем эмодзи в начале кнопок и вкладок
+(() => {
+  const EMO = /^[\s\p{Extended_Pictographic}️‍]+/u;
+  const SEL = "button, .btn, #tabbar a";
+  const clean = root => {
+    if (!document.documentElement.dataset.look) return;
+    const els = root.matches && root.matches(SEL) ? [root] : [];
+    if (root.querySelectorAll) els.push(...root.querySelectorAll(SEL));
+    for (const el of els) {
+      const t = [...el.childNodes].find(n => n.nodeType === 3 && n.textContent.trim() || n.nodeType === 1);
+      if (t && t.nodeType === 3 && EMO.test(t.textContent) && (t.textContent.replace(EMO, "").trim() || el.children.length))
+        t.textContent = t.textContent.replace(EMO, "");
+    }
+  };
+  new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => n.nodeType === 1 && clean(n)))).observe(document.body, { childList: true, subtree: true });
+  clean(document.body);
+})();
