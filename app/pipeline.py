@@ -1299,7 +1299,73 @@ def set_final_script(jid: str, text: str):
     review["checks"] = script_checks(text, old.get("target_words", word_count(text)), wpm)
     write_json(d / "review.json", review)
     (d / "script_final.txt").write_text(text, "utf-8")
+    (d / "improve.json").unlink(missing_ok=True)
     reset_from(jid, "scenes", keep_pictures=True)
+
+
+SCHEMA_IMPROVE = {"type": "object", "properties": {
+    "summary_ru": {"type": "string"},
+    "edits": {"type": "array", "items": {"type": "object", "properties": {
+        "op": {"type": "string", "enum": ["replace", "insert_after", "delete"]}, "index": {"type": "integer"},
+        "text": {"type": "string"}, "text_ru": {"type": "string"}, "why_ru": {"type": "string"}},
+        "required": ["op", "index", "text", "text_ru", "why_ru"]}},
+    "titles": {"type": "array", "items": {"type": "object", "properties": {
+        "title": {"type": "string"}, "title_ru": {"type": "string"}}, "required": ["title", "title_ru"]}},
+    "thumbnail_texts": {"type": "array", "items": {"type": "string"}}},
+    "required": ["summary_ru", "edits", "titles", "thumbnail_texts"]}
+
+IMPROVE_PROMPT = """Below is the finished narration of a video, split into numbered paragraphs. It is already good: most of it must stay exactly as it is, because every changed paragraph means new paid pictures. Find ONLY its weak spots against the rules of this niche and the analyses of videos that worked (in the system prompt), and fix just those.
+
+Weak spots worth fixing: a hook that does not open with the viewer's own situation and stakes; a question or promise opened and never answered; a myth that is stated but not overturned with a reveal; a chapter without a "wow" fact or without an open loop to the next one; numbers that are not translated into something the viewer feels; a payoff that is announced ("rewrites the whole story") but not delivered; an ending that does not close the loop or ends on a weak call to action instead of a question for the comments; parts that drag. If the text is shorter than the target, you may add 1-3 new paragraphs (insert_after) where they make the video stronger.
+
+Rules:
+- Change at most a third of the paragraphs. Do not touch paragraphs that already work, do not polish wording for its own sake.
+- Keep every fact, name, number and the owner's caveats. Never invent new facts, studies or numbers: a new paragraph may only use facts that are already in the text or common knowledge.
+- Write in the language of the script, in the same voice, short spoken sentences.
+- op "replace": index = the paragraph to rewrite, text = the whole new paragraph. "insert_after": text is a new paragraph placed after paragraph index (0 = at the very beginning). "delete": remove paragraph index (text empty).
+- text_ru: the new text in Russian for the owner (if the script is Russian, the same text). why_ru: in Russian, one or two sentences: what was weak and which rule of the niche the fix follows.
+- summary_ru: in Russian, 2-3 sentences: the overall verdict and what the edits change.
+- titles: 3 title ideas in the script's language that follow the niche rules, with Russian translations. thumbnail_texts: 3 thumbnail texts of 2-3 words in the script's language.
+{owner}
+Target length: about {target} words, now {now} words.
+Current title: {title}
+Current thumbnail text: {thumb}
+
+THE NARRATION:
+{paragraphs}"""
+
+
+def improve_script(jid: str, note: str = "") -> dict:
+    """The writer fixes only the weak spots of the final text, measured against the niche rules and the library.
+    The owner then picks which edits go into the text; unchanged paragraphs keep their pictures."""
+    job = db.get(jid)
+    d = job_dir(jid)
+    review = read_json(d / "review.json")
+    if not job or not review:
+        raise UserError("Текст ещё не готов: дождитесь шага «Проверка редактором».")
+    c = Ctx(job)
+    paras = [p.strip() for p in re.split(r"\n\s*\n", review["final_script"]) if p.strip()]
+    extras = read_json(d / "extras.json") or {}
+    thumb = (read_json(d / "thumb.json") or {}).get("text") or extras.get("thumbnail_text", "")
+    system = ("You are the head writer of a YouTube channel who edits finished scripts with a light hand. "
+              f"Channel niche: {c.niche}" + c.lessons_block() + c.library_block("03_script.txt"))
+    owner = f"\nTHE OWNER'S NOTES (follow them first; they may be in Russian):\n{note.strip()[:4000]}\n" if note.strip() else ""
+    user = IMPROVE_PROMPT.format(owner=owner, target=c.words, now=word_count(review["final_script"]),
+                                 title=extras.get("youtube_title") or (c.data("outline") or {}).get("title", ""),
+                                 thumb=thumb or "-", paragraphs="\n\n".join(f"[{i + 1}] {p}" for i, p in enumerate(paras)))
+    r = llm.call_json(c.settings, system + "\nAnswer only with JSON.", user, SCHEMA_IMPROVE, c.usage, 16000)
+    c.save_usage()
+    edits = []
+    for e in r.get("edits") or []:
+        i = int(e.get("index") or 0)
+        if e.get("op") == "insert_after" and 0 <= i <= len(paras) and e.get("text", "").strip():
+            edits.append({**e, "anchor": paras[i - 1] if i else "", "old": ""})
+        elif e.get("op") in ("replace", "delete") and 1 <= i <= len(paras) and (e["op"] == "delete" or e.get("text", "").strip()):
+            edits.append({**e, "old": paras[i - 1]})
+    r["edits"] = edits
+    r["at"] = time.time()
+    write_json(d / "improve.json", r)
+    return r
 
 
 # Camera plan: neighbouring pictures never share a camera angle, so even one room looks alive.

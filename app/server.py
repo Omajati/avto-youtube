@@ -336,6 +336,7 @@ def job_detail(jid: str):
         "images": imgs,
         "own_images": pipeline.read_json(d / "own_images.json", []) or [],
         "images_waiting": pipeline.needs_images_choice(j),
+        "improve": pipeline.read_json(d / "improve.json"),
         "files": {
             "video": (d / "output" / "video.mp4").exists(),
             "short": (d / "output" / "short.mp4").exists(),
@@ -419,6 +420,13 @@ def job_script(jid: str, data: dict = Body(...)):
     db.update(jid, status="queued", error="")
     worker.wake()
     return {"ok": True}
+
+
+@app.post("/api/jobs/{jid}/improve")
+def job_improve(jid: str, data: dict = Body(...)):
+    """Suggested fixes of only the weak spots of the final text; nothing changes until the owner applies them."""
+    _job_or_404(jid)
+    return pipeline.improve_script(jid, data.get("note") or "")
 
 
 def _fix_prompt(prompt: str, fix_ru: str) -> str:

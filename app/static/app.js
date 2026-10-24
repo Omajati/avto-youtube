@@ -1244,6 +1244,26 @@ function renderStages(d) {
       lastStagesKey = "";
     };
   }
+  const impGo = el.querySelector("#imp-go");
+  if (impGo) impGo.onclick = async () => {
+    impGo.disabled = true; impGo.textContent = "⏳ Ищу слабые места, это минута…";
+    await api(`/api/jobs/${j.id}/improve`, { json: { note: el.querySelector("#imp-note").value } })
+      .then(() => toast("Готово: правки ниже")).catch(e => toast(e.message, true));
+    impGo.disabled = false; impGo.textContent = "✨ Найти и исправить слабые места";
+    lastStagesKey = "";
+  };
+  const impApply = el.querySelector("#imp-apply");
+  if (impApply) impApply.onclick = () => {
+    const all = d.improve.edits || [];
+    const picked = [...el.querySelectorAll(".imp-pick")].filter(c => c.checked).map(c => all[+c.dataset.i]);
+    if (!picked.length) return toast("Отметьте хотя бы одну правку", true);
+    const ta = el.querySelector("#final-text");
+    if (ta.disabled) return toast("Сначала поставьте ролик на паузу", true);
+    const res = applyEdits(ta.value, picked);
+    ta.value = res.text; ta.dispatchEvent(new Event("input"));
+    ta.scrollIntoView({ behavior: "smooth", block: "center" });
+    toast(res.missed ? `Вставлено правок: ${picked.length - res.missed}. ${res.missed} не нашли свой абзац (вы его уже меняли).` : "Правки вставлены в текст. Проверьте и нажмите «Сохранить мой текст»");
+  };
   const ownUp = async (kind, idx, file) => {
     const r = await fetch(`/api/jobs/${j.id}/own-image?kind=${kind}&index=${idx}`, { method: "POST", body: file });
     if (!r.ok) { let m = "Не удалось загрузить картинку"; try { m = (await r.json()).detail || m; } catch (e) {} throw new Error(m); }
@@ -1572,6 +1592,7 @@ const RENDER = {
         <p class="muted small">Здесь ровно то, что будет прочитано вслух. Исправьте что хотите и нажмите «Сохранить мой текст»: программа заново разобьёт его на сцены и озвучит. Картинки неизменённых кусков останутся прежними (и их анимации тоже), платно рисуются только новые и изменённые. Пустая строка разделяет абзацы.${(d.job.options.characters || []).length ? " Реплика героя своим голосом пишется отдельным абзацем: «Имя: фраза»." : ""}</p>
         <textarea id="final-text" rows="14" style="width:100%" ${d.job.status === "running" ? "disabled" : ""}>${esc(r.final_script)}</textarea>
         <div class="row" style="margin-top:8px"><button class="primary" id="final-save" ${d.job.status === "running" ? "disabled title=\"Поставьте ролик на паузу\"" : ""}>Сохранить мой текст</button><span class="muted small" id="final-wc"></span></div>
+        ${improveBox(d)}
       </details>` : ""}`;
   },
   scenes(r, d) {
@@ -1716,6 +1737,46 @@ function speedRow(d, kind, r) {
   return `<div class="row" style="margin-top:8px"><span>Скорость:</span>
     <select class="speed-sel" data-kind="${kind}" style="width:auto" ${busy ? "disabled" : ""}>${SPEEDS.map(s => `<option value="${s}" ${s === cur ? "selected" : ""}>${s === 1 ? "Обычная (оригинал)" : "Быстрее в " + s + " раза"} · ${fmtTime(base / s)}</option>`).join("")}</select>
     <button class="sm speed-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">картинка и голос ускоряются вместе, голос не становится писклявым; бесплатно, оригинал сохраняется</span></div>`;
+}
+
+const IMP_OP = { replace: "Переписать абзац", insert_after: "Добавить новый абзац", delete: "Убрать абзац" };
+function improveBox(d) {
+  const r = d.improve;
+  const list = r ? (r.edits || []).map((e, i) => `<div class="imp-e">
+      <label class="check" style="margin:0"><input type="checkbox" class="imp-pick" data-i="${i}" checked> <b>${IMP_OP[e.op] || ""} ${e.op === "insert_after" ? (e.index ? `после ${e.index}-го` : "в самое начало") : e.index}</b></label>
+      <div class="small" style="margin:4px 0">${nl(e.why_ru)}</div>
+      ${e.old ? `<div class="imp-old small">${esc(e.old)}</div>` : ""}
+      ${e.op !== "delete" ? `<div class="imp-new small">${esc(e.text)}</div>${e.text_ru && e.text_ru !== e.text ? `<div class="muted small">${esc(e.text_ru)}</div>` : ""}` : ""}
+    </div>`).join("") : "";
+  return `<div class="card" style="margin-top:12px;background:var(--bg)"><h3 style="margin-top:0">✨ Улучшить только слабые места</h3>
+    <p class="muted small">ИИ сверит текст с правилами ниши и разборами из хранилища и перепишет только слабые абзацы, остальное не тронет. Вы отмечаете, какие правки взять, они вставляются в текст выше, потом нажимаете «Сохранить мой текст». Картинки нетронутых абзацев останутся прежними. Стоит несколько центов.</p>
+    <textarea id="imp-note" rows="2" style="width:100%" placeholder="Что поправить, если хотите подсказать (необязательно). Например: закрыть вопрос из хука, усилить финал"></textarea>
+    <div class="row" style="margin-top:6px"><button id="imp-go">✨ Найти и исправить слабые места</button></div>
+    ${r ? `<div style="margin-top:10px"><p>${nl(r.summary_ru)}</p>
+      ${list || `<p class="muted">Слабых мест не нашлось, текст можно оставить как есть.</p>`}
+      ${list ? `<div class="row" style="margin-top:8px"><button class="primary" id="imp-apply">Вставить отмеченные правки в текст</button></div>` : ""}
+      ${(r.titles || []).length ? prSection("Варианты названия", prList(r.titles.map(t => t.title + (t.title_ru && t.title_ru !== t.title ? ` (${t.title_ru})` : "")))) : ""}
+      ${(r.thumbnail_texts || []).length ? prSection("Варианты надписи на превью", prList(r.thumbnail_texts)) : ""}</div>` : ""}
+  </div>`;
+}
+
+function applyEdits(text, edits) {
+  let paras = text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+  const norm = t => t.replace(/\s+/g, " ").trim();
+  const find = t => paras.findIndex(p => norm(p) === norm(t));
+  let missed = 0;
+  for (const e of edits) {
+    if (e.op === "insert_after") {
+      const at = e.anchor ? find(e.anchor) : -1;
+      if (e.anchor && at < 0) { missed++; continue; }
+      paras.splice(at + 1, 0, e.text.trim());
+    } else {
+      const at = find(e.old);
+      if (at < 0) { missed++; continue; }
+      if (e.op === "delete") paras.splice(at, 1); else paras[at] = e.text.trim();
+    }
+  }
+  return { text: paras.join("\n\n"), missed };
 }
 
 function revoiceBox(d) {

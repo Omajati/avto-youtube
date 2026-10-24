@@ -230,3 +230,6 @@ table.pt-f { margin-top: 10px; } table.pt-f td { vertical-align: top; padding: 6
 table.pt-f td.pt-g { width: 22px; font-size: 1.1em; }
 table.pt-cmp td { vertical-align: top; } .nowrap { white-space: nowrap; }
 table.pt-f td:nth-child(2) { width: 170px; } table.pt-cmp td:first-child { width: 150px; }
+.imp-e { border-top: 1px solid var(--line); padding: 8px 0; }
+.imp-old { text-decoration: line-through; opacity: .6; margin: 2px 0; }
+.imp-new { border-left: 3px solid var(--ok); padding-left: 8px; margin: 4px 0; }
