@@ -349,6 +349,8 @@ async function viewNew() {
   $("#itemsv").addEventListener("change", () => { const want = new Set($("#itemsv").value.split(",")); main.querySelectorAll("[data-item]").forEach(b => b.classList.toggle("on", want.has(b.dataset.item))); });
   const applyProj = () => {
     const p = projs.find(x => x.id === curProj);
+    if ($("#charsel")) $("#charsel").style.display = p && p.ad_mode ? "none" : "";  // a commercial shows no people
+    if ($("#itemsel")) $("#itemsel").dataset.ad = p && p.ad_mode ? "1" : "";
     main.querySelectorAll("[data-proj]").forEach(b => b.classList.toggle("on", b.dataset.proj === curProj));
     $("#niche").value = p ? (p.niche || "") : s.niche;  // a project never borrows the general (history) default
     $("#lang").value = p ? p.language : "en";
@@ -930,6 +932,7 @@ async function viewProject(id) {
       <label class="check"><input type="checkbox" data-q="made_for_kids" ${p.made_for_kids ? "checked" : ""}> Ролики для детей <span class="muted small">(сказочный добрый тон; на YouTube ставится отметка «для детей», по закону это обязательно для детского контента)</span></label>
       <label class="check"><input type="checkbox" data-q="same_place" ${p.same_place !== false ? "checked" : ""}> Каждое место выглядит одинаково во всех своих кадрах <span class="muted small">(сначала рисуется каждое место действия, и все сцены там рисуются по этому образцу; нужен ключ fal.ai; дороже: каждая сцена рисуется по образцу, ~$0.04 с Nano Banana или ~$0.02 с FLUX.2 Dev Edit (выбор в Настройках → Картинки) вместо ~$0.003 у Flux Schnell; в экономном режиме крупные планы и детали без персонажей рисуются без образца)</span></label>
       <label class="check"><input type="checkbox" data-q="fiction" ${p.fiction ? "checked" : ""}> Выдуманные истории <span class="muted small">(мультики, сказки, притчи: сюжеты придумываются, а не берутся из реальных событий)</span></label>
+      <label class="check"><input type="checkbox" data-q="ad_mode" ${p.ad_mode ? "checked" : ""}> Рекламный ролик товара <span class="muted small">(без людей: товар в каждом кадре, макро, наезды и облёт камеры, эффекты; товар выбирается в «Предметах в ролике»)</span></label>
     </div></div>
     <div class="row" style="margin-top:16px"><button class="primary" id="pj-save">Сохранить проект</button><button id="pj-tpl" title="Проект появится в списке ниш, из него можно будет быстро создавать новые проекты с такими же настройками">⭐ Сохранить как свою нишу</button><span class="grow"></span><button class="danger" id="pj-del">Удалить проект</button></div>
   </div>

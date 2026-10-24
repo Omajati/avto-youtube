@@ -62,6 +62,16 @@ MOTION_PROMPT = (
 )
 
 
+AD_MOTION = (
+    "Smooth premium commercial camera movement: {move}. The product keeps its exact shape, proportions, colours, "
+    "logo and labels the whole time. No people, no hands, no text, no new objects, no morphing, no sudden changes."
+)
+
+
+def ad_motion(move: str) -> str:
+    return AD_MOTION.format(move=move or "slow dolly push-in toward the product")
+
+
 def model(settings) -> dict:
     return VIDEO_MODELS.get(settings.get("video_model"), VIDEO_MODELS["kling25"])
 
@@ -117,14 +127,14 @@ def _data_uri(img: Path) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def generate(settings, img: Path, prompt: str, need: float, vertical: bool, check=None) -> bytes:
+def generate(settings, img: Path, prompt: str, need: float, vertical: bool, check=None, motion=None) -> bytes:
     """Returns mp4 bytes."""
     key = settings.get("fal_key")
     if not key:
         raise UserError("Для анимации нужен ключ fal.ai. Вставьте его в Настройках, раздел «Картинки» → fal.ai.")
     mid = settings.get("video_model") if settings.get("video_model") in VIDEO_MODELS else "kling25"
     m = VIDEO_MODELS[mid]
-    full = f"{prompt.strip().rstrip('.')}. {MOTION_PROMPT}"
+    full = f"{prompt.strip().rstrip('.')}. {motion or MOTION_PROMPT}"
     image = _data_uri(img)
     if m.get("resolution"):  # MiniMax H3: the picture's shape comes from the image itself
         body = {"prompt": full, "image_url": image, "duration": clip_seconds(settings, need),

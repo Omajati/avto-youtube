@@ -236,6 +236,8 @@ def create_job(data: dict = Body(...)):
     opts["characters"] = [c["id"] for c in chars]
     items = projects.list_items(set(data.get("items", proj.get("items", [])) or []))
     opts["items"] = [it["id"] for it in items]
+    if proj.get("ad_mode") and not items:
+        raise UserError("Это рекламный проект: выберите товар в блоке «Предметы в ролике» (или добавьте его в разделе «Предметы» с фото).")
     created = []
     # A montage video is the owner's own text, not the next episode of the series.
     first_ep = _next_episode(proj) if proj.get("series") and not data.get("montage_script") else 0

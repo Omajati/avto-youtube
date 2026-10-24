@@ -17,7 +17,7 @@ FIELDS = {
     "name": "", "icon": "🎬", "preset": "", "language": "en", "niche": "", "image_style": "",
     "voice_id": "", "voice_name": "", "channel_id": "", "format": "long", "duration_min": 10, "make_short": True,
     "anim_mode": "off", "anim_short": False, "anim_count": 3, "anim_pause": False, "images_pause": False, "subs_video": False, "subs_short": True, "graphics": True, "subs_smart": True, "cta_short": "both", "cta_lang": "auto", "fx_mode": "light",
-    "made_for_kids": False, "fiction": False,
+    "made_for_kids": False, "fiction": False, "ad_mode": False,  # ad_mode: a product commercial without people
     # Series: episodes remember what happened before
     "series": False, "series_bible": "", "season_plan": "",
     "en_voice_id": "", "en_voice_name": "", "en_channel_id": "",  # last choice for the English version
@@ -173,6 +173,27 @@ PRESETS = {
     },
 }
 
+_PRODUCT = ("premium commercial product photography, the product as the hero, studio lighting with crisp rim light and "
+            "soft reflections, macro detail, shallow depth of field, rich contrast, clean elegant background, high-end "
+            "advertising look, ultra detailed, no people, no hands, no text, no letters, no watermark")
+
+_AD = {"image_style": _PRODUCT, "ad_mode": True, "voice_mode": "narrator", "format": "short", "short_seconds": 35,
+       "make_short": False, "anim_mode": "all", "anim_short": True, "anim_count": 12, "fx_mode": "strong", "subs_video": True,
+       "subs_short": True, "subs_smart": True, "graphics": True, "cta_short": "off", "music_mode": "generate", "same_place": False}
+PRESETS["product_ad_ru"] = dict(_AD, name="Реклама товара (СНГ)", icon="📦", language="ru",
+    niche="рекламные ролики товаров без людей, как дорогая реклама на ТВ: товар крупным планом, макросъёмка деталей и "
+          "материала, плавные наезды и отъезды камеры, облёт вокруг товара, эффекты из его мира (брызги, частицы, дым, "
+          "свет), в конце красивый кадр товара и призыв купить. Продаём выгоды товара через то, что видно в кадре; "
+          "только реальные свойства из описания товара",
+    music_style="современная рекламная музыка, стильная электроника с глубоким басом, бодрая")
+PRESETS["product_ad"] = dict(_AD, name="Реклама товара", icon="🛍️", language="en",
+    niche="product commercials without people, like a premium TV spot: the product in close-up, macro shots of details and "
+          "material, smooth camera push-ins and pull-backs, orbits around the product, effects from its world (splashes, "
+          "particles, smoke, light), a hero packshot and a call to action at the end; benefits are sold through what the "
+          "camera shows; only real features from the product description",
+    music_style="современная рекламная музыка, стильная электроника с глубоким басом, бодрая")
+
+
 def _ps(key):
     return PRESETS[key]["image_style"]
 
@@ -207,6 +228,8 @@ IMAGE_STYLES = {
                "text": "anime illustration, clean line art, cel shading, expressive eyes, cinematic lighting, detailed background, no text, no letters, no watermark"},
     "comic": {"name": "Комикс, графический роман", "desc": "Чернильные линии, густые тени, приглушённые цвета.",
                "text": 'graphic novel illustration, bold ink linework, dramatic shadows, limited muted color palette with strong accents, cinematic composition, historically accurate details, no speech bubbles, no text, no letters, no watermark'},
+    "product": {"name": "Рекламная предметная съёмка", "desc": "Товар как в дорогой рекламе: студийный свет, макро, блики, чистый фон, без людей.",
+                 "text": _PRODUCT},
     "engraving": {"name": "Старинная гравюра", "desc": "Штриховка сепией на старой бумаге, как в книгах XIX века.",
                    "text": 'antique engraving illustration, fine cross-hatching, sepia ink on aged paper, 19th century book illustration style, highly detailed, historically accurate, no text, no letters, no watermark'},
 }

@@ -313,6 +313,18 @@ STORY OVERRIDE (this rule beats every instruction above and below about truthful
 - Images: adult animation, expressive characters and faces, cinematic framing; menace is shown through mood and light, never gore."""
 
 
+AD_OVERRIDE = """
+
+PRODUCT COMMERCIAL OVERRIDE (this rule beats every instruction above and below about real stories, story engines, heroes, twists, characters and avoiding adverts):
+- This channel makes premium product commercials with no people at all. The video IS an advert, and that is the point: it must sell the chosen product beautifully, like a high-end TV spot.
+- Only the off-screen narrator speaks. No characters, no dialogue, no people, faces, hands or body parts on screen, ever.
+- Structure: a hook in the first 2 seconds (a striking sensory image, a bold promise or a question about a pain or desire); the desire or problem in one or two lines; the reveal of the product; 3-4 benefits, each tied to one thing the camera can show (a macro of the material, the mechanism working, the texture, the detail that makes it better); a feeling of the result; a short call to action (for example: link in the description).
+- Language: short, confident, sensory sentences; premium tone, rhythm like a trailer; no lists read aloud, no filler, no clichés like "revolutionary" or "game changer".
+- Truth: use only facts from the product's description and photos. Never invent specifications, prices, discounts, awards, certifications, test results or customer reviews.
+- Topics and ideas are angles for selling this product (the problem it solves, the moment it shines, the detail nobody notices), not stories about history or people.
+- Images: commercial product photography: the product is the hero of every picture with its exact look, studio or stylish set lighting, macro detail, clean backgrounds, dynamic elements (splashes, particles, light streaks, smoke) that fit the product. No people, no hands, no text."""
+
+
 SPOKEN_RULES = """
 
 SPOKEN TEXT ONLY (very important): every word of the script is read aloud by a voice; the viewer may not even look at the screen.
@@ -422,6 +434,10 @@ SCHEMA_IDEA_CRITIC = {
 SHORT_IDEAS_EXTRA = """
 
 SHORTS: for every idea also give first_line (the exact first spoken sentence, in the video's language), twist (the unexpected turn in one sentence) and twist_ru (the same in Russian). An idea without a real twist, or whose ending can be guessed from the first line, is worthless: replace it. Make the ideas different in situation, conflict and type of twist (reveal, role reversal, ironic backfire, absurd solution, rival, failure that turns into a win)."""
+
+AD_IDEAS_EXTRA = """
+
+PRODUCT COMMERCIAL SHORTS: every idea is a different angle for selling the chosen product (the pain it ends, the moment it shines, the hidden detail, the before and after, the feeling it gives). For every idea also give first_line (the exact first spoken sentence, in the video's language), twist (the wow moment of the spot: the shot or fact that makes people want it) and twist_ru (the same in Russian). No people in any idea."""
 
 IDEA_CRITIC = """You are a jaded 20-year-old who scrolls YouTube Shorts for hours and swipes away from anything boring, predictable or advert-like within 2 seconds. You are judging ideas for one channel.
 
@@ -550,6 +566,8 @@ class Ctx:
         self.lang = self.opts.get("language") or self.project.get("language") or "en"
         self.characters = read_json(self.dir / "characters.json", []) or []
         self.items = read_json(self.dir / "items.json", []) or []
+        if self.project.get("ad_mode"):
+            self.characters = []  # a product commercial shows no people
         host = self.host()
         if host:  # the hero tells the whole video in his own voice
             self.settings["elevenlabs_voice_id"] = host["voice_id"]
@@ -653,10 +671,13 @@ class Ctx:
                           for it in self.items)
         return ("\n\nITEMS AND PRODUCTS FOR THIS VIDEO (the owner chose them, they have exact reference photos):\n"
                 + lines + "\n"
-                "- Let these items appear in the story and in several pictures where they fit naturally: used, held, "
-                "worn, standing in the scene. Call them by exactly these names; never invent other brands or models "
-                "of the same kind.\n"
-                "- In image prompts describe every such item with its exact look above; never change its shape, colours, "
+                + ("- This is the product the commercial sells. It is in every picture on its own, never held, worn or used "
+                   "by a person. Call it by exactly this name; never invent other brands or models.\n"
+                   if self.project.get("ad_mode") else
+                   "- Let these items appear in the story and in several pictures where they fit naturally: used, held, "
+                   "worn, standing in the scene. Call them by exactly these names; never invent other brands or models "
+                   "of the same kind.\n")
+                + "- In image prompts describe every such item with its exact look above; never change its shape, colours, "
                 "logo or labels.")
 
     def host(self):
@@ -919,6 +940,7 @@ class Ctx:
                      if self.short_format else "")
                   + (KIDS_OVERRIDE if self.project.get("made_for_kids")
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
+                  + (AD_OVERRIDE if self.project.get("ad_mode") else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
                   + self.lessons_block() + self.golden_block(prompt_file) + self.library_block(prompt_file)
                   + (SCRIPT_CRAFT if prompt_file in GOLDEN_STAGES else "")
@@ -1013,7 +1035,7 @@ def _idea_block(c: Ctx) -> str:
 
 
 def _ask_ideas(c: Ctx, n: int, avoid: list = None) -> dict:
-    extra = SHORT_IDEAS_EXTRA if c.short_format else ""
+    extra = (AD_IDEAS_EXTRA if c.project.get("ad_mode") else SHORT_IDEAS_EXTRA) if c.short_format else ""
     extra += f"\n\nGive exactly {n} ideas, no more and no fewer."
     if own_topic(c) and avoid:  # the owner pressed "more topics" himself
         extra += ("\n\nThe owner gave a topic: variety only inside that topic, never leave it for another subject. "
@@ -1085,7 +1107,10 @@ def _critic_pick(c: Ctx, ideas: list, r: dict, idx: int) -> int:
         cr = llm.call_json(c.settings, "You judge YouTube Shorts ideas. Answer only with JSON.",
                            IDEA_CRITIC.format(ideas=text, niche=c.niche.strip()[:3000], audience=(
                                "\nThe audience is small children and their parents: kind, safe, happy endings are required; "
-                               "judge surprise by the unexpected way the story gets there." if c.project.get("made_for_kids") else "")), SCHEMA_IDEA_CRITIC, c.usage, 6000)
+                               "judge surprise by the unexpected way the story gets there." if c.project.get("made_for_kids") else
+                               "\nThis channel makes product commercials, so an advert is expected here: ignore the rule above about adverts and judge "
+                               "whether the first line and the wow moment would stop your scroll and make you want the product."
+                               if c.project.get("ad_mode") else "")), SCHEMA_IDEA_CRITIC, c.usage, 6000)
         c.save_usage()
     except UserError as e:
         c.log(f"Строгий зритель не ответил ({e}), беру выбор сценариста.")
@@ -1412,6 +1437,47 @@ SHOTS = [
 ]
 
 
+# Product commercials: (key, picture, camera move for the animated clip, still-picture move).
+AD_SHOTS = [
+    ("macro", "extreme macro close-up of the product's surface and material, razor-thin depth of field, one detail in sharp focus",
+     "slow macro slide across the surface with a gentle focus pull", "pan_right"),
+    ("hero", "hero shot: the product alone in the center on a pedestal, slightly low angle, dramatic rim light, clean gradient background",
+     "slow dolly push-in toward the product", "zoom_in"),
+    ("orbit", "three-quarter view of the product on a turntable, soft studio light with glossy reflections",
+     "smooth orbit of the camera around the product", "pan_left"),
+    ("top", "top-down flat lay: the product among a few matching props on a styled surface, no people",
+     "slow top-down rotation with a gentle push-in", "zoom_in"),
+    ("float", "the product levitating in mid-air, slightly tilted, small particles floating around it",
+     "the product slowly turns in mid-air while particles drift", "zoom_out"),
+    ("splash", "the product with a frozen dynamic element of its world around it (water splash, powder burst, sparks, petals or smoke, whatever fits it)",
+     "slow-motion burst around the product while the camera holds steady", "zoom_in"),
+    ("detail", "extreme close-up of one functional detail of the product (button, blade, cap, nozzle, logo), shallow depth of field",
+     "slow macro push-in on the detail with a rack focus", "zoom_in"),
+    ("reveal", "dark moody scene, the product half in shadow, carved out by a single sweeping streak of light",
+     "a light sweep slowly reveals the product while the camera pulls back", "zoom_out"),
+    ("place", "wide shot of the product in a stylish real setting where it is used (shelf, desk, bathroom, kitchen), no people",
+     "slow pull-back that reveals the setting", "zoom_out"),
+]
+AD_MOVE = {k: m for k, _, m, _ in AD_SHOTS}
+
+
+def ad_shot_plan(n: int, seed: str) -> list:
+    """Opens on a macro tease, ends on the hero packshot, never repeats a neighbour in between."""
+    import random
+    rnd = random.Random(seed)
+    keys = [k for k, *_ in AD_SHOTS]
+    plan = []
+    for i in range(n):
+        if i == 0:
+            plan.append("macro")
+        elif i == n - 1 and plan[-1] != "hero":
+            plan.append("hero")
+        else:
+            avoid = set(plan[-2:]) | {"hero"}  # the packshot is saved for the end
+            plan.append(rnd.choice([k for k in keys if k not in avoid]))
+    return plan
+
+
 def shot_plan(n: int, seed: str) -> list:
     """A varied camera angle for each of n pictures: starts wide, never repeats a neighbour or its neighbour."""
     import random
@@ -1442,8 +1508,10 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
                    if vertical else "Horizontal 16:9 cinematic composition.")
     out = []
     batch = 45
-    shots = shot_plan(len(chunks), f"{c.id}-{title}-{vertical}")
-    shot_text = dict(SHOTS)
+    ad = bool(c.project.get("ad_mode"))
+    shots = (ad_shot_plan if ad else shot_plan)(len(chunks), f"{c.id}-{title}-{vertical}")
+    shot_text = {k: t for k, t, *_ in AD_SHOTS} if ad else dict(SHOTS)
+    still_move = {k: m for k, _, _, m in AD_SHOTS}
     for start in range(0, len(chunks), batch):
         part = chunks[start:start + batch]
         who = {x["id"]: c.char_name(x) for x in c.characters}
@@ -1470,7 +1538,13 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
             fx += ("\n\nEvery fragment comes with [camera: ...]: build that picture exactly from this camera angle and "
                    "begin the prompt with it. Even inside one location the angle changes from picture to picture, so "
                    "the same room is seen from new sides: first person, over the shoulder, close-up, from above. "
-                   "When the narration speaks about another place or time, the picture moves there.")
+                   "When the narration speaks about another place or time, the picture moves there.") if not ad else (
+                "\n\nPRODUCT COMMERCIAL: every fragment comes with [camera: ...], a product shot; build the picture exactly "
+                "as that shot and begin the prompt with it. The chosen product is the hero of EVERY picture, with its exact "
+                "shape, colours, logo and labels; list it in items for every picture. When the narration names a benefit, "
+                "the picture shows the very detail that proves it. Premium commercial lighting, rich contrast, clean "
+                "backgrounds or stylish sets, dynamic elements that fit the product. Absolutely no people, faces, hands, "
+                "fingers or body parts, and no text or letters except the product's own labels.")
             if any(ch.get("speaker") for ch in part):
                 fx += ("\n\nFragments marked [Name says] are lines spoken by that character: show that character "
                        "speaking or reacting, close enough to read the face.")
@@ -1483,6 +1557,8 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
             if ch.get("speaker") in who and who[ch["speaker"]] not in visible:
                 visible.append(who[ch["speaker"]])  # whoever speaks is on screen
             camera = shot_text[shots[start + i]]
+            if ad:
+                visible = []
             prompt = (p or {}).get("prompt") or f"A scene illustrating: {ch['text']}"
             if " ".join(camera.split()[:2]).lower().strip(",.:") not in prompt.lower() and not prompt.lower().startswith("camera"):
                 prompt = f"Camera: {camera}. {prompt}"
@@ -1492,9 +1568,10 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
                 "prompt": prompt,
                 "shot": shots[start + i],
                 "prompt_ru": (p or {}).get("prompt_ru", ""),
-                "motion": media.MOTIONS[(start + i) % len(media.MOTIONS)],
+                "motion": still_move[shots[start + i]] if ad else media.MOTIONS[(start + i) % len(media.MOTIONS)],
                 "characters": visible,
-                "items": list((p or {}).get("items") or []),
+                "items": ([c.char_name(it) for it in c.items] if ad else list((p or {}).get("items") or [])),
+                **({"move": AD_MOVE[shots[start + i]]} if ad else {}),
                 "location": (p or {}).get("location", ""),
                 **({"speaker": ch["speaker"]} if ch.get("speaker") else {}),
                 "effect": (p or {}).get("effect", "none"),
@@ -2289,7 +2366,8 @@ def st_animate(c: Ctx):
                 w_, h_ = (720, 1280) if vertical else (1280, 720)
                 media.render_clip(img, out, int(5 * 25), w_, h_, 25, "zoom_in", 0.3)
             else:
-                data = animate.generate(c.settings, img, sc["prompt"], need, vertical, c.check)
+                data = animate.generate(c.settings, img, sc["prompt"], need, vertical, c.check,
+                                        motion=animate.ad_motion(sc.get("move", "")) if c.project.get("ad_mode") else None)
                 tmp = out.with_suffix(".part")
                 tmp.write_bytes(data)
                 tmp.replace(out)
