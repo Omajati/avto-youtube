@@ -510,7 +510,7 @@ ALL LATEST VIDEOS, NEWEST FIRST (views, times the median):
 THE VIDEOS TO COMPARE (number, views, title, description, the words spoken). Video 1 is THE HIT, the one that took off most:
 {videos}
 
-For EVERY video judge the same factors, in this order: {factors}. Read each script carefully: the hook is its first 1-3 sentences (first 3-5 seconds of a short, first 30 seconds of a long video); judge the structure, the promise and whether it is kept, the pace, the ending. Judge the thumbnail from the picture, the title and description from the text. Quote real titles, thumbnail text and lines. Compare against the hit: a weak video is weak in comparison with what the hit did.
+For EVERY video judge the same factors, in this order: {factors}. Read each script carefully (the middle of a long one may be skipped, its ending is always there): the hook is its first 1-3 sentences (first 3-5 seconds of a short, first 30 seconds of a long video); judge the structure, the promise and whether it is kept, the pace, the ending. Judge the thumbnail from the picture, the title and description from the text. Quote real titles, thumbnail text and lines. Compare against the hit: a weak video is weak in comparison with what the hit did.
 
 Return (Russian everywhere except rule_en):
 - summary_ru: 1-2 sentences: the channel and its numbers (the hit's views against the median).
@@ -568,7 +568,10 @@ def _patterns(d: Path, m: dict, settings: dict, usage: dict):
             _log(d, f"Текст ролика «{r['title']}» получить не удалось: {err}")
             info, lines, imgs = {}, [], _thumb(r["thumbnail"], d)
         up = info.get("upload_date") or ""
-        r.update(script=_plain(lines), timed=_timed(lines)[:6000 if tab == "shorts" else 8000],
+        timed = _timed(lines)
+        if len(timed) > 9000:  # a long video: its opening and its ending matter most
+            timed = timed[:6000] + "\n[… the middle is skipped …]\n" + timed[-3000:]
+        r.update(script=_plain(lines), timed=timed,
                  description=(info.get("description") or "")[:700], duration=info.get("duration") or r.get("duration"),
                  thumbnail=info.get("thumbnail") or r["thumbnail"], date=f"{up[6:8]}.{up[4:6]}.{up[:4]}" if len(up) == 8 else "")
         images += [(n, imgs[0])] if imgs else []
