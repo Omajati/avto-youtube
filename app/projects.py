@@ -297,12 +297,31 @@ def save(pid: str, data: dict) -> dict:
     return proj
 
 
+def project_of(key: str) -> str:
+    """The project of a niche: the one made from it, or the project the owner's niche was saved from ("" if none)."""
+    t = list_templates().get(key) or {}
+    if t.get("from_project") and _path(t["from_project"]).exists():
+        return t["from_project"]
+    if not PROJ_DIR.exists():
+        return ""
+    for f in sorted(PROJ_DIR.glob("*.json")):
+        try:
+            if json.loads(f.read_text("utf-8")).get("preset") == key:
+                return f.stem
+        except (OSError, ValueError):
+            continue
+    return ""
+
+
 def _sync_template(proj: dict):
     """The owner's niche made from this project (or this project made from it) follows the project's edits."""
     items = list_templates()
     key = next((k for k, t in items.items() if t.get("from_project") == proj["id"]), None)
     if not key and proj.get("preset") in items:
-        key = proj["preset"]
+        owner = items[proj["preset"]].get("from_project")
+        # A copy made from the niche never takes it over while the project it was saved from still exists.
+        if not owner or not _path(owner).exists():
+            key = proj["preset"]
     if not key:
         return
     items[key] = {**{k: v for k, v in proj.items() if k not in _NOT_IN_TEMPLATE}, "from_project": proj["id"], "mine": True}

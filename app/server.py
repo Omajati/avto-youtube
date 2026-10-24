@@ -795,14 +795,15 @@ def project_create(data: dict = Body(...)):
         s = load_settings()
         return projects.save("", {"name": "Новый проект", "icon": "🎬", "niche": s["niche"],
                                   "duration_min": s["duration_min"]})
-    return projects.create_from_preset(preset, load_settings())
+    have = projects.project_of(preset)  # one project per niche: the existing one opens instead of a copy
+    return projects.get(have) if have else projects.create_from_preset(preset, load_settings())
 
 
 @app.get("/api/niches")
 def niches():
     hidden = set(load_settings().get("hidden_niches") or [])
     return {k: {"name": v["name"], "icon": v.get("icon", "🎬"), "language": v.get("language", "en"),
-                "mine": bool(v.get("mine")), "hidden": k in hidden}
+                "mine": bool(v.get("mine")), "hidden": k in hidden, "project": projects.project_of(k)}
             for k, v in projects.all_presets().items()}
 
 

@@ -736,7 +736,7 @@ async function viewProjects(id) {
       <b class="pdel" data-del="${p.id}" data-count="${p.count}" title="Удалить проект">×</b></a>`).join("")}</div>` : ""}
   <div class="card"><h2>Новый проект из ниши</h2>
     <p class="muted small">Выберите нишу: все настройки подставятся сами, потом их можно поменять. Если проект с этой нишей уже есть, откроется он, а не новая копия. Ненужную нишу уберите крестиком в углу: готовые ниши скрываются (их можно вернуть внизу), ваши удаляются. Проекты при этом не трогаются. Свой проект можно сделать нишей кнопкой «⭐ Сохранить как свою нишу» в проекте: тогда он появится здесь с пометкой «моя ниша», и из него можно быстро делать новые проекты.</p>
-    <div class="pgrid">${Object.entries(niches).filter(([k, p]) => !p.hidden).sort((a, b) => (b[1].mine ? 1 : 0) - (a[1].mine ? 1 : 0)).map(([k, p]) => `<button class="pcard" data-preset="${k}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${p.mine ? "⭐ моя ниша · " : ""}${p.language === "ru" ? "на русском" : "на английском"}${projs.some(x => x.preset === k) ? " · ✓ уже есть" : ""}</div></div><b class="pdel" data-ndel="${k}" data-mine="${p.mine ? 1 : ""}" title="Убрать из списка ниш">×</b></button>`).join("")}
+    <div class="pgrid">${Object.entries(niches).filter(([k, p]) => !p.hidden).sort((a, b) => (b[1].mine ? 1 : 0) - (a[1].mine ? 1 : 0)).map(([k, p]) => `<button class="pcard" data-preset="${k}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${p.mine ? "⭐ моя ниша · " : ""}${p.language === "ru" ? "на русском" : "на английском"}${p.project || projs.some(x => x.preset === k) ? " · ✓ уже есть" : ""}</div></div><b class="pdel" data-ndel="${k}" data-mine="${p.mine ? 1 : ""}" title="Убрать из списка ниш">×</b></button>`).join("")}
       <button class="pcard" data-preset="custom"><div class="pic">＋</div><div><b>Свой проект</b><div class="muted small">с нуля</div></div></button></div>
     ${Object.values(niches).some(p => p.hidden) ? `<details style="margin-top:14px"><summary class="muted">Скрытые ниши (${Object.values(niches).filter(p => p.hidden).length})</summary>
       <div class="row" style="gap:6px;margin-top:8px">${Object.entries(niches).filter(([k, p]) => p.hidden).map(([k, p]) => `<button class="sm" data-nshow="${k}" title="Вернуть в список">${esc(p.icon)} ${esc(p.name)} · вернуть</button>`).join("")}</div></details>` : ""}
@@ -764,7 +764,8 @@ async function viewProjects(id) {
     await api(`/api/niches/${x.dataset.nshow}/hidden`, { json: { hidden: false } }); viewProjects();
   });
   main.querySelectorAll("[data-preset]").forEach(b => b.onclick = async () => {
-    const have = projs.find(x => x.preset === b.dataset.preset && b.dataset.preset !== "custom");
+    const n = niches[b.dataset.preset] || {};
+    const have = projs.find(x => b.dataset.preset !== "custom" && (x.preset === b.dataset.preset || x.id === n.project));
     if (have) { toast(`Проект «${have.name}» уже есть, открываю его`); location.hash = `#/projects/${have.id}`; return; }
     const p = await api("/api/projects", { json: { preset: b.dataset.preset } }).catch(e => toast(e.message, true));
     if (p) { toast("Проект создан"); location.hash = `#/projects/${p.id}`; }
