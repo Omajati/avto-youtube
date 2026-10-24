@@ -17,6 +17,7 @@ FIELDS = {
     "name": "", "icon": "🎬", "preset": "", "language": "en", "niche": "", "image_style": "",
     "voice_id": "", "voice_name": "", "channel_id": "", "format": "long", "duration_min": 10, "make_short": True,
     "anim_mode": "off", "anim_short": False, "anim_count": 3, "anim_pause": False, "images_pause": False, "subs_video": False, "subs_short": True, "graphics": True, "subs_smart": True, "cta_short": "both", "cta_lang": "auto", "fx_mode": "light",
+    "platform": "youtube",  # youtube / instagram: Instagram niches live in their own block
     "made_for_kids": False, "fiction": False, "ad_mode": False,  # ad_mode: a product commercial without people
     # Series: episodes remember what happened before
     "series": False, "series_bible": "", "season_plan": "",
@@ -281,6 +282,8 @@ def _clean(data: dict) -> dict:
             out[k] = ""
     if out["fx_mode"] not in ("off", "light", "strong"):
         out["fx_mode"] = "light"
+    if out["platform"] not in ("youtube", "instagram"):
+        out["platform"] = "youtube"
     if out["format"] not in ("long", "short"):
         out["format"] = "long"
     if out["voice_mode"] not in ("narrator", "mixed", "dialogue", "host"):
@@ -334,16 +337,18 @@ def save(pid: str, data: dict) -> dict:
     return proj
 
 
-def project_of(key: str) -> str:
-    """The project of a niche: the one made from it, or the project the owner's niche was saved from ("" if none)."""
+def project_of(key: str, platform: str = "youtube") -> str:
+    """The project of a niche: the one made from it, or the project the owner's niche was saved from ("" if none).
+    Instagram has its own project for the same niche."""
     t = list_templates().get(key) or {}
-    if t.get("from_project") and _path(t["from_project"]).exists():
+    if platform == "youtube" and t.get("from_project") and _path(t["from_project"]).exists():
         return t["from_project"]
     if not PROJ_DIR.exists():
         return ""
     for f in sorted(PROJ_DIR.glob("*.json")):
         try:
-            if json.loads(f.read_text("utf-8")).get("preset") == key:
+            p = json.loads(f.read_text("utf-8"))
+            if p.get("preset") == key and (p.get("platform") or "youtube") == platform:
                 return f.stem
         except (OSError, ValueError):
             continue
@@ -401,13 +406,20 @@ def all_presets() -> dict:
     return {**PRESETS, **list_templates()}
 
 
-def create_from_preset(preset: str, settings: dict) -> dict:
+# Reels: vertical, short, no extra Short, no YouTube buttons.
+INSTAGRAM = {"platform": "instagram", "format": "short", "short_seconds": 45, "make_short": False, "cta_short": "off",
+             "subs_short": True, "subs_smart": True}
+
+
+def create_from_preset(preset: str, settings: dict, platform: str = "youtube") -> dict:
     base = {k: v for k, v in all_presets().get(preset, {}).items() if k not in ("from_project", "mine")} or None
     if not base:
         raise UserError("Неизвестная ниша")
     data = {**{k: v for k, v in FIELDS.items()}, **(RU_VOICE if base.get("language") == "ru" else {}), **base,
             "preset": preset,
             "duration_min": base.get("duration_min", settings.get("duration_min", 10))}
+    if platform == "instagram":
+        data.update(INSTAGRAM, short_seconds=min(int(base.get("short_seconds") or 45), 60))
     return save("", data)
 
 

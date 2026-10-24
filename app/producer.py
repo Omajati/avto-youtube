@@ -22,6 +22,8 @@ DIR = DATA_DIR / "producer"
 _threads = {}
 _lock = threading.Lock()
 YT_RE = re.compile(r"^https?://(www\.|m\.)?(youtube\.com|youtu\.be)/", re.I)
+IG_RE = re.compile(r"^https?://(www\.|m\.)?instagram\.com/", re.I)
+IG_REEL_RE = re.compile(r"^https?://(www\.|m\.)?instagram\.com/(?:[\w.]+/)?(reel|reels|p|tv)/[\w-]+", re.I)
 
 
 def _dir(pid: str) -> Path:
@@ -68,7 +70,7 @@ def list_all() -> list:
         if m:
             out.append({"id": m["id"], "created": m.get("created"), "status": m.get("status"), "source": m.get("source"),
                         "title": m.get("title") or m.get("source"), "count": len(m.get("items") or []),
-                        "mode": m.get("mode", "")})
+                        "mode": m.get("mode", ""), "platform": m.get("platform") or "youtube"})
     return sorted(out, key=lambda x: x.get("created") or 0, reverse=True)
 
 
@@ -79,16 +81,23 @@ def delete(aid: str):
 
 
 def start(source: str = "", count: int = 5, text: str = "", file_bytes: bytes = None, file_name: str = "",
-          mode: str = "", tab: str = "auto") -> dict:
+          mode: str = "", tab: str = "auto", platform: str = "") -> dict:
     """source: a YouTube link; text: a pasted script; file_bytes: an uploaded video. mode "patterns": compare the
     channel's latest videos that fired with the ones that got little."""
     source = (source or "").strip()
+    if source and IG_RE.match(source):
+        if not IG_REEL_RE.match(source):
+            raise UserError("Нужна ссылка на конкретный рилс или пост, например https://www.instagram.com/reel/…. "
+                            "Профиль целиком Инстаграм без входа не отдаёт: разберите несколько его лучших рилсов по ссылкам.")
+        if mode == "patterns":
+            raise UserError("Закономерности считаются только для каналов YouTube. Рилсы разбирайте по ссылкам.")
+        platform = "instagram"
     if mode == "patterns" and not (source and YT_RE.match(source) and _is_channel(source)):
         raise UserError("Для поиска закономерностей нужна ссылка на канал, например https://www.youtube.com/@канал")
     if not (source or (text or "").strip() or file_bytes):
         raise UserError("Вставьте ссылку на ролик или канал YouTube, загрузите видео или вставьте текст сценария.")
-    if source and not YT_RE.match(source):
-        raise UserError("Это не похоже на ссылку YouTube. Пример: https://www.youtube.com/shorts/… или https://www.youtube.com/@канал")
+    if source and not (YT_RE.match(source) or IG_RE.match(source)):
+        raise UserError("Это не похоже на ссылку YouTube или Инстаграма. Пример: https://www.youtube.com/shorts/… или https://www.instagram.com/reel/…")
     aid = uuid.uuid4().hex[:12]
     d = DIR / aid
     d.mkdir(parents=True, exist_ok=True)
@@ -99,7 +108,8 @@ def start(source: str = "", count: int = 5, text: str = "", file_bytes: bytes = 
             "source": source or file_name or "Текст сценария",
             "count": max(8, min(int(count or 20), 50)) if mode == "patterns" else max(1, min(int(count or 5), 10)),
             "mode": "patterns" if mode == "patterns" else "", "tab": tab if tab in ("shorts", "videos") else "auto",
-            "text": (text or "").strip()[:30000], "items": [], "channel": None}
+            "text": (text or "").strip()[:30000], "items": [], "channel": None,
+            "platform": "instagram" if platform == "instagram" else "youtube"}
     _write(d / "meta.json", meta)
     t = threading.Thread(target=_run, args=(aid,), daemon=True)
     with _lock:
@@ -199,7 +209,8 @@ def _ytdlp(args: list, timeout: int = 300) -> str:
                 f"Откройте {name} и проверьте, что вы вошли в YouTube. Если Mac спросит пароль для «{name} Safe Storage», "
                 "нажмите «Разрешать всегда».")
         raise UserError(f"Не удалось взять вход в YouTube из браузера {name}. {hint} Подробности: {err[-200:]}")
-    if r.returncode and BOT_MARK in err and not browser and time.time() - _auto_failed[0] > 600:
+    ig = any("instagram.com" in str(a) for a in args)
+    if r.returncode and (BOT_MARK in err or ig) and not browser and time.time() - _auto_failed[0] > 600:
         _auto_failed[0] = time.time()
         for b in _installed_browsers():
             r2 = _ytdlp_once(args, timeout, b)
@@ -209,6 +220,11 @@ def _ytdlp(args: list, timeout: int = 300) -> str:
                 _auto_failed[0] = 0.0
                 return r2.stdout
         err += "\n(вход из браузеров не помог)"
+    if r.returncode and ig and "No module named yt_dlp" not in err:
+        raise UserError("Инстаграм не отдал рилс. Чаще всего он просит вход: откройте instagram.com в Chrome или Firefox и "
+                        "войдите в свой аккаунт, затем внизу страницы «Инстаграм» выберите этот браузер в поле «Вход в "
+                        "браузере» и запустите разбор ещё раз. Если ролик закрытый, его разобрать нельзя. Можно и просто "
+                        f"скачать рилс и загрузить файл кнопкой «Загрузить видео». Подробности: {err[-200:]}")
     if r.returncode:
         if "No module named yt_dlp" in err:
             raise UserError("Загрузчик YouTube не установлен. Нажмите «Обновить загрузчик YouTube» на этой странице.")
@@ -361,7 +377,15 @@ Return:
 - script_ru: if the speech is not Russian, a Russian translation of its opening only (the first 60 seconds, at most 150 words), so the owner sees how the hook sounds; otherwise an empty string. Never translate the whole video."""
 
 
-def analyse(settings: dict, usage: dict, meta_text: str, transcript: str, images: list) -> dict:
+IG_NOTE = ("PLATFORM: Instagram Reels. Judge it as a Reel: the first second and the cover frame, the on-screen text, "
+           "the caption, the trending audio, the pace of cuts, and what makes people share, save and rewatch it; "
+           "packaging_ru is about the cover, the first frame and the caption instead of a YouTube title and thumbnail. "
+           "Write the topics and techniques for a Reels account in this niche.\n\n")
+
+
+def analyse(settings: dict, usage: dict, meta_text: str, transcript: str, images: list, platform: str = "") -> dict:
+    if platform == "instagram":
+        meta_text = IG_NOTE + meta_text
     note = (f"You also see {len(images)} pictures: the first is the thumbnail when there is one, the rest are frames from "
             "the video in time order. Use them to judge the visuals, the framing, the on-screen text and the pace."
             if images else "No pictures of the video are available: judge by the words and the stats.")
@@ -390,7 +414,11 @@ def _meta_text(info: dict) -> str:
 
 def _item(info: dict, analysis: dict, transcript: str, url: str) -> dict:
     dur = int(info.get("duration") or 0)
-    return {"source": url, "title": info.get("title", ""), "channel": info.get("channel") or info.get("uploader") or "",
+    title = info.get("title", "")
+    if IG_RE.match(url or "") and (not title or title.lower().startswith(("video by", "post by"))):
+        cap = (info.get("description") or "").strip().split("\n")[0][:80]
+        title = cap or analysis.get("summary_ru", "")[:80] or title
+    return {"source": url, "title": title, "channel": info.get("channel") or info.get("uploader") or "",
             "views": info.get("view_count"), "likes": info.get("like_count"), "duration": dur,
             "kind": "short" if (dur and dur <= 180) or "/shorts/" in (url or "") else "video",
             "thumbnail": info.get("thumbnail", ""), "script": transcript, **analysis}
@@ -426,10 +454,10 @@ def _fetch(d: Path, settings: dict, url: str, n: int, frames: bool = True) -> tu
         shutil.rmtree(sub, ignore_errors=True)
 
 
-def _one_video(d: Path, settings: dict, usage: dict, url: str, n: int) -> dict:
+def _one_video(d: Path, settings: dict, usage: dict, url: str, n: int, platform: str = "") -> dict:
     info, lines, images = _fetch(d, settings, url, n)
     _log(d, f"Разбираю «{info.get('title', '')}»…")
-    a = analyse(settings, usage, _meta_text(info), _timed(lines), images)
+    a = analyse(settings, usage, _meta_text(info), _timed(lines), images, platform)
     return _item(info, a, _plain(lines), info.get("webpage_url") or url)
 
 
@@ -607,7 +635,7 @@ def _work(d: Path):
         return
     if m["kind"] == "text":
         _log(d, "Разбираю вставленный текст…")
-        a = analyse(settings, usage, "VIDEO STATS: unknown (the owner pasted the script).", m["text"], [])
+        a = analyse(settings, usage, "VIDEO STATS: unknown (the owner pasted the script).", m["text"], [], m.get("platform", ""))
         items.append({"source": "", "title": a.get("summary_ru", "")[:80], "kind": "short" if len(m["text"].split()) < 250 else "video",
                       "script": m["text"], **a})
     elif m["kind"] == "file":
@@ -621,7 +649,7 @@ def _work(d: Path):
         images = _frames(src, info["duration"], d, 8)
         _log(d, "Разбираю ролик…")
         meta = {"title": m["source"], "duration": info["duration"]}
-        a = analyse(settings, usage, _meta_text(meta), _timed(lines), images)
+        a = analyse(settings, usage, _meta_text(meta), _timed(lines), images, m.get("platform", ""))
         items.append(_item(meta, a, _plain(lines), ""))
         for f in (src, mp3):
             f.unlink(missing_ok=True)
@@ -651,7 +679,7 @@ def _work(d: Path):
                                      "topics_ru (8-12 new topic ideas in the same spirit, Russian); advice_ru (how to beat this "
                                      "channel with our own videos, Russian, 3-5 sentences).", SCHEMA_CHANNEL, usage, 16000)
     else:
-        items.append(_one_video(d, settings, usage, m["source"], 0))
+        items.append(_one_video(d, settings, usage, m["source"], 0, m.get("platform", "")))
         m["title"] = items[0]["title"]
     m = {**_read(d / "meta.json"), "items": items, "channel": m.get("channel"), "title": m.get("title") or items[0].get("title"),
          "usage": usage}

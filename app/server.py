@@ -910,12 +910,14 @@ def projects_list():
 @app.post("/api/projects")
 def project_create(data: dict = Body(...)):
     preset = data.get("preset", "")
+    ig = data.get("platform") == "instagram"
     if preset == "custom":
         s = load_settings()
-        return projects.save("", {"name": "Новый проект", "icon": "🎬", "niche": "",
-                                  "duration_min": s["duration_min"]})
-    have = projects.project_of(preset)  # one project per niche: the existing one opens instead of a copy
-    return projects.get(have) if have else projects.create_from_preset(preset, load_settings())
+        return projects.save("", {"name": "Новый проект", "icon": "📸" if ig else "🎬", "niche": "",
+                                  "duration_min": s["duration_min"], **(projects.INSTAGRAM if ig else {})})
+    platform = "instagram" if ig else "youtube"
+    have = projects.project_of(preset, platform)  # one project per niche: the existing one opens instead of a copy
+    return projects.get(have) if have else projects.create_from_preset(preset, load_settings(), platform)
 
 
 @app.get("/api/niches")
@@ -1392,10 +1394,10 @@ async def producer_start(request: Request, name: str = ""):
         raw = await request.body()
         if len(raw) < 1000:
             raise UserError("Файл пустой. Выберите видео mp4.")
-        return producer.start(file_bytes=raw, file_name=Path(name).name)
+        return producer.start(file_bytes=raw, file_name=Path(name).name, platform=request.query_params.get("platform", ""))
     data = await request.json()
     return producer.start(data.get("link", ""), data.get("count", 5), data.get("text", ""),
-                          mode=data.get("mode", ""), tab=data.get("tab", "auto"))
+                          mode=data.get("mode", ""), tab=data.get("tab", "auto"), platform=data.get("platform", ""))
 
 
 @app.post("/api/producer/update-downloader")

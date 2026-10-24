@@ -72,13 +72,14 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
     items: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
     settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
     prompts: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+    insta: '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h0"/>',
     music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
     balance: '<rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20M16 15h2"/>',
     help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h0"/>',
   };
   nav.querySelectorAll("a[data-nav]").forEach(a => { const d = P[a.dataset.nav]; if (d) a.insertAdjacentHTML("afterbegin", `<svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`); });
   const GROUPS = { new: "Создание", producer: "Знания", settings: "Система" };
-  const DEFAULT = ["new", "jobs", "montage", "remake", "producer", "library", "projects", "characters", "items", "settings", "prompts", "music", "balance", "help"];
+  const DEFAULT = ["new", "jobs", "montage", "remake", "producer", "library", "insta", "projects", "characters", "items", "settings", "prompts", "music", "balance", "help"];
   const heads = () => {
     nav.querySelectorAll(".ngrp").forEach(x => x.remove());
     if (nav.classList.contains("editing")) return;
@@ -134,6 +135,7 @@ async function route() {
     else if (page === "remake") await viewRemake(id);
     else if (page === "producer") await viewProducer(id);
     else if (page === "library") await viewLibrary(id);
+    else if (page === "insta") await viewInsta();
     else if (page === "help") viewHelp();
     else if (page === "balance") await viewBalance();
     else await viewJobs();
@@ -257,7 +259,7 @@ async function viewNew() {
     <label class="f" style="margin-top:0">Проект <span class="hint">Одной кнопкой подставляются язык, ниша, голос, стиль и остальные настройки проекта. <a href="#/projects">Создать или изменить проекты</a></span></label>
     <div class="pgrid" id="projsel">
       <button class="pcard ${curProj ? "" : "on"}" data-proj=""><div class="pic">⚙️</div><div><b>Без проекта</b><div class="muted small">общие настройки</div></div></button>
-      ${projs.map(p => `<button class="pcard ${p.id === curProj ? "on" : ""}" data-proj="${p.id}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${LANG_RU[p.language] || "английский"}</div></div></button>`).join("")}
+      ${projs.map(p => `<button class="pcard ${p.id === curProj ? "on" : ""}" data-proj="${p.id}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${LANG_RU[p.language] || "английский"}${p.platform === "instagram" ? " · Инстаграм" : ""}</div></div></button>`).join("")}
     </div>
     <div id="charsel"></div><div id="itemsel"></div><input type="hidden" id="fmtv" value="long"><input type="hidden" id="charsv" value=""><input type="hidden" id="itemsv" value="">
     <label class="f">Формат</label>
@@ -809,9 +811,10 @@ const ICONS = ["🎬", "🏛️", "🕯️", "🔍", "⚽", "🚀", "🏆", "�
 
 async function viewProjects(id) {
   if (id) return viewProject(id);
-  const projs = await api("/api/projects");
+  const projs = (await api("/api/projects")).filter(p => p.platform !== "instagram");
   const niches = await api("/api/niches").catch(() => META.presets);
   main.innerHTML = `<h1>Проекты и ниши</h1>
+  <p class="muted small">Ниши для Инстаграма живут отдельно, в разделе <a href="#/insta">«Инстаграм»</a>.</p>
   <p class="muted">Проект — это ниша со своими готовыми настройками: язык, тема канала, стиль картинок, голос, анимация, субтитры. Ролики каждого проекта хранятся отдельно. При запуске ролика проект выбирается одной кнопкой.</p>
   ${projs.length ? `<h2>Мои проекты</h2><div class="pgrid sm">${projs.map(p => `<a class="pcard" href="#/projects/${p.id}">
       <div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b>
@@ -865,7 +868,9 @@ async function viewProject(id) {
   const allItems = await api("/api/items").catch(() => []);
   const opt = (v, cur) => String(v) === String(cur) ? "selected" : "";
   const sel = (key, options) => `<select data-q="${key}">${options.map(([v, n]) => `<option value="${esc(v)}" ${opt(v, p[key])}>${esc(n)}</option>`).join("")}</select>`;
-  main.innerHTML = `<div class="row"><h1 class="grow">${esc(p.icon)} ${esc(p.name)}</h1>
+  if (p.platform === "instagram") navActive("insta");
+  main.innerHTML = `<a href="${p.platform === "instagram" ? "#/insta" : "#/projects"}" class="small">← ${p.platform === "instagram" ? "Инстаграм" : "Все проекты"}</a>
+  <div class="row"><h1 class="grow">${esc(p.icon)} ${esc(p.name)}</h1>
     <a class="btn" href="#/jobs" id="pj-jobs">Ролики проекта (${p.count})</a>
     <a class="btn primary" href="#/new" id="pj-new">＋ Новый ролик в проекте</a></div>
   <div class="card">
@@ -2695,6 +2700,7 @@ async function viewProducer(id) {
   if (id) return viewProducerOne(id);
   clearInterval(timer); timer = null;
   const r = await api("/api/producer");
+  r.items = r.items.filter(x => x.platform !== "instagram");  // reels live in the Instagram section
   main.innerHTML = `<h1>🎓 ИИ продюсер</h1>
   <div class="card">
     <p>Дайте ссылку на ролик или на целый канал YouTube, загрузите видео или вставьте текст сценария. Продюсер разберёт смысл и сценарий, объяснит, почему ролик набрал просмотры, и выпишет сильные стороны. Готовый разбор можно сохранить в «📚 Хранилище сценариев» нужной ниши, и сценарист будет на него опираться.</p>
@@ -2834,13 +2840,18 @@ async function viewProducerOne(id) {
   const [m, projs] = await Promise.all([api(`/api/producer/${id}`), api("/api/projects").catch(() => [])]);
   const running = m.status === "running", items = m.items || [], ch = m.channel, pat = m.mode === "patterns";
   let last = ""; try { last = localStorage.getItem("ay_lib_project") || ""; } catch (e) { }
-  main.innerHTML = `<div class="row"><a href="#/producer" class="muted small">← Все разборы</a></div>
+  const ig = m.platform === "instagram";
+  if (ig) navActive("insta");
+  const projOpt = p => `<option value="${p.id}" ${p.id === last ? "selected" : ""}>${esc((p.icon || "") + " " + (p.name || "Без названия"))}</option>`;
+  const igP = projs.filter(p => p.platform === "instagram"), ytP = projs.filter(p => p.platform !== "instagram");
+  const groups = (ig ? [["Инстаграм", igP], ["YouTube", ytP]] : [["YouTube", ytP], ["Инстаграм", igP]]).filter(([, l]) => l.length);
+  main.innerHTML = `<div class="row"><a href="${ig ? "#/insta" : "#/producer"}" class="muted small">← Все разборы</a></div>
   <h1>${esc(m.title || m.source)}</h1>
   <div class="row" style="margin:8px 0">${PR_STATUS[m.status] || esc(m.status)}<span class="muted small">${esc(m.source)}</span></div>
   ${m.status === "error" ? `<div class="banner bad">${nl(m.error || "")}</div>` : ""}
   ${!running && (items.length || (pat && m.patterns)) ? `<div class="card"><h2>📚 Сохранить в хранилище</h2>
     ${projs.length ? `<label class="f">Ниша (проект)</label>
-    <select id="pr-proj">${projs.map(p => `<option value="${p.id}" ${p.id === last ? "selected" : ""}>${esc((p.icon || "") + " " + (p.name || "Без названия"))}</option>`).join("")}</select>
+    <select id="pr-proj">${groups.map(([t, l]) => `<optgroup label="${t}">${l.map(projOpt).join("")}</optgroup>`).join("")}</select>
     ${pat ? `<p class="muted small">Сохранятся выводы с галочкой (они ниже), закономерность, темы и что не делать. Сценарист ниши будет на них опираться.</p>` : items.length > 1 ? `<p class="muted small">Сохранятся ролики с галочкой. Галочки стоят у каждого ролика ниже.</p>` : ""}
     ${ch ? `<label class="check"><input type="checkbox" id="pr-ch" checked> И общую формулу канала</label>` : ""}
     <div class="row" style="margin-top:8px"><button class="primary" id="pr-save">📚 Сохранить в хранилище</button></div>`
@@ -2890,10 +2901,64 @@ async function viewProducerOne(id) {
   }, 3000);
 }
 
+// ------------------------------------------------------------------ Instagram: its own niches, reel analyses and libraries
+const navActive = k => document.querySelectorAll("[data-nav]").forEach(a => a.classList.toggle("active", a.dataset.nav === k));
+async function viewInsta() {
+  clearInterval(timer); timer = null;
+  const [all, niches, r] = await Promise.all([api("/api/projects"), api("/api/niches").catch(() => META.presets), api("/api/producer")]);
+  const projs = all.filter(p => p.platform === "instagram");
+  const libs = await Promise.all(projs.map(p => api(`/api/projects/${p.id}/library`).catch(() => ({ items: [] }))));
+  const reels = r.items.filter(x => x.platform === "instagram");
+  const nOpts = Object.entries(niches).filter(([, n]) => !n.hidden).map(([k, n]) => `<option value="${k}">${esc((n.icon || "") + " " + n.name)}</option>`).join("");
+  main.innerHTML = `<h1>📸 Инстаграм</h1>
+  <p class="muted">Всё для рилсов в одном месте: свои ниши, разборы рилсов по ссылке и хранилища. С YouTube-проектами они не смешиваются, но устроены так же: разбор можно сохранить в хранилище любой ниши, и сценарист будет на него опираться. Ролики Инстаграм-ниш по умолчанию вертикальные, до 60 секунд.</p>
+  <div class="card"><h2>Ниши Инстаграма</h2>
+    ${projs.length ? `<div class="pgrid sm">${projs.map((p, i) => `<a class="pcard" href="#/projects/${p.id}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b>
+      <div class="muted small">роликов: ${p.count} · разборов: ${libs[i].items.length}</div></div></a>`).join("")}</div>`
+      : `<p class="muted">Пока нет ни одной ниши для Инстаграма.</p>`}
+    <div class="row" style="gap:8px;margin-top:6px"><select id="ig-niche" style="max-width:360px">${nOpts}<option value="custom">＋ Свой проект с нуля</option></select><button class="primary" id="ig-new">Создать нишу для Инстаграма</button></div>
+  </div>
+  <div class="card"><h2>Разобрать рилс</h2>
+    <label class="f">Ссылка на рилс или пост</label>
+    <input type="text" id="ig-link" placeholder="https://www.instagram.com/reel/…">
+    <label class="f">…или вставьте текст рилса</label>
+    <textarea id="ig-text" rows="3" placeholder="Текст чужого рилса, который вам понравился"></textarea>
+    <div class="row" style="margin-top:10px"><button class="primary" id="ig-go">▶ Разобрать</button>
+      <label class="btn" style="display:inline-block;cursor:pointer">📤 Загрузить видео<input type="file" id="ig-file" accept="video/*" style="display:none"></label>
+      <span id="ig-up" class="muted small"></span></div>
+    <p class="muted small">Продюсер смотрит рилс как рилс: первая секунда, обложка, текст на экране, подпись, звук, темп, за что его сохраняют и пересылают. Стоит примерно $0.03–0.08. Профиль целиком Инстаграм без входа не отдаёт, поэтому разбирайте лучшие рилсы по одному.</p>
+  </div>
+  <div class="card"><h2>Разборы рилсов (${reels.length})</h2>${reels.length ? `<table>${reels.map(x => `<tr><td><a href="#/producer/${x.id}">${esc(x.title || x.source)}</a><div class="muted small">${esc(x.source)}</div></td><td>${PR_STATUS[x.status] || esc(x.status)}</td></tr>`).join("")}</table>` : `<p class="muted">Пока ни одного разбора.</p>`}</div>
+  ${projs.length ? `<div class="card"><h2>Хранилища ниш</h2><div class="pgrid sm">${projs.map((p, i) => `<a class="pcard" href="#/library/${p.id}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b>
+    <div class="muted small">разборов: ${libs[i].items.length}${libs[i].playbook_ru ? " · есть правила" : ""}</div></div></a>`).join("")}</div></div>` : ""}
+  <div class="card"><h2>Вход в браузере</h2>
+    <p class="muted small">Инстаграм часто отдаёт рилсы только тем, кто вошёл в аккаунт. Войдите на instagram.com в Chrome или Firefox и выберите этот браузер: программа будет смотреть рилсы под вашим входом, как вы сами. Это то же поле, что «Вход в YouTube» в ИИ продюсере.</p>
+    <select id="ig-br"><option value="">Автоматически</option>${Object.entries(r.browsers).map(([k, n]) => `<option value="${k}" ${k === r.browser ? "selected" : ""}>${esc(n)}${r.installed.includes(k) ? "" : " (не найден)"}</option>`).join("")}<option value="none" ${r.browser === "none" ? "selected" : ""}>Не использовать</option></select>
+  </div>`;
+  $("#ig-new").onclick = async () => {
+    const p = await api("/api/projects", { json: { preset: $("#ig-niche").value, platform: "instagram" } }).catch(e => toast(e.message, true));
+    if (p) { toast("Ниша для Инстаграма готова"); location.hash = `#/projects/${p.id}`; }
+  };
+  $("#ig-go").onclick = async () => {
+    const link = $("#ig-link").value.trim(), text = $("#ig-text").value.trim();
+    if (!link && !text) return toast("Вставьте ссылку или текст", true);
+    $("#ig-go").disabled = true;
+    try { const m = await api("/api/producer", { json: { link, text: link ? "" : text, platform: "instagram" } }); location.hash = `#/producer/${m.id}`; }
+    catch (e) { $("#ig-go").disabled = false; toast(e.message, true); }
+  };
+  $("#ig-file").onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    $("#ig-up").textContent = `Загружаю ${f.name} (${(f.size / 1048576).toFixed(1)} МБ)…`;
+    try { const m = await api(`/api/producer?platform=instagram&name=${encodeURIComponent(f.name)}`, { method: "POST", body: f }); location.hash = `#/producer/${m.id}`; }
+    catch (err) { $("#ig-up").textContent = ""; toast(err.message, true); }
+  };
+  $("#ig-br").onchange = e => api("/api/settings", { json: { yt_cookies_browser: e.target.value } }).then(() => toast("Сохранено")).catch(er => toast(er.message, true));
+}
+
 // ------------------------------------------------------------------ script library of a niche
 async function viewLibrary(id) {
   clearInterval(timer); timer = null;
-  const projs = await api("/api/projects").catch(() => []);
+  let projs = await api("/api/projects").catch(() => []);
   if (!projs.length) {
     main.innerHTML = `<h1>📚 Хранилище сценариев</h1><div class="card"><p>Хранилище есть у каждой ниши. Сначала создайте проект в разделе <a href="#/projects">«📁 Проекты и ниши»</a>.</p></div>`;
     return;
@@ -2901,6 +2966,7 @@ async function viewLibrary(id) {
   const pid = id;
   const proj = projs.find(p => p.id === pid);
   if (!proj) {
+    projs = projs.filter(p => p.platform !== "instagram");
     const libs = await Promise.all(projs.map(p => api(`/api/projects/${p.id}/library`).catch(() => ({ items: [] }))));
     main.innerHTML = `<h1>📚 Хранилище сценариев</h1>
     <p class="muted">У каждой ниши своё хранилище: разборы удачных роликов и правила, по которым пишет сценарист. Нажмите на нишу, чтобы открыть её хранилище.</p>
@@ -2911,7 +2977,8 @@ async function viewLibrary(id) {
   const lib = await api(`/api/projects/${pid}/library`);
   const items = [...lib.items].reverse();
   const topics = [...new Set(lib.items.flatMap(x => x.topics_ru || []))].slice(-40).reverse();
-  main.innerHTML = `<a href="#/library" class="small">← Все ниши</a><h1>${esc(proj.icon || "")} ${esc(proj.name || "Без названия")}</h1>
+  if (proj.platform === "instagram") navActive("insta");
+  main.innerHTML = `<a href="${proj.platform === "instagram" ? "#/insta" : "#/library"}" class="small">← Все ниши</a><h1>${esc(proj.icon || "")} ${esc(proj.name || "Без названия")}</h1>
   <div class="card">
     <p class="muted small">Здесь лежат разборы роликов, которые сработали. Сценарист этой ниши читает правила ниши и последние разборы перед каждым новым роликом: учится приёмам, но не копирует темы и текст. Новые ниши появляются в списке сами, когда вы создаёте проект.</p>
     <label class="f">Описание ниши <span class="hint">то же поле, что в проекте</span></label>
