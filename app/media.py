@@ -281,6 +281,11 @@ def demo_image(out: Path, idx: int, vertical: bool):
          "-vf", f"hue=h={hue}:s=0.6,boxblur=2", out], "Демо-картинка")
 
 
+def silence(out: Path, seconds: float):
+    """A silent mono wav of this length (a line of a video without a voice)."""
+    run(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", f"{seconds:.2f}", "-c:a", "pcm_s16le", out], "Тишина")
+
+
 def demo_audio(out: Path, seconds: float, idx: int):
     freq = 220 + (idx % 5) * 55
     run(["-f", "lavfi", "-i", f"sine=frequency={freq}:duration={seconds:.2f}", "-af", "volume=0.25",

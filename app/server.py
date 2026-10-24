@@ -194,6 +194,7 @@ def create_job(data: dict = Body(...)):
         "language": data.get("language") if data.get("language") in projects.LANGUAGES else proj.get("language", "en"),
         "format": fmt,
         "make_short": bool(data.get("make_short", proj.get("make_short", True))),
+        "voice_off": bool(data.get("voice_off", proj.get("voice_off", False))),  # music only, the text on screen
         "review_pause": bool(data.get("review_pause", False)),
         "idea_pause": bool(data.get("idea_pause", False)),
         "duration_min": float(data.get("duration_min") or proj.get("duration_min") or s["duration_min"]),

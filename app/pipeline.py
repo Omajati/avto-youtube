@@ -325,6 +325,14 @@ PRODUCT COMMERCIAL OVERRIDE (this rule beats every instruction above and below a
 - Images: commercial product photography: the product is the hero of every picture with its exact look, studio or stylish set lighting, macro detail, clean backgrounds, dynamic elements (splashes, particles, light streaks, smoke) that fit the product. No people, no hands, no text."""
 
 
+MUTE_OVERRIDE = """
+
+NO VOICE (this beats every rule above and below about the narrator, speech, voice, word counts and length):
+- Nobody speaks in this video. It runs to music only, and the script is the text shown on screen, line by line, over the pictures.
+- Write about {lines} lines, one per paragraph (separate lines with a blank line). Each line is 2-7 words: a punchy caption a viewer reads in a glance, like text in a premium commercial or a Reels caption. No long sentences, no lists, no lines that only make sense spoken aloud.
+- The lines still follow the structure above (hook, desire, reveal, benefits shown in the picture, call to action), each line pairing with one picture."""
+
+
 SPOKEN_RULES = """
 
 SPOKEN TEXT ONLY (very important): every word of the script is read aloud by a voice; the viewer may not even look at the screen.
@@ -588,6 +596,11 @@ class Ctx:
         self.episode = int(self.opts.get("episode") or 0) if self.project.get("series") else 0
         self._lock = threading.Lock()
         self.stage = ""
+
+    @property
+    def mute(self) -> bool:
+        """No voice: the video goes to music only, its text is shown on screen."""
+        return bool(self.opts.get("voice_off"))
 
     def voice_tempo(self) -> float:
         """How much faster the speech is played than ElevenLabs said it (its own speed stops at 1.2)."""
@@ -941,6 +954,8 @@ class Ctx:
                   + (KIDS_OVERRIDE if self.project.get("made_for_kids")
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
                   + (AD_OVERRIDE if self.project.get("ad_mode") else "")
+                  + (MUTE_OVERRIDE.format(lines=max(5, round(self.short_seconds / 3.2)) if self.short_format
+                                          else max(8, round(self.minutes * 60 / 3.5))) if self.mute else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
                   + self.lessons_block() + self.golden_block(prompt_file) + self.library_block(prompt_file)
                   + (SCRIPT_CRAFT if prompt_file in GOLDEN_STAGES else "")
@@ -1881,6 +1896,11 @@ def st_approval(c: Ctx):
 
 # -------- voice
 
+def mute_seconds(text: str) -> float:
+    """How long a line of on-screen text stays when there is no voice: enough to read it calmly."""
+    return round(min(6.0, max(2.2, 1.0 + word_count(text) * 0.42)), 2)
+
+
 def _voice_list(c: Ctx, scenes: list, prefix: str):
     audio = c.dir / "audio"
     audio.mkdir(exist_ok=True)
@@ -1896,6 +1916,9 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
         sc = scenes[i]
         mp3 = audio / f"{prefix}_{i:03d}.mp3"
         wav = audio / f"{prefix}_{i:03d}.wav"
+        if c.mute:  # silence as long as the line takes to read
+            media.silence(wav, mute_seconds(sc["text"]))
+            return i
         if c.demo:
             media.demo_audio(mp3, max(1.5, word_count(sc["text"]) / 2.5), i)
         elif mp3.exists():
@@ -1927,12 +1950,15 @@ def st_voice(c: Ctx):
     scenes = c.data("scenes")["scenes"]
     short = c.data("short_script") if c.stage_enabled("short_script") else None
     total = len(scenes) + (len(short["scenes"]) if short else 0)
-    c.log(f"Озвучиваю {len(scenes)} фрагментов голосом {c.settings.get('elevenlabs_voice_name') or ''}…")
+    c.log(f"Без озвучки: {len(scenes)} строк текста на экране под музыку…" if c.mute else
+          f"Озвучиваю {len(scenes)} фрагментов голосом {c.settings.get('elevenlabs_voice_name') or ''}…")
     for n, _ in _voice_list(c, scenes, "scene"):
         c.progress(n / total)
     gap, pgap = float(c.settings["scene_gap"]), float(c.settings["paragraph_gap"])
     if c.short_format:
         gap, pgap = 0.1, 0.2  # Shorts need a fast, continuous voice
+    if c.mute:
+        gap, pgap = 0.0, 0.0  # the silence of each line is already its reading time
     gap, pgap = gap / c.voice_tempo(), pgap / c.voice_tempo()  # a faster manner has shorter pauses too
     # A long sentence cut at a comma is one breath: no scene pause inside it.
     mid = lambda t: not re.search(r"[.!?…][\"”’')\]»]*\s*$", t)
@@ -2243,6 +2269,8 @@ def st_images(c: Ctx):
 def subs_on(job_or_opts, kind: str, settings: dict = None) -> bool:
     """Whether subtitles are burned into the long video ("video") or the short ("short")."""
     opts = job_or_opts.get("options", job_or_opts)
+    if opts.get("voice_off"):
+        return True  # without a voice the text on screen is the whole message
     key = "subs_video" if kind == "video" else "subs_short"
     if key in opts:
         return bool(opts[key])
@@ -2468,6 +2496,10 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     if subs:
         c.log("Накладываю субтитры на видео…")
     vol = opts.get("music_volume")
+    if c.mute:
+        vol = 1.0  # the music is the whole sound
+        if not music:
+            c.log("⚠️ Ролик без озвучки, а музыки нет: он будет беззвучным. Добавьте треки в «Музыку» или включите «Сочинять новую».")
     media.final_mix(joined, narration, music, out, float(vol if vol not in (None, "") else c.settings["music_volume"]),
                     float(c.settings["loudness_lufs"]), total,
                     subs=cap["ass"] if subs else None, fonts=cap["fonts"], sfx=sfx_file if has_sfx else None)

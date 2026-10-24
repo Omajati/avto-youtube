@@ -1,6 +1,6 @@
 {
- "version": 113,
- "label": "раздел «Инстаграм»",
- "notes": "Раздел «Инстаграм»: свои ниши, разборы рилсов по ссылке, хранилища",
+ "version": 114,
+ "label": "ролики без озвучки",
+ "notes": "Ролики без озвучки: только музыка и текст на экране",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

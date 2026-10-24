@@ -18,7 +18,7 @@ FIELDS = {
     "voice_id": "", "voice_name": "", "channel_id": "", "format": "long", "duration_min": 10, "make_short": True,
     "anim_mode": "off", "anim_short": False, "anim_count": 3, "anim_pause": False, "images_pause": False, "subs_video": False, "subs_short": True, "graphics": True, "subs_smart": True, "cta_short": "both", "cta_lang": "auto", "fx_mode": "light",
     "platform": "youtube",  # youtube / instagram: Instagram niches live in their own block
-    "made_for_kids": False, "fiction": False, "ad_mode": False,  # ad_mode: a product commercial without people
+    "made_for_kids": False, "fiction": False, "ad_mode": False, "voice_off": False,  # ad_mode: a product commercial without people
     # Series: episodes remember what happened before
     "series": False, "series_bible": "", "season_plan": "",
     "en_voice_id": "", "en_voice_name": "", "en_channel_id": "",  # last choice for the English version

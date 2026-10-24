@@ -294,6 +294,7 @@ async function viewNew() {
       <select id="lang">${Object.entries(META.languages).map(([k, n]) => `<option value="${k}">${esc(n)}</option>`).join("")}</select>
     </div></div>
     <label class="check long-only"><input type="checkbox" id="short" checked> Сделать ещё и вертикальный шортс (до 60 секунд)</label>
+    <label class="check"><input type="checkbox" id="mute"> Без озвучки, только музыка <span class="muted small">(текст сценария идёт на экране короткими строками)</span></label>
     <div class="grid2">
       <div><label class="f">Анимация сцен <span class="hint">Оживить картинки нейросетью (fal.ai, платно за каждую сцену)</span></label>
         <select id="anim">${animModes().map(([k, n]) => `<option value="${k}" ${k === s.anim_mode ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
@@ -360,6 +361,7 @@ async function viewNew() {
     $("#sec").value = p ? p.short_seconds || 50 : 50;
     $("#music").value = p ? p.music_mode || "library" : "library";
     $("#short").checked = p ? p.make_short : true;
+    $("#mute").checked = !!(p && p.voice_off);
     $("#anim").value = p ? p.anim_mode : s.anim_mode;
     $("#anim-s").checked = p ? p.anim_short : s.anim_short;
     $("#anim-n").value = (p && p.anim_count) || s.anim_count || 3;
@@ -410,7 +412,7 @@ async function viewNew() {
   };
   $("#go").onclick = async () => {
     if (!curProj && projs.length && !confirm("Проект не выбран. Ролик возьмёт общую нишу из настроек и общий голос, а не нишу и голос вашего проекта. Всё равно запустить?\n\nЧтобы взять настройки проекта, нажмите «Отмена» и выберите проект вверху страницы.")) return;
-    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan") ? $("#chan").value : undefined, subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, anim_pause: $("#anim-p").checked, images_pause: $("#img-p").checked, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, graphics: $("#gfx").checked, subs_smart: $("#subs-smart").checked, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
+    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, voice_off: $("#mute").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan") ? $("#chan").value : undefined, subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, anim_pause: $("#anim-p").checked, images_pause: $("#img-p").checked, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, graphics: $("#gfx").checked, subs_smart: $("#subs-smart").checked, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
     draftClear(); toast("Запущено"); location.hash = jobs.length === 1 ? `#/job/${jobs[0].id}` : "#/jobs";
   };
   $("#demo").onclick = async () => {
@@ -937,6 +939,7 @@ async function viewProject(id) {
       <label class="check"><input type="checkbox" data-q="made_for_kids" ${p.made_for_kids ? "checked" : ""}> Ролики для детей <span class="muted small">(сказочный добрый тон; на YouTube ставится отметка «для детей», по закону это обязательно для детского контента)</span></label>
       <label class="check"><input type="checkbox" data-q="same_place" ${p.same_place !== false ? "checked" : ""}> Каждое место выглядит одинаково во всех своих кадрах <span class="muted small">(сначала рисуется каждое место действия, и все сцены там рисуются по этому образцу; нужен ключ fal.ai; дороже: каждая сцена рисуется по образцу, ~$0.04 с Nano Banana или ~$0.02 с FLUX.2 Dev Edit (выбор в Настройках → Картинки) вместо ~$0.003 у Flux Schnell; в экономном режиме крупные планы и детали без персонажей рисуются без образца)</span></label>
       <label class="check"><input type="checkbox" data-q="fiction" ${p.fiction ? "checked" : ""}> Выдуманные истории <span class="muted small">(мультики, сказки, притчи: сюжеты придумываются, а не берутся из реальных событий)</span></label>
+      <label class="check"><input type="checkbox" data-q="voice_off" ${p.voice_off ? "checked" : ""}> Без озвучки <span class="muted small">(ролик идёт только под музыку, текст сценария показывается на экране короткими строками)</span></label>
       <label class="check"><input type="checkbox" data-q="ad_mode" ${p.ad_mode ? "checked" : ""}> Рекламный ролик товара <span class="muted small">(без людей: товар в каждом кадре, макро, наезды и облёт камеры, эффекты; товар выбирается в «Предметах в ролике»)</span></label>
     </div></div>
     <div class="row" style="margin-top:16px"><button class="primary" id="pj-save">Сохранить проект</button><button id="pj-tpl" title="Проект появится в списке ниш, из него можно будет быстро создавать новые проекты с такими же настройками">⭐ Сохранить как свою нишу</button><span class="grow"></span><button class="danger" id="pj-del">Удалить проект</button></div>
