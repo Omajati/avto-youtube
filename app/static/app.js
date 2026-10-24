@@ -240,6 +240,8 @@ async function viewNew() {
     <select id="fx" style="max-width:520px">${Object.entries(META.fx_modes).map(([k, n]) => `<option value="${k}" ${k === (s.fx_mode || "light") ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
     <label class="check"><input type="checkbox" id="subs-v" ${s.subtitles_long ? "checked" : ""}> <span id="subs-v-l">Субтитры на длинном видео</span></label>
     <label class="check long-only"><input type="checkbox" id="subs-s" ${s.subtitles_short ? "checked" : ""}> Субтитры на шортсе</label>
+    <label class="check"><input type="checkbox" id="subs-smart" checked> Субтитры в свободном месте кадра <span class="muted small">(если внизу кадра лицо, надпись или много деталей, строка переносится в спокойное место кадра)</span></label>
+    <label class="check"><input type="checkbox" id="gfx" checked> Анимации данных <span class="muted small">(счётчики, деньги, проценты, таймеры, сравнения, галочки, стрелки, ключевые слова в момент, когда голос их называет; бесплатно, один короткий запрос к ИИ на ролик)</span></label>
     <label class="check"><input type="checkbox" id="ideapause" ${lsGet("ay_ideapause", "1") === "1" ? "checked" : ""} onchange="lsSet('ay_ideapause', this.checked ? '1' : '0')"> Выбирать тему вручную: показать лучшие темы и подождать, пока я отмечу одну <span class="muted small">(до сценария, почти бесплатно)</span></label>
     <label class="check"><input type="checkbox" id="pause" ${lsGet("ay_pause", "1") === "1" ? "checked" : ""} onchange="lsSet('ay_pause', this.checked ? '1' : '0')"> Ручная правка текста: остановиться сразу после проверки редактором, чтобы я прочитал и при желании исправил текст <span class="muted small">(дальше ничего не делается, пока вы не нажмёте «Продолжить»)</span></label>
     <div id="est" class="muted small"></div>
@@ -316,6 +318,8 @@ async function viewNew() {
     $("#itemsel").querySelectorAll("[data-item]").forEach(b => b.classList.toggle("on", wantI.has(b.dataset.item)));
     syncItems();
     $("#fx").value = p ? p.fx_mode || "light" : (s.fx_mode || "light");
+    $("#gfx").checked = p ? p.graphics !== false : true;
+    $("#subs-smart").checked = p ? p.subs_smart !== false : true;
     if (p && p.format === "short") $("#subs-v").checked = p.subs_short;
   };
   main.querySelectorAll("[data-proj]").forEach(b => b.onclick = () => { curProj = b.dataset.proj; lsSet("ay_proj", curProj); applyProj(); });
@@ -336,7 +340,7 @@ async function viewNew() {
   };
   $("#go").onclick = async () => {
     if (!curProj && projs.length && !confirm("Проект не выбран. Ролик возьмёт общую нишу из настроек и общий голос, а не нишу и голос вашего проекта. Всё равно запустить?\n\nЧтобы взять настройки проекта, нажмите «Отмена» и выберите проект вверху страницы.")) return;
-    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan") ? $("#chan").value : undefined, subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, anim_pause: $("#anim-p").checked, images_pause: $("#img-p").checked, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
+    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan") ? $("#chan").value : undefined, subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, anim_pause: $("#anim-p").checked, images_pause: $("#img-p").checked, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, graphics: $("#gfx").checked, subs_smart: $("#subs-smart").checked, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
     draftClear(); toast("Запущено"); location.hash = jobs.length === 1 ? `#/job/${jobs[0].id}` : "#/jobs";
   };
   $("#demo").onclick = async () => {
@@ -841,6 +845,8 @@ async function viewProject(id) {
       <label class="check"><input type="checkbox" data-q="images_pause" ${p.images_pause ? "checked" : ""}> Свои картинки: пауза перед рисованием <span class="muted small">(загружаете картинки из другого сервиса, программа озвучивает и монтирует по сценарию)</span></label>
       <label class="check pj-long"><input type="checkbox" data-q="subs_video" ${p.subs_video ? "checked" : ""}> Субтитры на длинном видео</label>
       <label class="check"><input type="checkbox" data-q="subs_short" ${p.subs_short ? "checked" : ""}> <span id="pj-subs-l">Субтитры на шортсе</span></label>
+      <label class="check"><input type="checkbox" data-q="subs_smart" ${p.subs_smart !== false ? "checked" : ""}> Субтитры в свободном месте кадра <span class="muted small">(если внизу кадра лицо, надпись или много деталей, строка переносится в спокойное место кадра)</span></label>
+      <label class="check"><input type="checkbox" data-q="graphics" ${p.graphics !== false ? "checked" : ""}> Анимации данных на видео <span class="muted small">(счётчики, деньги, проценты, таймеры, сравнения, галочки, стрелки, ключевые слова в момент, когда голос их называет; бесплатно, один короткий запрос к ИИ на ролик)</span></label>
       <label class="check"><input type="checkbox" data-q="made_for_kids" ${p.made_for_kids ? "checked" : ""}> Ролики для детей <span class="muted small">(сказочный добрый тон; на YouTube ставится отметка «для детей», по закону это обязательно для детского контента)</span></label>
       <label class="check"><input type="checkbox" data-q="same_place" ${p.same_place !== false ? "checked" : ""}> Каждое место выглядит одинаково во всех своих кадрах <span class="muted small">(сначала рисуется каждое место действия, и все сцены там рисуются по этому образцу; нужен ключ fal.ai; дороже: каждая сцена рисуется по образцу, ~$0.04 с Nano Banana или ~$0.02 с FLUX.2 Dev Edit (выбор в Настройках → Картинки) вместо ~$0.003 у Flux Schnell; в экономном режиме крупные планы и детали без персонажей рисуются без образца)</span></label>
       <label class="check"><input type="checkbox" data-q="fiction" ${p.fiction ? "checked" : ""}> Выдуманные истории <span class="muted small">(мультики, сказки, притчи: сюжеты придумываются, а не берутся из реальных событий)</span></label>
@@ -1079,7 +1085,7 @@ async function viewJob(id) {
   const render = async () => {
     const d = await api(`/api/jobs/${id}`);
     renderHead(d);
-    const key = JSON.stringify([d.stages, d.images, d.files, d.thumb, d.subs, d.anim, d.fx_mode, d.job.status, d.job.stage, d.job.error]);
+    const key = JSON.stringify([d.stages, d.images, d.files, d.thumb, d.subs, d.anim, d.fx_mode, d.job.options.graphics, d.job.options.subs_smart, d.job.status, d.job.stage, d.job.error]);
     if (key !== lastStagesKey) { lastStagesKey = key; lastUpKey = ""; renderStages(d); }
     renderUploads(d);
     const log = $("#jlog"); const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
@@ -1310,6 +1316,35 @@ function renderStages(d) {
     await api(`/api/jobs/${j.id}/speed`, { json: { kind: sel.dataset.kind, speed: +sel.value } })
       .then(x => toast(x.speed === 1 ? "Вернул обычную скорость" : `Готово: быстрее в ${x.speed} раза`)).catch(e => toast(e.message, true));
     b.disabled = false; b.textContent = "Применить";
+    lastStagesKey = "";
+  });
+  el.querySelectorAll("details.revoice").forEach(box => {
+    const sel = box.querySelector(".rv-voice");
+    box.addEventListener("toggle", () => {
+      if (!box.open || sel.dataset.loaded) return;
+      sel.dataset.loaded = "1";
+      loadVoices().then(vs => { sel.insertAdjacentHTML("beforeend", voiceOptions(vs, "", j.options.language || "ru")); sel.value = ""; }).catch(e => toast(e.message, true));
+    });
+    box.querySelector(".rv-play").onclick = () => {
+      const v = (VOICES || []).find(x => x.voice_id === sel.value);
+      if (!v || !v.preview_url) return toast(sel.value ? "У этого голоса нет образца" : "Сначала выберите голос", true);
+      const a = box.querySelector(".rv-audio"); a.src = v.preview_url; a.play();
+    };
+    box.querySelector(".rv-go").onclick = async e => {
+      const b = e.target, o = sel.options[sel.selectedIndex];
+      const body = { voice_id: sel.value, voice_name: sel.value ? (o.dataset.name || o.text) : "" };
+      for (const k of ["voice_speed", "voice_stability", "voice_style", "voice_similarity"]) body[k] = box.querySelector(`.rv-${k}`).value;
+      if (!confirm("Сделать озвучку заново и пересобрать ролик? Готовое видео заменится новым.")) return;
+      b.disabled = true;
+      await api(`/api/jobs/${j.id}/revoice`, { json: body }).then(() => toast("Переозвучиваю, потом пересоберу видео"))
+        .catch(er => { toast(er.message, true); b.disabled = false; });
+      lastStagesKey = "";
+    };
+  });
+  el.querySelectorAll(".asm-opt").forEach(b => b.onchange = async () => {
+    b.disabled = true;
+    await api(`/api/jobs/${j.id}/assembly`, { json: { [b.dataset.k]: b.checked } })
+      .then(() => toast("Видео пересобирается")).catch(e => { toast(e.message, true); b.checked = !b.checked; b.disabled = false; });
     lastStagesKey = "";
   });
   el.querySelectorAll(".fx-apply").forEach(b => b.onclick = async () => {
@@ -1608,7 +1643,8 @@ const RENDER = {
   voice(r, d) {
     if (!r) return "";
     return `<p>Длительность: <b>${fmtTime(r.total)}</b>${r.short_total ? `, шортс: <b>${fmtTime(r.short_total)}</b>` : ""}</p>
-      ${d.files.narration ? `<audio controls preload="none" src="/files/${d.job.id}/narration.wav"></audio>` : ""}`;
+      ${d.files.narration ? `<audio controls preload="none" src="/files/${d.job.id}/narration.wav"></audio>` : ""}
+      ${revoiceBox(d)}`;
   },
   images(r, d) {
     if (!r) return d.images.length ? `<p class="muted">Готово картинок: ${d.images.length}</p>` : "";
@@ -1682,9 +1718,24 @@ function speedRow(d, kind, r) {
     <button class="sm speed-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">картинка и голос ускоряются вместе, голос не становится писклявым; бесплатно, оригинал сохраняется</span></div>`;
 }
 
+function revoiceBox(d) {
+  const o = d.job.options || {}, busy = d.job.status === "running";
+  const num = (k, lo, hi, st, label) => `<div><label class="f">${label}</label><input type="number" class="rv-${k}" step="${st}" min="${lo}" max="${hi}" value="${esc(o[k] ?? "")}" placeholder="как в проекте"></div>`;
+  return `<details class="revoice" style="margin-top:10px"><summary><b>🎙 Сменить голос и пересобрать</b></summary>
+    <p class="muted small">Озвучка делается заново выбранным голосом, ролик и шортс пересобираются. Сценарий, картинки и анимации остаются, платите только за новую озвучку. Реплики героев со своими голосами звучат как раньше.</p>
+    <div class="row" style="gap:6px;flex-wrap:nowrap"><select class="rv-voice"><option value="">Тот же голос (${esc(o.voice_name || "как в проекте")})</option></select><button class="sm rv-play" title="Послушать голос">▶</button></div>
+    <div class="grid2">${num("voice_speed", 0.7, 1.2, 0.01, "Скорость голоса (0.7–1.2)")}${num("voice_stability", 0, 1, 0.05, "Стабильность (0–1), меньше — эмоциональнее")}${num("voice_style", 0, 1, 0.05, "Выразительность (0–1)")}${num("voice_similarity", 0, 1, 0.05, "Похожесть на оригинал (0–1)")}</div>
+    <div class="row" style="margin-top:8px"><button class="primary rv-go" ${busy ? "disabled" : ""}>🎙 Переозвучить и пересобрать</button>${busy ? `<span class="muted small">Сначала дождитесь конца работы или поставьте на паузу</span>` : ""}</div>
+    <audio class="rv-audio"></audio></details>`;
+}
+
 function fxRow(d) {
-  const busy = d.job.status === "running";
-  return `<div class="row" style="margin-top:8px"><span>Эффекты:</span>
+  const busy = d.job.status === "running", o = d.job.options;
+  return `<div class="row" style="margin-top:8px">
+    <label class="check" style="margin:0"><input type="checkbox" class="asm-opt" data-k="graphics" ${o.graphics ? "checked" : ""} ${busy ? "disabled" : ""}> Анимации данных</label>
+    <label class="check" style="margin:0"><input type="checkbox" class="asm-opt" data-k="subs_smart" ${o.subs_smart ? "checked" : ""} ${busy ? "disabled" : ""}> Субтитры в свободном месте</label>
+    <span class="muted small">видео пересоберётся</span></div>
+  <div class="row" style="margin-top:8px"><span>Эффекты:</span>
     <select class="fx-sel" style="max-width:420px" ${busy ? "disabled" : ""}>${Object.entries(META.fx_modes).map(([k, n]) => `<option value="${k}" ${k === d.fx_mode ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
     <button class="sm fx-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">видео пересоберётся бесплатно</span></div>`;
 }
@@ -2408,7 +2459,21 @@ async function viewProducer(id) {
       <span id="pr-up" class="muted small"></span></div>
     <p class="muted small">Разбор одного ролика стоит примерно $0.03–0.08 у нейросети сценария. Если у ролика нет субтитров, речь распознаёт ElevenLabs (около $0.004 за минуту).</p>
   </div>
-  <div class="card"><h2>Разборы</h2>${r.items.length ? `<table>${r.items.map(x => `<tr><td><a href="#/producer/${x.id}">${esc(x.title || x.source)}</a><div class="muted small">${esc(x.source)}${x.count ? ` · роликов: ${x.count}` : ""}</div></td><td>${PR_STATUS[x.status] || esc(x.status)}</td></tr>`).join("")}</table>` : `<p class="muted">Пока ни одного разбора.</p>`}</div>
+  <div class="card"><h2>🔍 Закономерности канала</h2>
+    <p>Бывает, что на канале три ролика подряд ничего не набирают, а четвёртый стреляет. Продюсер возьмёт последние ролики канала с просмотрами, найдёт выстрелившие и провалившиеся, сравнит их темы, названия, обложки, хуки и тексты и объяснит, почему так вышло. Главные выводы можно сохранить в хранилище ниши.</p>
+    <label class="f">Ссылка на канал YouTube</label>
+    <input id="pt-link" placeholder="https://www.youtube.com/@канал">
+    <div class="grid2"><div>
+      <label class="f">Сколько последних роликов смотреть</label>
+      <select id="pt-count">${[10, 15, 20, 30, 50].map(n => `<option ${n === 20 ? "selected" : ""}>${n}</option>`).join("")}</select>
+    </div><div>
+      <label class="f">Какие ролики</label>
+      <select id="pt-tab"><option value="auto">Где их больше (шортсы или длинные)</option><option value="shorts">Шортсы</option><option value="videos">Длинные ролики</option></select>
+    </div></div>
+    <div class="row" style="margin-top:10px"><button class="primary" id="pt-go">🔍 Найти закономерности</button></div>
+    <p class="muted small">Стоит примерно $0.05–0.15 у нейросети сценария: сравниваются до 6 роликов целиком и названия всех остальных.</p>
+  </div>
+  <div class="card"><h2>Разборы</h2>${r.items.length ? `<table>${r.items.map(x => `<tr><td><a href="#/producer/${x.id}">${x.mode === "patterns" ? "🔍 " : ""}${esc(x.title || x.source)}</a><div class="muted small">${esc(x.source)}${x.count ? ` · роликов: ${x.count}` : ""}</div></td><td>${PR_STATUS[x.status] || esc(x.status)}</td></tr>`).join("")}</table>` : `<p class="muted">Пока ни одного разбора.</p>`}</div>
   <div class="card"><h2>Загрузчик YouTube</h2>
     <p class="muted small">YouTube часто меняет сайт. Если ссылки перестали разбираться, обновите загрузчик. Сейчас: ${r.downloader ? `версия ${esc(r.downloader)}` : "не установлен"}.</p>
     <button id="pr-upd">🔄 Обновить загрузчик YouTube</button>
@@ -2423,6 +2488,15 @@ async function viewProducer(id) {
       const m = await api("/api/producer", { json: { link, text: link ? "" : text, count: +$("#pr-count").value } });
       location.hash = `#/producer/${m.id}`;
     } catch (e) { $("#pr-go").disabled = false; toast(e.message, true); }
+  };
+  $("#pt-go").onclick = async () => {
+    const link = $("#pt-link").value.trim();
+    if (!link) return toast("Вставьте ссылку на канал", true);
+    $("#pt-go").disabled = true;
+    try {
+      const m = await api("/api/producer", { json: { link, mode: "patterns", count: +$("#pt-count").value, tab: $("#pt-tab").value } });
+      location.hash = `#/producer/${m.id}`;
+    } catch (e) { $("#pt-go").disabled = false; toast(e.message, true); }
   };
   $("#pr-file").onchange = async e => {
     const f = e.target.files[0];
@@ -2461,19 +2535,35 @@ function prItem(x, i, canPick) {
   </div>`;
 }
 
+function prPatterns(m) {
+  const p = m.patterns, vids = m.videos || [];
+  const max = Math.max(1, ...vids.map(v => v.views || 0));
+  const bars = vids.length ? `<div class="card"><h2>Просмотры последних роликов</h2>
+    <p class="muted small">Сверху самые новые. Средний ролик (медиана) набирает ${Number(m.median || 0).toLocaleString("ru")}. 🔥 выстрелил, 💤 не набрал. Два самых новых ещё набирают просмотры и в провалы не попадают.</p>
+    ${vids.map(v => `<div class="pt-row"><span class="pt-mark">${v.mark === "hit" ? "🔥" : v.mark === "flop" ? "💤" : ""}</span><a class="pt-t small" href="${esc(v.url)}" target="_blank" title="${esc(v.title)}">${esc(v.title)}</a><span class="pt-bar"><i class="${v.mark}" style="width:${Math.max(1, 100 * (v.views || 0) / max).toFixed(1)}%"></i></span><span class="pt-v small">${Number(v.views || 0).toLocaleString("ru")}</span></div>`).join("")}</div>` : "";
+  if (!p) return bars;
+  const vlist = (arr, icon) => (arr || []).map(v => `<div style="margin:6px 0">${icon} <a href="${esc(v.url)}" target="_blank">${esc(v.title)}</a> <span class="muted small">${prViews(v.views)}</span>${v.script ? `<details><summary class="small">Текст ролика</summary><pre style="white-space:pre-wrap">${esc(v.script)}</pre></details>` : `<div class="muted small">Текста нет, сравнивал по названию и обложке</div>`}</div>`).join("");
+  return `<div class="card"><h2>Главное</h2>${prSection("Что за канал", nl(p.summary_ru))}${prSection("Закономерность", nl(p.pattern_ru))}${prSection("Почему выстрелили", prList(p.reasons_ru))}${p.caveats_ru ? `<p class="muted small" style="margin-top:8px">${nl(p.caveats_ru)}</p>` : ""}</div>
+  ${(p.differences || []).length ? `<div class="card"><h2>Выстрелившие против провалившихся</h2><table><tr><th></th><th>🔥 Выстрелили</th><th>💤 Не набрали</th></tr>${p.differences.map(r => `<tr><td><b>${esc(r.aspect_ru)}</b></td><td>${nl(r.hits_ru)}</td><td>${nl(r.flops_ru)}</td></tr>`).join("")}</table></div>` : ""}
+  <div class="card"><h2>✅ Выводы: что повторять</h2>${(p.positive || []).map((x, i) => `<label class="check"><input type="checkbox" class="pt-pick" data-i="${i}" checked> ${esc(x.rule_ru)}</label>`).join("")}
+    ${prSection("❌ Чего не делать", prList(p.avoid_ru))}${prSection("Темы для нас", prList(p.topics_ru))}</div>
+  ${bars}
+  <div class="card"><h2>Сравнивались</h2>${vlist(m.hits, "🔥")}${vlist(m.flops, "💤")}</div>`;
+}
+
 async function viewProducerOne(id) {
   clearInterval(timer); timer = null;
   const [m, projs] = await Promise.all([api(`/api/producer/${id}`), api("/api/projects").catch(() => [])]);
-  const running = m.status === "running", items = m.items || [], ch = m.channel;
+  const running = m.status === "running", items = m.items || [], ch = m.channel, pat = m.mode === "patterns";
   let last = ""; try { last = localStorage.getItem("ay_lib_project") || ""; } catch (e) { }
   main.innerHTML = `<div class="row"><a href="#/producer" class="muted small">← Все разборы</a></div>
   <h1>${esc(m.title || m.source)}</h1>
   <div class="row" style="margin:8px 0">${PR_STATUS[m.status] || esc(m.status)}<span class="muted small">${esc(m.source)}</span></div>
   ${m.status === "error" ? `<div class="banner bad">${nl(m.error || "")}</div>` : ""}
-  ${!running && items.length ? `<div class="card"><h2>📚 Сохранить в хранилище</h2>
+  ${!running && (items.length || (pat && m.patterns)) ? `<div class="card"><h2>📚 Сохранить в хранилище</h2>
     ${projs.length ? `<label class="f">Ниша (проект)</label>
     <select id="pr-proj">${projs.map(p => `<option value="${p.id}" ${p.id === last ? "selected" : ""}>${esc((p.icon || "") + " " + (p.name || "Без названия"))}</option>`).join("")}</select>
-    ${items.length > 1 ? `<p class="muted small">Сохранятся ролики с галочкой. Галочки стоят у каждого ролика ниже.</p>` : ""}
+    ${pat ? `<p class="muted small">Сохранятся выводы с галочкой (они ниже), закономерность, темы и что не делать. Сценарист ниши будет на них опираться.</p>` : items.length > 1 ? `<p class="muted small">Сохранятся ролики с галочкой. Галочки стоят у каждого ролика ниже.</p>` : ""}
     ${ch ? `<label class="check"><input type="checkbox" id="pr-ch" checked> И общую формулу канала</label>` : ""}
     <div class="row" style="margin-top:8px"><button class="primary" id="pr-save">📚 Сохранить в хранилище</button></div>`
       : `<p class="muted">Сначала создайте проект в разделе «📁 Проекты и ниши»: у каждой ниши своё хранилище.</p>`}</div>` : ""}
@@ -2481,14 +2571,16 @@ async function viewProducerOne(id) {
     ${prSection("Что за канал", nl(ch.summary_ru))}${prSection("Формула хитов", nl(ch.formula_ru))}
     ${prSection("Сильные стороны", prList(ch.strengths_ru))}${prSection("Как обойти этот канал", nl(ch.advice_ru))}
     ${prSection("Темы для нас", prList(ch.topics_ru))}${prSection("Приёмы для сценариста", prList(ch.techniques))}</div>` : ""}
+  ${pat ? prPatterns(m) : ""}
   ${items.map((x, i) => prItem(x, i, !running && items.length > 1)).join("")}
   <div class="card"><h2>Журнал</h2><pre class="log" style="white-space:pre-wrap;max-height:300px;overflow:auto">${esc(m.log || "Пока пусто.")}</pre>
     <div class="row"><span class="grow"></span><button class="danger" id="pr-del" ${running ? "disabled" : ""}>Удалить разбор</button></div></div>`;
   const save = $("#pr-save");
   if (save) save.onclick = async () => {
     const pid = $("#pr-proj").value;
-    const picks = [...main.querySelectorAll(".pr-pick")];
+    const picks = [...main.querySelectorAll(pat ? ".pt-pick" : ".pr-pick")];
     const indexes = picks.length ? picks.filter(c => c.checked).map(c => +c.dataset.i) : null;
+    if (pat && indexes && !indexes.length) return toast("Отметьте хотя бы один вывод", true);
     const withCh = $("#pr-ch") ? $("#pr-ch").checked : false;
     if (indexes && !indexes.length && !withCh) return toast("Отметьте хотя бы один ролик", true);
     try {
@@ -2501,7 +2593,7 @@ async function viewProducerOne(id) {
   if (running) timer = setInterval(async () => {
     const n = await api(`/api/producer/${id}`).catch(() => null);
     if (!n || location.hash !== `#/producer/${id}`) return;
-    if (n.status !== "running" || (n.items || []).length !== items.length) return viewProducerOne(id);
+    if (n.status !== "running" || (n.items || []).length !== items.length || (n.videos || []).length !== (m.videos || []).length) return viewProducerOne(id);
     const log = main.querySelector("pre.log"); if (log) log.textContent = n.log;
   }, 3000);
 }
@@ -2537,10 +2629,10 @@ async function viewLibrary() {
   </div>
   ${topics.length ? `<div class="card"><h2>Темы из разборов</h2><p class="muted small">Идеи, которые продюсер предложил по мотивам удачных роликов. Можно брать как свою тему на странице нового ролика.</p>${prList(topics)}</div>` : ""}
   <div class="card"><h2>Разборы (${lib.items.length})</h2>
-    ${items.length ? items.map(x => `<details style="margin-bottom:8px"><summary><b>${x.type === "channel" ? "📺 " : x.kind === "short" ? "📱 " : "🎬 "}${esc(x.title || "Без названия")}</b> <span class="muted small">${esc([x.channel, prViews(x.views)].filter(Boolean).join(" · "))}</span></summary>
+    ${items.length ? items.map(x => `<details style="margin-bottom:8px"><summary><b>${x.type === "patterns" ? "🔍 " : x.type === "channel" ? "📺 " : x.kind === "short" ? "📱 " : "🎬 "}${esc(x.title || "Без названия")}</b> <span class="muted small">${esc([x.channel, prViews(x.views)].filter(Boolean).join(" · "))}</span></summary>
       ${x.source ? `<div class="small"><a href="${esc(x.source)}" target="_blank">${esc(x.source)}</a></div>` : ""}
-      ${prSection("О чём", nl(x.summary_ru))}${prSection(x.type === "channel" ? "Формула хитов" : "Почему сработал", nl(x.why_ru))}
-      ${prSection("Хук", nl(x.hook_ru))}${prSection("Сильные стороны", prList(x.strengths_ru))}
+      ${prSection("О чём", nl(x.summary_ru))}${prSection(x.type === "patterns" ? "Закономерность" : x.type === "channel" ? "Формула хитов" : "Почему сработал", nl(x.why_ru))}
+      ${prSection("Хук", nl(x.hook_ru))}${prSection(x.type === "patterns" ? "Что повторять" : "Сильные стороны", prList(x.strengths_ru))}${prSection("Чего не делать", prList(x.avoid_ru))}
       ${prSection("Приёмы для сценариста", prList(x.techniques))}
       ${prSection("Начало по-русски", nl(x.script_ru))}
       ${x.script ? `<details><summary>Текст ролика</summary><pre style="white-space:pre-wrap">${esc(x.script)}</pre></details>` : ""}
@@ -2618,6 +2710,8 @@ async function viewMontage() {
         <label class="f">Эффекты и звуки</label><select id="mt-fx">${opt(Object.entries(META.fx_modes), p.fx_mode || s.fx_mode || "light")}</select>
         <label class="f">Скорость готового ролика <span class="hint">голос и картинка вместе, тон голоса не меняется</span></label>
         <select id="mt-speed">${opt([1, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.4, 1.5].map(x => [x, x === 1 ? "Обычная" : `×${x}`]), 1)}</select>
+        <label class="check"><input type="checkbox" id="mt-gfx" ${p.graphics !== false ? "checked" : ""}> Анимации данных <span class="hint">цифры, таймеры, стрелки, галочки</span></label>
+        <label class="check"><input type="checkbox" id="mt-smart" ${p.subs_smart !== false ? "checked" : ""}> Субтитры в свободном месте кадра</label>
         <label class="check"><input type="checkbox" id="mt-subs" ${(fmt === "short" ? p.subs_short ?? s.subtitles_short : p.subs_video ?? s.subtitles_long) ? "checked" : ""}> Субтитры на видео</label>
       </div><div>
         <label class="f">Призыв на вертикальном видео</label><select id="mt-cta">${opt(Object.entries(META.cta_modes), p.cta_short || s.cta_short || "both")}</select>
@@ -2639,7 +2733,7 @@ async function viewMontage() {
         images_pause: main.querySelector('input[name="mt-img"]:checked').value === "own", review_pause: false, idea_pause: false,
         voice_id: v.value || undefined, voice_name: v.value ? (vo.dataset.name || vo.textContent) : undefined,
         voice_stability: $("#mt-voice_stability").value, voice_similarity: $("#mt-voice_similarity").value, voice_style: $("#mt-voice_style").value, voice_speed: $("#mt-voice_speed").value,
-        music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, speed_video: +$("#mt-speed").value,
+        music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, graphics: $("#mt-gfx").checked, subs_smart: $("#mt-smart").checked, speed_video: +$("#mt-speed").value,
         subs_video: $("#mt-subs").checked, subs_short: $("#mt-subs").checked, cta_short: $("#mt-cta").value, cta_lang: $("#mt-cta-lang").value,
         anim_mode: $("#mt-anim").value, anim_count: +$("#mt-anim-n").value, anim_pause: $("#mt-anim-p").checked };
       $("#mt-go").disabled = true;

@@ -159,9 +159,55 @@ def write_srt(cues: list, out: Path):
     out.write_text("\n".join(lines), encoding="utf-8")
 
 
+# Places a caption line can move to when its usual place is busy in the picture: (name, band of the frame height it
+# covers, ASS alignment, margin from the edge as a share of the height). The first one is the usual place.
+PLACES = {
+    True: [("mid", (0.58, 0.71), 2, 0.30), ("upper", (0.19, 0.32), 8, 0.19)],
+    False: [("bottom", (0.80, 0.95), 2, 0.065), ("top", (0.04, 0.17), 8, 0.045)],
+}
+
+
+def _busy(img: Path, band: tuple) -> float:
+    """How much detail (edges) a band of the picture has: a calm band is easy to read text on."""
+    from PIL import Image, ImageFilter, ImageStat
+    try:
+        with Image.open(img) as im:
+            g = im.convert("L").resize((96, 170) if im.height > im.width else (170, 96))
+    except OSError:
+        return 0.0
+    e = g.filter(ImageFilter.FIND_EDGES)
+    h = e.height
+    crop = e.crop((0, int(h * band[0]), e.width, max(int(h * band[0]) + 1, int(h * band[1]))))
+    return ImageStat.Stat(crop).mean[0]
+
+
+def scene_places(dir_: Path, prefix: str, scenes: list, durations: list, vertical: bool, blocked: dict = None) -> list:
+    """For each scene, where its captions go: the usual place, unless that part of the picture is clearly busier
+    (a face, text, many details) and another place is calm and not taken by an animation or button at that time."""
+    blocked = blocked or {}
+    places = PLACES[vertical]
+    out, t = [], 0.0
+    for i in range(len(scenes)):
+        s, e = t, t + durations[i]
+        t = e
+        img = dir_ / "images" / f"{prefix}_{i:03d}.png"
+        if not img.exists():
+            out.append(places[0][0])
+            continue
+        base = _busy(img, places[0][1])
+        best = places[0][0]
+        for name, band, _, _ in places[1:]:
+            if any(a < e and b > s for a, b in blocked.get(name, [])):
+                continue
+            if base > 14 and _busy(img, band) < base * 0.55:
+                best = name
+        out.append(best)
+    return out
+
+
 def write_ass(cues: list, out: Path, width: int, height: int, vertical: bool, family: str, margin_v: int = None,
-              size: int = None):
-    """size: the owner's font size (remake); the outline grows with it."""
+              size: int = None, places: list = None):
+    """size: the owner's font size (remake); the outline grows with it. places: the place name of each cue."""
     own = size
     if vertical:
         # Shorts: big centered words, a bit below the middle (away from the YouTube buttons).
@@ -171,6 +217,8 @@ def write_ass(cues: list, out: Path, width: int, height: int, vertical: bool, fa
     if own:
         outline = max(2, round(outline * own / size))
         size = own
+    extra = "".join(f"Style: {name},{family},{size},&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,"
+                    f"{outline},2,{al},80,80,{int(height * mv)},1\n" for name, _, al, mv in PLACES[vertical][1:]) if places else ""
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
@@ -181,28 +229,41 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{family},{size},&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline},2,{align},80,80,{margin_v},1
-
+{extra}
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     rows = []
-    for text, s, e in cues:
+    for n, (text, s, e) in enumerate(cues):
         t = text.upper() if upper else text
         t = t.replace("\\", "").replace("{", "(").replace("}", ")")
-        rows.append(f"Dialogue: 0,{_ts(s, False)},{_ts(e, False)},Default,,0,0,0,,{t}")
+        style = places[n] if places and places[n] != PLACES[vertical][0][0] else "Default"
+        rows.append(f"Dialogue: 0,{_ts(s, False)},{_ts(e, False)},{style},,0,0,0,,{t}")
     out.write_text(header + "\n".join(rows) + "\n", encoding="utf-8")
 
 
-def build(dir_: Path, prefix: str, scenes: list, durations: list, width: int, height: int) -> dict:
-    """Writes output/<name>.srt always and an .ass file next to the clips. Returns paths and font info."""
+def build(dir_: Path, prefix: str, scenes: list, durations: list, width: int, height: int, smart: bool = False,
+          blocked: dict = None) -> dict:
+    """Writes output/<name>.srt always and an .ass file next to the clips. Returns paths and font info.
+    smart: a caption moves to a calmer part of the frame when its usual place is busy in that scene's picture."""
     vertical = height > width
     words = timeline(dir_, prefix, scenes, durations)
     cues = group(words, 3, 18) if vertical else group(words, 8, 42)
+    places = per_scene = None
+    if smart:
+        try:
+            per_scene = scene_places(dir_, prefix, scenes, durations, vertical, blocked)
+        except Exception:  # noqa: BLE001 - a failed look at the pictures keeps the captions in their usual place
+            per_scene = None
+    if per_scene:
+        starts = [sum(durations[:i]) for i in range(len(durations))]
+        places = [per_scene[max([i for i, st in enumerate(starts) if st <= s + 0.01] or [0])] for _, s, _ in cues]
     name = "short_subtitles" if vertical else "subtitles"
     (dir_ / "output").mkdir(exist_ok=True)
     srt = dir_ / "output" / f"{name}.srt"
     write_srt(cues, srt)
     fdir, family = font()
     ass = dir_ / f"{name}.ass"
-    write_ass(cues, ass, width, height, vertical, family)
-    return {"srt": srt, "ass": ass, "fonts": fdir}
+    write_ass(cues, ass, width, height, vertical, family, places=places)
+    moved = sum(1 for p in places or [] if p != PLACES[vertical][0][0])
+    return {"srt": srt, "ass": ass, "fonts": fdir, "moved": moved}

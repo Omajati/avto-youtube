@@ -203,6 +203,8 @@ def create_job(data: dict = Body(...)):
         "subs_video": bool(data.get("subs_video", proj.get("subs_short" if fmt == "short" else "subs_video",
                                                         s.get("subtitles_short" if fmt == "short" else "subtitles_long")))),
         "subs_short": bool(data.get("subs_short", proj.get("subs_short", s.get("subtitles_short")))),
+        "graphics": bool(data.get("graphics", proj.get("graphics", True))),
+        "subs_smart": bool(data.get("subs_smart", proj.get("subs_smart", True))),
         "anim_mode": (data.get("anim_mode") if data.get("anim_mode") in animate.MODES
                       else proj.get("anim_mode") or s.get("anim_mode", "off")),
         "anim_short": bool(data.get("anim_short", proj.get("anim_short", s.get("anim_short")))),
@@ -561,6 +563,54 @@ def job_effects(jid: str, data: dict = Body(...)):
     for rel in ("video.json", "short_video.json", "output/video.mp4", "output/short.mp4", "clips", "clips_short"):
         pipeline._remove(d, rel)
     if j["status"] in ("done", "error", "paused"):
+        db.update(jid, status="queued", error="")
+        worker.wake()
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{jid}/assembly")
+def job_assembly(jid: str, data: dict = Body(...)):
+    """Data animations and smart caption places on or off. Only the assembly is redone: free (the animation plan is
+    asked once, a few cents)."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
+    opts = dict(j["options"])
+    for k in ("graphics", "subs_smart"):
+        if k in data:
+            opts[k] = bool(data[k])
+    db.update(jid, options=opts)
+    d = pipeline.job_dir(jid)
+    for rel in ("video.json", "short_video.json", "output/video.mp4", "output/short.mp4"):
+        pipeline._remove(d, rel)
+    if j["status"] in ("done", "error", "paused"):
+        db.update(jid, status="queued", error="")
+        worker.wake()
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{jid}/revoice")
+def job_revoice(jid: str, data: dict = Body(...)):
+    """Another voice (or speed and tone) for a voiced video: the voice is made again and the video reassembled; the
+    script, scenes, pictures and animations stay."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
+    d = pipeline.job_dir(jid)
+    if not (d / "voice.json").exists():
+        raise UserError("Озвучки у этого ролика ещё нет: голос выбирается в проекте или на странице нового ролика.")
+    opts = dict(j["options"])
+    if data.get("voice_id"):
+        opts.update(voice_id=str(data["voice_id"]), voice_name=str(data.get("voice_name") or ""))
+    for k, lo, hi in (("voice_speed", 0.7, 1.2), ("voice_stability", 0, 1), ("voice_similarity", 0, 1), ("voice_style", 0, 1)):
+        if data.get(k) not in (None, ""):
+            try:
+                opts[k] = min(hi, max(lo, float(data[k])))
+            except (TypeError, ValueError):
+                raise UserError("Проверьте числа в настройках голоса.")
+    db.update(jid, options=opts)
+    pipeline.reset_from(jid, "voice")
+    if j["status"] in ("done", "error", "paused", "review"):
         db.update(jid, status="queued", error="")
         worker.wake()
     return {"ok": True}
@@ -1275,7 +1325,8 @@ async def producer_start(request: Request, name: str = ""):
             raise UserError("Файл пустой. Выберите видео mp4.")
         return producer.start(file_bytes=raw, file_name=Path(name).name)
     data = await request.json()
-    return producer.start(data.get("link", ""), data.get("count", 5), data.get("text", ""))
+    return producer.start(data.get("link", ""), data.get("count", 5), data.get("text", ""),
+                          mode=data.get("mode", ""), tab=data.get("tab", "auto"))
 
 
 @app.post("/api/producer/update-downloader")

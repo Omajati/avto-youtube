@@ -67,7 +67,8 @@ def list_all() -> list:
         m = _read(d / "meta.json")
         if m:
             out.append({"id": m["id"], "created": m.get("created"), "status": m.get("status"), "source": m.get("source"),
-                        "title": m.get("title") or m.get("source"), "count": len(m.get("items") or [])})
+                        "title": m.get("title") or m.get("source"), "count": len(m.get("items") or []),
+                        "mode": m.get("mode", "")})
     return sorted(out, key=lambda x: x.get("created") or 0, reverse=True)
 
 
@@ -77,9 +78,13 @@ def delete(aid: str):
     shutil.rmtree(_dir(aid), ignore_errors=True)
 
 
-def start(source: str = "", count: int = 5, text: str = "", file_bytes: bytes = None, file_name: str = "") -> dict:
-    """source: a YouTube link; text: a pasted script; file_bytes: an uploaded video."""
+def start(source: str = "", count: int = 5, text: str = "", file_bytes: bytes = None, file_name: str = "",
+          mode: str = "", tab: str = "auto") -> dict:
+    """source: a YouTube link; text: a pasted script; file_bytes: an uploaded video. mode "patterns": compare the
+    channel's latest videos that fired with the ones that got little."""
     source = (source or "").strip()
+    if mode == "patterns" and not (source and YT_RE.match(source) and _is_channel(source)):
+        raise UserError("Для поиска закономерностей нужна ссылка на канал, например https://www.youtube.com/@канал")
     if not (source or (text or "").strip() or file_bytes):
         raise UserError("Вставьте ссылку на ролик или канал YouTube, загрузите видео или вставьте текст сценария.")
     if source and not YT_RE.match(source):
@@ -91,7 +96,9 @@ def start(source: str = "", count: int = 5, text: str = "", file_bytes: bytes = 
     if file_bytes:
         (d / "upload.mp4").write_bytes(file_bytes)
     meta = {"id": aid, "created": time.time(), "status": "running", "kind": kind,
-            "source": source or file_name or "Текст сценария", "count": max(1, min(int(count or 5), 10)),
+            "source": source or file_name or "Текст сценария",
+            "count": max(8, min(int(count or 20), 50)) if mode == "patterns" else max(1, min(int(count or 5), 10)),
+            "mode": "patterns" if mode == "patterns" else "", "tab": tab if tab in ("shorts", "videos") else "auto",
             "text": (text or "").strip()[:30000], "items": [], "channel": None}
     _write(d / "meta.json", meta)
     t = threading.Thread(target=_run, args=(aid,), daemon=True)
@@ -389,34 +396,180 @@ def _item(info: dict, analysis: dict, transcript: str, url: str) -> dict:
             "thumbnail": info.get("thumbnail", ""), "script": transcript, **analysis}
 
 
-def _one_video(d: Path, settings: dict, usage: dict, url: str, n: int) -> dict:
+def _fetch(d: Path, settings: dict, url: str, n: int, frames: bool = True) -> tuple:
+    """(info, [(start, text)] of the speech, [thumbnail and frames as JPEG])."""
     sub = d / f"v{n}"
     sub.mkdir(exist_ok=True)
     _log(d, f"Получаю данные ролика {url}…")
-    info = video_info(url)
-    dur = float(info.get("duration") or 0)
-    short = dur <= 180 or "/shorts/" in url
-    lines = _captions(info)
-    images = _thumb(info.get("thumbnail", ""), sub)
-    video = None
-    if short or not lines:
-        try:
-            video = _download(url, sub, short)
-        except UserError as e:
-            _log(d, f"Видео скачать не получилось ({e}). Разбираю по тексту и обложке.")
-    if video and short:
-        images += _frames(video, dur, sub)
-    if not lines and video:
-        _log(d, "Субтитров у ролика нет, распознаю речь (ElevenLabs)…")
-        mp3 = sub / "speech.mp3"
-        media.run(["-i", video, "-vn", "-ac", 1, "-ar", 22050, "-b:a", "64k", mp3], "Звук")
-        tr = remake.transcribe(settings, mp3)
-        segs = remake.segments(tr.get("words") or [])
-        lines = [(s["start"], s["text"]) for s in segs]
-    shutil.rmtree(sub, ignore_errors=True)
+    try:
+        info = video_info(url)
+        dur = float(info.get("duration") or 0)
+        short = dur <= 180 or "/shorts/" in url
+        lines = _captions(info)
+        images = _thumb(info.get("thumbnail", ""), sub)
+        video = None
+        if (short and frames) or not lines:
+            try:
+                video = _download(url, sub, short)
+            except UserError as e:
+                _log(d, f"Видео скачать не получилось ({e}). Разбираю по тексту и обложке.")
+        if video and short and frames:
+            images += _frames(video, dur, sub)
+        if not lines and video:
+            _log(d, "Субтитров у ролика нет, распознаю речь (ElevenLabs)…")
+            mp3 = sub / "speech.mp3"
+            media.run(["-i", video, "-vn", "-ac", 1, "-ar", 22050, "-b:a", "64k", mp3], "Звук")
+            tr = remake.transcribe(settings, mp3)
+            lines = [(s["start"], s["text"]) for s in remake.segments(tr.get("words") or [])]
+        return info, lines, images
+    finally:
+        shutil.rmtree(sub, ignore_errors=True)
+
+
+def _one_video(d: Path, settings: dict, usage: dict, url: str, n: int) -> dict:
+    info, lines, images = _fetch(d, settings, url, n)
     _log(d, f"Разбираю «{info.get('title', '')}»…")
     a = analyse(settings, usage, _meta_text(info), _timed(lines), images)
     return _item(info, a, _plain(lines), info.get("webpage_url") or url)
+
+
+# ---------------------------------------------------------------- channel patterns: why some videos fire and others don't
+
+def channel_recent(url: str, count: int, tab: str = "auto") -> tuple:
+    """(channel title, followers, tab, [entries newest first]) of the channel's latest Shorts or videos."""
+    base = re.sub(r"/(shorts|videos|streams|featured|about)/?$", "", url.split("?")[0].rstrip("/"))
+    found, title, subs = {}, "", None
+    for t in (("shorts", "videos") if tab not in ("shorts", "videos") else (tab,)):
+        try:
+            data = json.loads(_ytdlp(["-J", "--flat-playlist", "--playlist-end", str(count), f"{base}/{t}"], 300))
+        except (UserError, ValueError):
+            continue
+        title = title or data.get("channel") or data.get("uploader") or data.get("title") or ""
+        subs = subs or data.get("channel_follower_count")
+        rows = [{"id": e["id"], "title": e.get("title", ""), "views": e.get("view_count"),
+                 "url": e.get("url") if str(e.get("url", "")).startswith("http")
+                 else f"https://www.youtube.com/{'shorts/' if t == 'shorts' else 'watch?v='}{e['id']}",
+                 "duration": e.get("duration"), "thumbnail": f"https://i.ytimg.com/vi/{e['id']}/hqdefault.jpg"}
+                for e in data.get("entries") or [] if e.get("id")]
+        rows = [r for r in rows if r["views"] is not None]
+        if rows:
+            found[t] = rows
+    if not found:
+        raise UserError("Не нашёл роликов с просмотрами на этом канале. Проверьте ссылку: нужна ссылка вида https://www.youtube.com/@канал")
+    pick = max(found, key=lambda t: (len(found[t]), t == "shorts"))
+    return title, subs, pick, found[pick][:count]
+
+
+def split_hits(rows: list, fresh: int = 2, most: int = 3) -> tuple:
+    """(median views, hits, flops) of a channel's latest videos. The newest `fresh` videos are still gaining views,
+    so they never count as flops."""
+    views = sorted(r["views"] for r in rows)
+    n = len(views)
+    med = (views[n // 2] if n % 2 else (views[n // 2 - 1] + views[n // 2]) / 2) if n else 0
+    hits = sorted([r for r in rows if med and r["views"] >= 2 * med], key=lambda r: -r["views"])[:most]
+    if not hits:  # no clear spikes: compare the best with the worst
+        hits = sorted(rows, key=lambda r: -r["views"])[:min(2, max(1, n // 4))]
+    ids = {r["id"] for r in hits}
+    old = [r for r in rows[fresh:] if r["id"] not in ids]
+    flops = sorted([r for r in old if r["views"] <= 0.6 * med], key=lambda r: r["views"])[:most]
+    if not flops:
+        flops = sorted(old, key=lambda r: r["views"])[:min(2, len(old))]
+    return med, hits, flops
+
+
+SCHEMA_PATTERNS = {"type": "object", "properties": {
+    "summary_ru": {"type": "string"}, "pattern_ru": {"type": "string"},
+    "differences": {"type": "array", "items": {"type": "object", "properties": {
+        "aspect_ru": {"type": "string"}, "hits_ru": {"type": "string"}, "flops_ru": {"type": "string"}},
+        "required": ["aspect_ru", "hits_ru", "flops_ru"]}},
+    "reasons_ru": {"type": "array", "items": {"type": "string"}},
+    "positive": {"type": "array", "items": {"type": "object", "properties": {
+        "rule_ru": {"type": "string"}, "rule_en": {"type": "string"}}, "required": ["rule_ru", "rule_en"]}},
+    "avoid_ru": {"type": "array", "items": {"type": "string"}}, "topics_ru": {"type": "array", "items": {"type": "string"}},
+    "caveats_ru": {"type": "string"}},
+    "required": ["summary_ru", "pattern_ru", "differences", "reasons_ru", "positive", "avoid_ru", "topics_ru", "caveats_ru"]}
+
+PATTERNS_PROMPT = """You are a top YouTube producer and data analyst. On one channel some videos get almost nothing and then one suddenly takes off. Find out WHY: what the videos that fired have in common and what the weak ones lack. The owner makes videos in the same niche and wants concrete conclusions he can repeat.
+
+Channel: {title}{subs}. Format: {fmt}. Median views of the latest videos: {median}.
+
+ALL LATEST VIDEOS, NEWEST FIRST (views; HIT = fired, FLOP = weak; the newest 2 are still gaining views):
+{sequence}
+
+{images_note}
+
+VIDEOS THAT FIRED:
+{hits}
+
+VIDEOS THAT GOT LITTLE:
+{flops}
+
+Compare them on everything that can matter: the topic and its promise, the title, the thumbnail, the first 3 seconds (the hook), the emotion, the conflict or stakes, the character, the length and pace, the structure, the ending, the timing and trends, the target viewer. Look at the whole sequence too: series, repeats, topics that keep winning. Be concrete and honest: quote the actual titles and lines. When the difference could be luck or the algorithm, say so.
+
+Return (everything in Russian except rule_en):
+- summary_ru: 2-3 sentences: what the channel does and what is strange about its numbers.
+- pattern_ru: the main pattern you found, 3-6 sentences: what separates the hits from the flops.
+- differences: 4-8 rows, each an aspect (aspect_ru, e.g. "Хук", "Тема", "Название", "Обложка", "Длина") with how the hits do it (hits_ru) and how the flops do it (flops_ru), concrete, with quotes.
+- reasons_ru: 3-6 most likely reasons the hits fired, most important first.
+- positive: 5-10 positive conclusions to repeat in our own videos: rule_ru for the owner, rule_en the same rule as a short imperative instruction for a scriptwriter. Reusable techniques, never copies of their plots.
+- avoid_ru: 3-6 things the flops did that we must not do.
+- topics_ru: 5-8 new topic ideas for us built on what made the hits fire.
+- caveats_ru: how sure you are and why (sample size, missing speech, luck), 1-3 sentences."""
+
+
+def _pat_block(rows: list) -> str:
+    out = []
+    for r in rows:
+        dur = f", {int(r['duration'])} s" if r.get("duration") else ""
+        out.append(f"### «{r['title']}» ({r['views']} views{dur})\n"
+                   + (f"Description: {r['description']}\n" if r.get("description") else "")
+                   + f"Speech:\n{r.get('timed') or '(no speech found)'}")
+    return "\n\n".join(out) or "(none)"
+
+
+def _patterns(d: Path, m: dict, settings: dict, usage: dict):
+    _log(d, "Получаю последние ролики канала и их просмотры…")
+    title, subs, tab, rows = channel_recent(m["source"], m["count"], m.get("tab") or "auto")
+    if len(rows) < 5:
+        raise UserError(f"На канале нашлось только {len(rows)} роликов с просмотрами. Для поиска закономерностей нужно хотя бы 5.")
+    med, hits, flops = split_hits(rows)
+    if not flops:
+        raise UserError("Не нашлось слабых роликов для сравнения: все последние ролики набирают примерно одинаково.")
+    hit_ids, flop_ids = {r["id"] for r in hits}, {r["id"] for r in flops}
+    for r in rows:
+        r["mark"] = "hit" if r["id"] in hit_ids else "flop" if r["id"] in flop_ids else ""
+    m.update(title=f"Закономерности: {title or m['source']}", subscribers=subs, tab=tab, median=med, videos=rows)
+    _write(d / "meta.json", m)
+    _log(d, f"Взял {len(rows)} последних {'шортсов' if tab == 'shorts' else 'роликов'}, средний ролик (медиана) "
+            f"набирает {int(med)} просмотров. Выстрелили: {len(hits)}, провалились: {len(flops)}. Беру их тексты…")
+    images = []
+    for n, r in enumerate(hits + flops):
+        try:
+            info, lines, imgs = _fetch(d, settings, r["url"], n, frames=False)
+        except UserError as err:
+            _log(d, f"Текст ролика «{r['title']}» получить не удалось: {err}")
+            info, lines, imgs = {}, [], _thumb(r["thumbnail"], d)
+        r.update(script=_plain(lines), timed=_timed(lines)[:6000 if tab == "shorts" else 9000],
+                 description=(info.get("description") or "")[:300], duration=info.get("duration") or r.get("duration"),
+                 thumbnail=info.get("thumbnail") or r["thumbnail"])
+        images += [(r, imgs[0])] if imgs else []
+    seq = "\n".join(f"{i + 1}. {('HIT ' if r['mark'] == 'hit' else 'FLOP ' if r['mark'] == 'flop' else '')}"
+                    f"«{r['title']}» — {r['views']} views" for i, r in enumerate(rows))
+    note = ("You also see the thumbnails, in this order: " + "; ".join(
+        f"{i + 1}) {'HIT' if r['mark'] == 'hit' else 'FLOP'} «{r['title']}»" for i, (r, _) in enumerate(images))
+        if images else "No thumbnails are available.")
+    user = PATTERNS_PROMPT.format(title=title, subs=f" ({subs} subscribers)" if subs else "",
+                                  fmt="Shorts (vertical, up to 3 min)" if tab == "shorts" else "long videos",
+                                  median=int(med), sequence=seq, images_note=note, hits=_pat_block(hits),
+                                  flops=_pat_block(flops))
+    _log(d, "Сравниваю ролики, которые выстрелили, с теми, что не набрали…")
+    m["patterns"] = llm.call_json(settings, "You are a YouTube producer and analyst. Answer only with JSON.", user,
+                                  SCHEMA_PATTERNS, usage, 16000, images=[b for _, b in images] or None)
+    keep = ("id", "title", "views", "url", "duration", "thumbnail", "script")
+    m["hits"] = [{k: r.get(k) for k in keep} for r in hits]
+    m["flops"] = [{k: r.get(k) for k in keep} for r in flops]
+    m["videos"] = [{k: r.get(k) for k in ("id", "title", "views", "url", "mark")} for r in rows]
+    _write(d / "meta.json", m)
 
 
 def _work(d: Path):
@@ -424,6 +577,13 @@ def _work(d: Path):
     settings = load_settings()
     usage = {}
     items = []
+    if m.get("mode") == "patterns":
+        _patterns(d, m, settings, usage)
+        m = _read(d / "meta.json")
+        m["usage"] = usage
+        _write(d / "meta.json", m)
+        _log(d, f"Потрачено на разбор: ~${usage.get('llm_cost', 0):.2f}")
+        return
     if m["kind"] == "text":
         _log(d, "Разбираю вставленный текст…")
         a = analyse(settings, usage, "VIDEO STATS: unknown (the owner pasted the script).", m["text"], [])
@@ -481,6 +641,16 @@ def _work(d: Path):
 def library_entries(aid: str, indexes: list = None, with_channel: bool = True) -> list:
     """Entries for the niche library from a finished analysis."""
     m = get(aid)
+    if m.get("mode") == "patterns":
+        p = m.get("patterns") or {}
+        rules = p.get("positive") or []
+        pick = [rules[i] for i in (indexes if indexes is not None else range(len(rules))) if 0 <= i < len(rules)]
+        if not pick:
+            raise UserError("Отметьте хотя бы один вывод.")
+        return [{"type": "patterns", "kind": "channel", "source": m.get("source", "") + "#patterns",
+                 "title": m.get("title", ""), "summary_ru": p.get("summary_ru", ""), "why_ru": p.get("pattern_ru", ""),
+                 "strengths_ru": [x["rule_ru"] for x in pick], "techniques": [x["rule_en"] for x in pick],
+                 "avoid_ru": p.get("avoid_ru") or [], "topics_ru": p.get("topics_ru") or []}]
     items = m.get("items") or []
     pick = [items[i] for i in (indexes if indexes is not None else range(len(items))) if 0 <= i < len(items)]
     out = [{k: x.get(k) for k in ("source", "title", "channel", "views", "likes", "duration", "kind", "thumbnail", "script",
@@ -508,7 +678,8 @@ def build_playbook(settings: dict, niche: str, items: list) -> dict:
                         f"What it is about: {x.get('summary_ru', '')}\n"
                         f"Why it worked: {x.get('why_ru', '')}\nHook: {x.get('hook_ru', '')}\n"
                         f"Techniques: {'; '.join(x.get('techniques') or [])}\n"
-                        f"Topic ideas: {'; '.join((x.get('topics_ru') or [])[:6])}" for x in items[-40:])
+                        + (f"Avoid: {'; '.join(x['avoid_ru'])}\n" if x.get("avoid_ru") else "")
+                        + f"Topic ideas: {'; '.join((x.get('topics_ru') or [])[:6])}" for x in items[-40:])
     current = niche.strip()
     task_niche = (
         "niche: the channel's niche description, which the scriptwriter reads before every video. The owner already "

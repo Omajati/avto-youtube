@@ -9,7 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import animate, balance, captions, cta, db, effects, images, llm, media, music as musiclib, thumb, tts
+from . import animate, balance, captions, cta, db, effects, graphics, images, llm, media, music as musiclib, thumb, tts
 from .config import JOBS_DIR, MUSIC_DIR, PROMPTS_DIR, PROMPTS_DEFAULT_DIR, load_settings
 from .net import Cancelled, UserError
 
@@ -808,6 +808,8 @@ class Ctx:
                 row.append(f"Hook: {x['hook_ru']}")
             if x.get("techniques"):
                 row.append("Techniques: " + "; ".join(x["techniques"][:10]))
+            if x.get("avoid_ru"):
+                row.append("Avoid (this is what made the weak videos fail): " + "; ".join(x["avoid_ru"][:6]))
             if prompt_file == "01_ideas.txt" and x.get("topics_ru"):
                 row.append("Topic ideas in this spirit: " + "; ".join(x["topics_ru"][:8]))
             if prompt_file in ("03_script.txt", "07_short.txt") and x.get("script"):
@@ -2240,11 +2242,26 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     c.log("Склеиваю фрагменты и накладываю звук…")
     joined = clips_dir / "joined.mp4"
     media.concat_clips(clips, joined)
+    blocked = {}  # caption places taken at some moments by an animation or the subscribe buttons
+    opts = (db.get(c.id) or {}).get("options") or c.opts
+    if opts.get("graphics"):
+        shown = _graphics_for(c, prefix, scenes, durations, total, height > width)
+        if shown:
+            with_g = clips_dir / "joined_gfx.mp4"
+            try:
+                n = graphics.overlay(joined, with_g, shown, width, height, clips_dir)
+                with_g.replace(joined)
+                c.log(f"Анимации данных: {n} ({', '.join(graphics.TEMPLATES[g['type']][0].lower() for g in shown)}).")
+                if height <= width:  # on a wide video the animations sit at the top, where captions could go
+                    blocked["top"] = [(g["start"], g["start"] + graphics.DUR) for g in shown]
+            except Exception as e:  # noqa: BLE001
+                c.log(f"Анимации данных добавить не получилось: {e}")
     if height > width:
         src = c.project if c.project.get("id") else c.settings
         mode = c.opts.get("cta_short") or src.get("cta_short") or "both"
         lang_pick = c.opts.get("cta_lang") or src.get("cta_lang")
         lang = lang_pick if lang_pick in ("ru", "en") else c.lang
+        blocked.setdefault("upper", []).extend((st, st + cta.DURATION[k] + 0.3) for k, st in cta.plan(mode, total))
         with_cta = clips_dir / "joined_cta.mp4"
         try:
             if cta.overlay(joined, with_cta, mode, lang, total, width, height, clips_dir):
@@ -2254,7 +2271,10 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
             c.log(f"Анимацию «Подписаться» добавить не получилось: {e}")
     music = _music_for(c, total)
     out.parent.mkdir(exist_ok=True)
-    cap = captions.build(c.dir, prefix, scenes, durations, width, height)
+    smart = opts.get("subs_smart", False)
+    cap = captions.build(c.dir, prefix, scenes, durations, width, height, smart=smart, blocked=blocked)
+    if subs and cap.get("moved"):
+        c.log(f"Субтитры: {cap['moved']} строк перенесено в свободное место кадра.")
     sfx_file = clips_dir / "sfx.wav"
     has_sfx = effects.build_track(fx, durations, sfx_file, float(c.settings.get("sfx_volume", 0.5)))
     if has_sfx:
@@ -2268,6 +2288,32 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     sfx_file.unlink(missing_ok=True)
     return {"file": str(out.relative_to(c.dir)), "duration": total, "music": music.name if music else "",
             "subtitles": subs}
+
+
+def _graphics_for(c: Ctx, prefix: str, scenes: list, durations: list, total: float, vertical: bool) -> list:
+    """Data animations of this video with their start times. The plan (which scene, which template, what text)
+    is asked once and kept, so a new assembly costs nothing."""
+    path = c.dir / f"graphics_{prefix}.json"
+    plan = read_json(path)
+    if plan is None:
+        if c.demo:
+            plan = {"items": []}
+        else:
+            c.log("Ищу в тексте цифры и важные моменты для анимаций…")
+            try:
+                plan = llm.call_json(_check_settings(c.settings), "You plan on-screen data animations. Answer only with JSON.",
+                                     graphics.plan_prompt(scenes, vertical, c.lang), graphics.SCHEMA, c.usage, 6000)
+                c.save_usage()
+            except Exception as e:  # noqa: BLE001 - animations are an extra, never a reason to lose the video
+                c.log(f"Подобрать анимации не получилось ({e}), ролик собирается без них.")
+                return []
+        write_json(path, plan)
+    try:
+        words = captions.timeline(c.dir, prefix, scenes, durations)
+        return graphics.place(plan.get("items") or [], words, durations, total, vertical)
+    except Exception as e:  # noqa: BLE001
+        c.log(f"Расставить анимации не получилось ({e}), ролик собирается без них.")
+        return []
 
 
 def _music_for(c: Ctx, total: float):
@@ -2442,7 +2488,7 @@ def run_job(job: dict):
 RESET_PLAN = {
     "extras": ["extras.json", "images/thumbnail_src.png", "images.json", "output/youtube.txt",
                "output/thumbnail.jpg", "output/thumbnail_clean.png", "output/thumbnail.png", "thumb.json"],
-    "short_script": ["short_script.json", "anim/short_*", "animate.json", "audio/short_*", "short_narration.wav", "voice.json", "images/short_*",
+    "short_script": ["short_script.json", "graphics_short.json", "anim/short_*", "animate.json", "audio/short_*", "short_narration.wav", "voice.json", "images/short_*",
                      "images.json", "clips_short", "short_video.json", "output/short.mp4"],
     "approval": ["approval.json"],
     "voice": ["voice.json", "audio", "narration.wav", "short_narration.wav", "animate.json", "video.json", "clips",
@@ -2474,7 +2520,7 @@ def reset_from(jid: str, stage: str):
         (d / "review_progress.json").unlink(missing_ok=True)
         # New text means new voice, images and clips.
         for rel in ("audio", "images", "anim", "clips", "clips_short", "output", "narration.wav", "short_narration.wav",
-                    "thumb.json"):
+                    "thumb.json", "graphics_*.json"):
             _remove(d, rel)
     if not (d / "images").exists():
         # The pictures are gone, the owner's own ones too: forget their marks and stop for new uploads again.
