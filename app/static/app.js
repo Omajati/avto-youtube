@@ -294,7 +294,7 @@ async function viewNew() {
       <select id="lang">${Object.entries(META.languages).map(([k, n]) => `<option value="${k}">${esc(n)}</option>`).join("")}</select>
     </div></div>
     <label class="check long-only"><input type="checkbox" id="short" checked> Сделать ещё и вертикальный шортс (до 60 секунд)</label>
-    <label class="check"><input type="checkbox" id="mute"> Без озвучки, только музыка <span class="muted small">(текст сценария идёт на экране короткими строками)</span></label>
+    <label class="check"><input type="checkbox" id="mute"> Без озвучки, только музыка <span class="muted small">(без голоса и без текста на экране)</span></label>
     <div class="grid2">
       <div><label class="f">Анимация сцен <span class="hint">Оживить картинки нейросетью (fal.ai, платно за каждую сцену)</span></label>
         <select id="anim">${animModes().map(([k, n]) => `<option value="${k}" ${k === s.anim_mode ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
@@ -939,7 +939,7 @@ async function viewProject(id) {
       <label class="check"><input type="checkbox" data-q="made_for_kids" ${p.made_for_kids ? "checked" : ""}> Ролики для детей <span class="muted small">(сказочный добрый тон; на YouTube ставится отметка «для детей», по закону это обязательно для детского контента)</span></label>
       <label class="check"><input type="checkbox" data-q="same_place" ${p.same_place !== false ? "checked" : ""}> Каждое место выглядит одинаково во всех своих кадрах <span class="muted small">(сначала рисуется каждое место действия, и все сцены там рисуются по этому образцу; нужен ключ fal.ai; дороже: каждая сцена рисуется по образцу, ~$0.04 с Nano Banana или ~$0.02 с FLUX.2 Dev Edit (выбор в Настройках → Картинки) вместо ~$0.003 у Flux Schnell; в экономном режиме крупные планы и детали без персонажей рисуются без образца)</span></label>
       <label class="check"><input type="checkbox" data-q="fiction" ${p.fiction ? "checked" : ""}> Выдуманные истории <span class="muted small">(мультики, сказки, притчи: сюжеты придумываются, а не берутся из реальных событий)</span></label>
-      <label class="check"><input type="checkbox" data-q="voice_off" ${p.voice_off ? "checked" : ""}> Без озвучки <span class="muted small">(ролик идёт только под музыку, текст сценария показывается на экране короткими строками)</span></label>
+      <label class="check"><input type="checkbox" data-q="voice_off" ${p.voice_off ? "checked" : ""}> Без озвучки <span class="muted small">(ролик идёт только под музыку: без голоса и без текста на экране)</span></label>
       <label class="check"><input type="checkbox" data-q="ad_mode" ${p.ad_mode ? "checked" : ""}> Рекламный ролик товара <span class="muted small">(без людей: товар в каждом кадре, макро, наезды и облёт камеры; товар выбирается в «Предметах в ролике»)</span></label>
       <label class="check" style="margin-left:24px"><input type="checkbox" data-q="one_take" ${p.one_take ? "checked" : ""}> Одна сцена, как одним дублем <span class="muted small">(для рекламы: один фон и одно место товара во всех кадрах, камера переходит от кадра к кадру плавно; анимация через Kling 2.5)</span></label>
     </div></div>

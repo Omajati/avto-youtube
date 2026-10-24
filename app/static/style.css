@@ -38,8 +38,10 @@ input[type=text], input[type=password], input[type=number], select, textarea {
 textarea { min-height: 80px; resize: vertical; }
 textarea.code { font: 13px/1.5 ui-monospace, Menlo, monospace; min-height: 460px; }
 input[type=range] { width: 100%; }
-.check { display: flex; gap: 8px; align-items: center; margin: 10px 0; cursor: pointer; }
-.check input { width: 18px; height: 18px; }
+.check { display: grid; grid-template-columns: 18px 1fr; column-gap: 10px; row-gap: 1px; align-items: start; margin: 8px 0; cursor: pointer; line-height: 1.35; }
+.check input { width: 18px; height: 18px; margin: 0; grid-row: span 3; }
+.check > :not(input) { grid-column: 2; }
+.check > .muted.small, .check > .hint { display: block; font-size: 12px; line-height: 1.35; }
 button, .btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d1d5db; background: #fff;
   color: var(--text); padding: 8px 14px; border-radius: 8px; font: inherit; cursor: pointer; text-decoration: none; }
 button:hover, .btn:hover { background: #f3f4f6; }

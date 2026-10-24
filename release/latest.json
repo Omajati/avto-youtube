@@ -1,6 +1,6 @@
 {
- "version": 115,
- "label": "реклама одной сценой",
- "notes": "Реклама одной сценой: один фон, плавные переходы кадр в кадр, без текста при выключенной озвучке",
+ "version": 116,
+ "label": "аккуратные галочки",
+ "notes": "Галочки: название в строку, пояснение мелко снизу",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
