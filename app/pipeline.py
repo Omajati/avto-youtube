@@ -1135,7 +1135,7 @@ def st_outline(c: Ctx):
         r = _demo("outline")
     else:
         c.log("Строю структуру: хук, повороты, удерживающие крючки…")
-        r = c.ask("02_outline.txt", SCHEMA_OUTLINE, 16000, idea=text)
+        r = c.ask("02_outline.txt", SCHEMA_OUTLINE, 32000, idea=text)
     write_json(c.out("outline"), r)
 
 

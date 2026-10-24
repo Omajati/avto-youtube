@@ -84,6 +84,23 @@ def _anthropic(settings, system, user, schema, usage, max_tokens, images=None):
             "format": {"type": "json_schema", "schema": schema},
         },
     )
+    for attempt in range(2):
+        msg = _anthropic_once(client, kwargs, model)
+        u = msg.usage
+        _add_usage(usage, model, (u.input_tokens or 0), (u.output_tokens or 0))
+        if msg.stop_reason != "max_tokens" or kwargs["max_tokens"] >= 64000:
+            break
+        # The model thought longer than usual (a big prompt, a hard topic): once more with twice the room.
+        kwargs["max_tokens"] = min(kwargs["max_tokens"] * 2, 64000)
+    if msg.stop_reason == "refusal":
+        raise UserError("Claude отказался писать этот текст (сработал фильтр безопасности). Попробуйте другую тему.")
+    if msg.stop_reason == "max_tokens":
+        raise UserError("Claude не уложился в лимит длины ответа даже со второй попытки. Попробуйте ещё раз или уменьшите длительность ролика.")
+    text = next((b.text for b in msg.content if getattr(b, "type", "") == "text"), "")
+    return _parse(text, "Claude")
+
+
+def _anthropic_once(client, kwargs, model):
     try:
         msg = None
         if model in FALLBACK_MODELS:
@@ -116,15 +133,7 @@ def _anthropic(settings, system, user, schema, usage, max_tokens, images=None):
         raise UserError("Claude: нет связи с сервисом. Проверьте интернет и что включён VPN (из России Claude работает только через VPN).")
     except anthropic.APIStatusError as e:
         raise UserError(f"Claude: ошибка сервиса {e.status_code}: {str(e)[:300]}")
-
-    u = msg.usage
-    _add_usage(usage, model, (u.input_tokens or 0), (u.output_tokens or 0))
-    if msg.stop_reason == "refusal":
-        raise UserError("Claude отказался писать этот текст (сработал фильтр безопасности). Попробуйте другую тему.")
-    if msg.stop_reason == "max_tokens":
-        raise UserError("Claude не уложился в лимит длины ответа. Попробуйте ещё раз или уменьшите длительность ролика.")
-    text = next((b.text for b in msg.content if getattr(b, "type", "") == "text"), "")
-    return _parse(text, "Claude")
+    return msg
 
 
 def _openai(settings, system, user, schema, usage, max_tokens, images=None):
