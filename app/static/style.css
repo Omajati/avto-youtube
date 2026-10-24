@@ -225,3 +225,8 @@ html[data-theme="dark"] .themesw button.on { background: #2e3340; }
 .pt-bar i { display: block; height: 100%; background: #9ca3af; border-radius: 4px; }
 .pt-bar i.hit { background: #f97316; } .pt-bar i.flop { background: #60a5fa; }
 .pt-v { text-align: right; }
+.pt-card.pt-star { border: 2px solid #f97316; }
+table.pt-f { margin-top: 10px; } table.pt-f td { vertical-align: top; padding: 6px 8px; }
+table.pt-f td.pt-g { width: 22px; font-size: 1.1em; }
+table.pt-cmp td { vertical-align: top; } .nowrap { white-space: nowrap; }
+table.pt-f td:nth-child(2) { width: 170px; } table.pt-cmp td:first-child { width: 150px; }

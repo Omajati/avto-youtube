@@ -477,98 +477,116 @@ def split_hits(rows: list, fresh: int = 2, most: int = 3) -> tuple:
     return med, hits, flops
 
 
+FACTORS = ["Тема", "Название", "Превью", "Описание", "Хук (первые секунды)", "Сценарий", "Финал"]
+
 SCHEMA_PATTERNS = {"type": "object", "properties": {
-    "summary_ru": {"type": "string"}, "pattern_ru": {"type": "string"},
-    "differences": {"type": "array", "items": {"type": "object", "properties": {
-        "aspect_ru": {"type": "string"}, "hits_ru": {"type": "string"}, "flops_ru": {"type": "string"}},
-        "required": ["aspect_ru", "hits_ru", "flops_ru"]}},
-    "reasons_ru": {"type": "array", "items": {"type": "string"}},
+    "summary_ru": {"type": "string"}, "main_ru": {"type": "string"},
+    "comparison": {"type": "array", "items": {"type": "object", "properties": {
+        "factor": {"type": "string"}, "star_ru": {"type": "string"}, "others_ru": {"type": "string"},
+        "weight": {"type": "string", "enum": ["decisive", "helped", "minor"]}},
+        "required": ["factor", "star_ru", "others_ru", "weight"]}},
+    "videos": {"type": "array", "items": {"type": "object", "properties": {
+        "n": {"type": "integer"}, "verdict_ru": {"type": "string"},
+        "factors": {"type": "array", "items": {"type": "object", "properties": {
+            "factor": {"type": "string"}, "did_ru": {"type": "string"},
+            "grade": {"type": "string", "enum": ["good", "mixed", "bad"]}, "note_ru": {"type": "string"}},
+            "required": ["factor", "did_ru", "grade", "note_ru"]}}},
+        "required": ["n", "verdict_ru", "factors"]}},
     "positive": {"type": "array", "items": {"type": "object", "properties": {
         "rule_ru": {"type": "string"}, "rule_en": {"type": "string"}}, "required": ["rule_ru", "rule_en"]}},
     "avoid_ru": {"type": "array", "items": {"type": "string"}}, "topics_ru": {"type": "array", "items": {"type": "string"}},
     "caveats_ru": {"type": "string"}},
-    "required": ["summary_ru", "pattern_ru", "differences", "reasons_ru", "positive", "avoid_ru", "topics_ru", "caveats_ru"]}
+    "required": ["summary_ru", "main_ru", "comparison", "videos", "positive", "avoid_ru", "topics_ru", "caveats_ru"]}
 
-PATTERNS_PROMPT = """You are a top YouTube producer and data analyst. On one channel some videos get almost nothing and then one suddenly takes off. Find out WHY: what the videos that fired have in common and what the weak ones lack. The owner makes videos in the same niche and wants concrete conclusions he can repeat.
+PATTERNS_PROMPT = """You are a top YouTube producer. On one channel one video took off while the others got far less. Explain clearly WHY THIS video won and the others did not, video by video: where the author got it right and where he made a mistake. The owner makes videos in the same niche and must understand exactly what to repeat and what to avoid. He reads Russian and wants it orderly, not a mixed pile of observations.
 
 Channel: {title}{subs}. Format: {fmt}. Median views of the latest videos: {median}.
 
-ALL LATEST VIDEOS, NEWEST FIRST (views; HIT = fired, FLOP = weak; the newest 2 are still gaining views):
+ALL LATEST VIDEOS, NEWEST FIRST (views, times the median):
 {sequence}
 
 {images_note}
 
-VIDEOS THAT FIRED:
-{hits}
+THE VIDEOS TO COMPARE (number, views, title, description, the words spoken). Video 1 is THE HIT, the one that took off most:
+{videos}
 
-VIDEOS THAT GOT LITTLE:
-{flops}
+For EVERY video judge the same factors, in this order: {factors}. Read each script carefully: the hook is its first 1-3 sentences (first 3-5 seconds of a short, first 30 seconds of a long video); judge the structure, the promise and whether it is kept, the pace, the ending. Judge the thumbnail from the picture, the title and description from the text. Quote real titles, thumbnail text and lines. Compare against the hit: a weak video is weak in comparison with what the hit did.
 
-Compare them on everything that can matter: the topic and its promise, the title, the thumbnail, the first 3 seconds (the hook), the emotion, the conflict or stakes, the character, the length and pace, the structure, the ending, the timing and trends, the target viewer. Look at the whole sequence too: series, repeats, topics that keep winning. Be concrete and honest: quote the actual titles and lines. When the difference could be luck or the algorithm, say so.
-
-Return (everything in Russian except rule_en):
-- summary_ru: 2-3 sentences: what the channel does and what is strange about its numbers.
-- pattern_ru: the main pattern you found, 3-6 sentences: what separates the hits from the flops.
-- differences: 4-8 rows, each an aspect (aspect_ru, e.g. "Хук", "Тема", "Название", "Обложка", "Длина") with how the hits do it (hits_ru) and how the flops do it (flops_ru), concrete, with quotes.
-- reasons_ru: 3-6 most likely reasons the hits fired, most important first.
-- positive: 5-10 positive conclusions to repeat in our own videos: rule_ru for the owner, rule_en the same rule as a short imperative instruction for a scriptwriter. Reusable techniques, never copies of their plots.
-- avoid_ru: 3-6 things the flops did that we must not do.
-- topics_ru: 5-8 new topic ideas for us built on what made the hits fire.
-- caveats_ru: how sure you are and why (sample size, missing speech, luck), 1-3 sentences."""
+Return (Russian everywhere except rule_en):
+- summary_ru: 1-2 sentences: the channel and its numbers (the hit's views against the median).
+- main_ru: the answer in 3-5 plain sentences: why video 1 took off and the others did not, the 2-3 factors that decided it, most important first.
+- comparison: one row per factor in the order above: what the hit did (star_ru, concrete, with a quote), what the other videos did (others_ru, concrete, naming the videos), and how much this factor decided the result (weight: decisive, helped or minor).
+- videos: one entry per compared video, n = its number: verdict_ru (2-3 sentences: why it got exactly these views, the main mistake or the main win), and factors: one per factor in the order above with did_ru (what the author did, with a quote), grade (good, mixed or bad) and note_ru (why it works, or the mistake and how it should have been done).
+- positive: 5-8 conclusions to repeat in our videos: rule_ru for the owner, rule_en the same rule as a short imperative instruction for a scriptwriter. Reusable techniques, never copies of their plots.
+- avoid_ru: 3-6 mistakes of the weak videos we must not repeat.
+- topics_ru: 5-8 new topic ideas for us built on what made the hit work.
+- caveats_ru: how sure you are (sample size, missing speech, luck and the algorithm), 1-2 sentences."""
 
 
 def _pat_block(rows: list) -> str:
     out = []
-    for r in rows:
+    for i, r in enumerate(rows):
         dur = f", {int(r['duration'])} s" if r.get("duration") else ""
-        out.append(f"### «{r['title']}» ({r['views']} views{dur})\n"
-                   + (f"Description: {r['description']}\n" if r.get("description") else "")
+        out.append(f"### VIDEO {i + 1}{' (THE HIT)' if i == 0 else ''}: «{r['title']}» — {r['views']} views{dur}\n"
+                   + (f"Published: {r['date']}\n" if r.get("date") else "")
+                   + f"Description: {r.get('description') or '(empty)'}\n"
                    + f"Speech:\n{r.get('timed') or '(no speech found)'}")
-    return "\n\n".join(out) or "(none)"
+    return "\n\n".join(out)
+
+
+def pick_compare(rows: list, med: float, hits: list, flops: list) -> list:
+    """The hit first, then the other hits, the flops and one ordinary video, at most 7. A small channel: all of them."""
+    if len(rows) <= 7:
+        return sorted(rows, key=lambda r: -r["views"])
+    star = hits[0]
+    ids = {r["id"] for r in hits + flops}
+    mid = sorted((r for r in rows if r["id"] not in ids), key=lambda r: abs(r["views"] - med))[:1]
+    return [star] + hits[1:3] + flops[:3] + mid
 
 
 def _patterns(d: Path, m: dict, settings: dict, usage: dict):
     _log(d, "Получаю последние ролики канала и их просмотры…")
     title, subs, tab, rows = channel_recent(m["source"], m["count"], m.get("tab") or "auto")
-    if len(rows) < 5:
-        raise UserError(f"На канале нашлось только {len(rows)} роликов с просмотрами. Для поиска закономерностей нужно хотя бы 5.")
+    if len(rows) < 4:
+        raise UserError(f"На канале нашлось только {len(rows)} роликов с просмотрами. Для сравнения нужно хотя бы 4.")
     med, hits, flops = split_hits(rows)
-    if not flops:
-        raise UserError("Не нашлось слабых роликов для сравнения: все последние ролики набирают примерно одинаково.")
+    comp = pick_compare(rows, med, hits, flops)
+    star = comp[0]
     hit_ids, flop_ids = {r["id"] for r in hits}, {r["id"] for r in flops}
     for r in rows:
-        r["mark"] = "hit" if r["id"] in hit_ids else "flop" if r["id"] in flop_ids else ""
+        r["mark"] = "star" if r["id"] == star["id"] else "hit" if r["id"] in hit_ids else "flop" if r["id"] in flop_ids else ""
+        r["x"] = round(r["views"] / med, 1) if med else None
     m.update(title=f"Закономерности: {title or m['source']}", subscribers=subs, tab=tab, median=med, videos=rows)
     _write(d / "meta.json", m)
-    _log(d, f"Взял {len(rows)} последних {'шортсов' if tab == 'shorts' else 'роликов'}, средний ролик (медиана) "
-            f"набирает {int(med)} просмотров. Выстрелили: {len(hits)}, провалились: {len(flops)}. Беру их тексты…")
+    _log(d, f"Взял {len(rows)} последних {'шортсов' if tab == 'shorts' else 'роликов'}, обычный ролик (медиана) набирает "
+            f"{int(med)} просмотров. Главный хит: «{star['title']}» ({star['views']}). Сравниваю {len(comp)} роликов, беру их тексты…")
     images = []
-    for n, r in enumerate(hits + flops):
+    for n, r in enumerate(comp):
         try:
             info, lines, imgs = _fetch(d, settings, r["url"], n, frames=False)
         except UserError as err:
             _log(d, f"Текст ролика «{r['title']}» получить не удалось: {err}")
             info, lines, imgs = {}, [], _thumb(r["thumbnail"], d)
-        r.update(script=_plain(lines), timed=_timed(lines)[:6000 if tab == "shorts" else 9000],
-                 description=(info.get("description") or "")[:300], duration=info.get("duration") or r.get("duration"),
-                 thumbnail=info.get("thumbnail") or r["thumbnail"])
-        images += [(r, imgs[0])] if imgs else []
-    seq = "\n".join(f"{i + 1}. {('HIT ' if r['mark'] == 'hit' else 'FLOP ' if r['mark'] == 'flop' else '')}"
-                    f"«{r['title']}» — {r['views']} views" for i, r in enumerate(rows))
-    note = ("You also see the thumbnails, in this order: " + "; ".join(
-        f"{i + 1}) {'HIT' if r['mark'] == 'hit' else 'FLOP'} «{r['title']}»" for i, (r, _) in enumerate(images))
-        if images else "No thumbnails are available.")
+        up = info.get("upload_date") or ""
+        r.update(script=_plain(lines), timed=_timed(lines)[:6000 if tab == "shorts" else 8000],
+                 description=(info.get("description") or "")[:700], duration=info.get("duration") or r.get("duration"),
+                 thumbnail=info.get("thumbnail") or r["thumbnail"], date=f"{up[6:8]}.{up[4:6]}.{up[:4]}" if len(up) == 8 else "")
+        images += [(n, imgs[0])] if imgs else []
+    seq = "\n".join(f"- «{r['title']}» — {r['views']} views" + (f" (×{r['x']})" if r.get("x") is not None else "")
+                    for r in rows)
+    note = ("You also see the thumbnails: " + "; ".join(f"picture {i + 1} is the thumbnail of VIDEO {n + 1}"
+                                                         for i, (n, _) in enumerate(images))
+            if images else "No thumbnails are available: judge the thumbnail factor as unknown.")
     user = PATTERNS_PROMPT.format(title=title, subs=f" ({subs} subscribers)" if subs else "",
                                   fmt="Shorts (vertical, up to 3 min)" if tab == "shorts" else "long videos",
-                                  median=int(med), sequence=seq, images_note=note, hits=_pat_block(hits),
-                                  flops=_pat_block(flops))
-    _log(d, "Сравниваю ролики, которые выстрелили, с теми, что не набрали…")
+                                  median=int(med), sequence=seq, images_note=note, videos=_pat_block(comp),
+                                  factors=", ".join(FACTORS))
+    _log(d, "Сравниваю ролики по теме, названию, превью, описанию, хуку, сценарию и финалу…")
     m["patterns"] = llm.call_json(settings, "You are a YouTube producer and analyst. Answer only with JSON.", user,
-                                  SCHEMA_PATTERNS, usage, 16000, images=[b for _, b in images] or None)
-    keep = ("id", "title", "views", "url", "duration", "thumbnail", "script")
-    m["hits"] = [{k: r.get(k) for k in keep} for r in hits]
-    m["flops"] = [{k: r.get(k) for k in keep} for r in flops]
-    m["videos"] = [{k: r.get(k) for k in ("id", "title", "views", "url", "mark")} for r in rows]
+                                  SCHEMA_PATTERNS, usage, 24000, images=[b for _, b in images] or None)
+    keep = ("id", "title", "views", "url", "duration", "thumbnail", "script", "x", "mark", "date")
+    m["compared"] = [{k: r.get(k) for k in keep} for r in comp]
+    m["videos"] = [{k: r.get(k) for k in ("id", "title", "views", "url", "mark", "x")} for r in rows]
     _write(d / "meta.json", m)
 
 
@@ -648,7 +666,8 @@ def library_entries(aid: str, indexes: list = None, with_channel: bool = True) -
         if not pick:
             raise UserError("Отметьте хотя бы один вывод.")
         return [{"type": "patterns", "kind": "channel", "source": m.get("source", "") + "#patterns",
-                 "title": m.get("title", ""), "summary_ru": p.get("summary_ru", ""), "why_ru": p.get("pattern_ru", ""),
+                 "title": m.get("title", ""), "summary_ru": p.get("summary_ru", ""),
+                 "why_ru": p.get("main_ru") or p.get("pattern_ru", ""),
                  "strengths_ru": [x["rule_ru"] for x in pick], "techniques": [x["rule_en"] for x in pick],
                  "avoid_ru": p.get("avoid_ru") or [], "topics_ru": p.get("topics_ru") or []}]
     items = m.get("items") or []

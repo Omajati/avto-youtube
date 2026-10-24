@@ -2471,7 +2471,7 @@ async function viewProducer(id) {
       <select id="pt-tab"><option value="auto">Где их больше (шортсы или длинные)</option><option value="shorts">Шортсы</option><option value="videos">Длинные ролики</option></select>
     </div></div>
     <div class="row" style="margin-top:10px"><button class="primary" id="pt-go">🔍 Найти закономерности</button></div>
-    <p class="muted small">Стоит примерно $0.05–0.15 у нейросети сценария: сравниваются до 6 роликов целиком и названия всех остальных.</p>
+    <p class="muted small">Стоит примерно $0.08–0.20 у нейросети сценария: до 7 роликов разбираются целиком (тема, название, превью, описание, хук, сценарий, финал), у остальных смотрятся названия и просмотры.</p>
   </div>
   <div class="card"><h2>Разборы</h2>${r.items.length ? `<table>${r.items.map(x => `<tr><td><a href="#/producer/${x.id}">${x.mode === "patterns" ? "🔍 " : ""}${esc(x.title || x.source)}</a><div class="muted small">${esc(x.source)}${x.count ? ` · роликов: ${x.count}` : ""}</div></td><td>${PR_STATUS[x.status] || esc(x.status)}</td></tr>`).join("")}</table>` : `<p class="muted">Пока ни одного разбора.</p>`}</div>
   <div class="card"><h2>Загрузчик YouTube</h2>
@@ -2535,20 +2535,48 @@ function prItem(x, i, canPick) {
   </div>`;
 }
 
+const PT_GRADE = { good: "✅", mixed: "➖", bad: "❌" };
+const PT_WEIGHT = { decisive: "🔑 решило", helped: "👍 помогло", minor: "· почти не влияло" };
+function ptThumb(v) { return v.thumbnail ? `<img src="${esc(v.thumbnail)}" style="width:160px;border-radius:6px;flex:none" loading="lazy" onerror="this.remove()">` : ""; }
+function ptX(v) { return v.x != null ? ` · ×${String(v.x).replace(".", ",")} от обычного` : ""; }
+
 function prPatterns(m) {
   const p = m.patterns, vids = m.videos || [];
   const max = Math.max(1, ...vids.map(v => v.views || 0));
+  const icon = mk => mk === "star" ? "🏆" : mk === "hit" ? "🔥" : mk === "flop" ? "💤" : "";
   const bars = vids.length ? `<div class="card"><h2>Просмотры последних роликов</h2>
-    <p class="muted small">Сверху самые новые. Средний ролик (медиана) набирает ${Number(m.median || 0).toLocaleString("ru")}. 🔥 выстрелил, 💤 не набрал. Два самых новых ещё набирают просмотры и в провалы не попадают.</p>
-    ${vids.map(v => `<div class="pt-row"><span class="pt-mark">${v.mark === "hit" ? "🔥" : v.mark === "flop" ? "💤" : ""}</span><a class="pt-t small" href="${esc(v.url)}" target="_blank" title="${esc(v.title)}">${esc(v.title)}</a><span class="pt-bar"><i class="${v.mark}" style="width:${Math.max(1, 100 * (v.views || 0) / max).toFixed(1)}%"></i></span><span class="pt-v small">${Number(v.views || 0).toLocaleString("ru")}</span></div>`).join("")}</div>` : "";
+    <p class="muted small">Сверху самые новые. Обычный ролик (медиана) набирает ${Number(m.median || 0).toLocaleString("ru")}. 🏆 главный хит, 🔥 тоже выше обычного, 💤 не набрал.</p>
+    ${vids.map(v => `<div class="pt-row"><span class="pt-mark">${icon(v.mark)}</span><a class="pt-t small" href="${esc(v.url)}" target="_blank" title="${esc(v.title)}">${esc(v.title)}</a><span class="pt-bar"><i class="${v.mark === "star" ? "hit" : v.mark}" style="width:${Math.max(1, 100 * (v.views || 0) / max).toFixed(1)}%"></i></span><span class="pt-v small">${Number(v.views || 0).toLocaleString("ru")}</span></div>`).join("")}</div>` : "";
   if (!p) return bars;
-  const vlist = (arr, icon) => (arr || []).map(v => `<div style="margin:6px 0">${icon} <a href="${esc(v.url)}" target="_blank">${esc(v.title)}</a> <span class="muted small">${prViews(v.views)}</span>${v.script ? `<details><summary class="small">Текст ролика</summary><pre style="white-space:pre-wrap">${esc(v.script)}</pre></details>` : `<div class="muted small">Текста нет, сравнивал по названию и обложке</div>`}</div>`).join("");
-  return `<div class="card"><h2>Главное</h2>${prSection("Что за канал", nl(p.summary_ru))}${prSection("Закономерность", nl(p.pattern_ru))}${prSection("Почему выстрелили", prList(p.reasons_ru))}${p.caveats_ru ? `<p class="muted small" style="margin-top:8px">${nl(p.caveats_ru)}</p>` : ""}</div>
-  ${(p.differences || []).length ? `<div class="card"><h2>Выстрелившие против провалившихся</h2><table><tr><th></th><th>🔥 Выстрелили</th><th>💤 Не набрали</th></tr>${p.differences.map(r => `<tr><td><b>${esc(r.aspect_ru)}</b></td><td>${nl(r.hits_ru)}</td><td>${nl(r.flops_ru)}</td></tr>`).join("")}</table></div>` : ""}
-  <div class="card"><h2>✅ Выводы: что повторять</h2>${(p.positive || []).map((x, i) => `<label class="check"><input type="checkbox" class="pt-pick" data-i="${i}" checked> ${esc(x.rule_ru)}</label>`).join("")}
-    ${prSection("❌ Чего не делать", prList(p.avoid_ru))}${prSection("Темы для нас", prList(p.topics_ru))}</div>
-  ${bars}
-  <div class="card"><h2>Сравнивались</h2>${vlist(m.hits, "🔥")}${vlist(m.flops, "💤")}</div>`;
+  const concl = `<div class="card"><h2>✅ Выводы: что повторять</h2>${(p.positive || []).map((x, i) => `<label class="check"><input type="checkbox" class="pt-pick" data-i="${i}" checked> ${esc(x.rule_ru)}</label>`).join("")}
+    ${prSection("❌ Ошибки, которые нельзя повторять", prList(p.avoid_ru))}${prSection("Темы для нас", prList(p.topics_ru))}</div>`;
+  if (!p.videos) {  // an analysis made by version 93
+    return `<div class="card"><h2>Главное</h2>${prSection("Что за канал", nl(p.summary_ru))}${prSection("Закономерность", nl(p.pattern_ru))}${prSection("Почему выстрелили", prList(p.reasons_ru))}
+      <p class="muted small">Это разбор старого вида. Нажмите «🔄 Разобрать заново», чтобы получить разбор по каждому ролику.</p></div>
+      ${(p.differences || []).length ? `<div class="card"><h2>Выстрелившие против провалившихся</h2><table><tr><th></th><th>🔥 Выстрелили</th><th>💤 Не набрали</th></tr>${p.differences.map(r => `<tr><td><b>${esc(r.aspect_ru)}</b></td><td>${nl(r.hits_ru)}</td><td>${nl(r.flops_ru)}</td></tr>`).join("")}</table></div>` : ""}
+      ${concl}${bars}`;
+  }
+  const comp = m.compared || [], star = comp[0] || {};
+  const cards = p.videos.map(x => {
+    const v = comp[x.n - 1] || {};
+    return `<div class="card pt-card ${x.n === 1 ? "pt-star" : ""}">
+      <div class="row" style="align-items:flex-start;gap:12px;flex-wrap:nowrap">${ptThumb(v)}<div>
+        <div>${x.n === 1 ? "🏆 <b>Главный хит</b> · " : icon(v.mark) + " "}<a href="${esc(v.url || "")}" target="_blank"><b>${esc(v.title || "Ролик " + x.n)}</b></a></div>
+        <div class="muted small">${prViews(v.views)}${ptX(v)}${v.date ? " · " + esc(v.date) : ""}${v.duration ? " · " + fmtTime(v.duration) : ""}</div>
+        <p style="margin:6px 0 0">${nl(x.verdict_ru)}</p></div></div>
+      <table class="pt-f">${(x.factors || []).map(f => `<tr><td class="pt-g">${PT_GRADE[f.grade] || ""}</td><td><b>${esc(f.factor)}</b></td><td>${nl(f.did_ru)}<div class="muted small">${nl(f.note_ru)}</div></td></tr>`).join("")}</table>
+      ${v.script ? `<details><summary class="small">Текст ролика</summary><pre style="white-space:pre-wrap">${esc(v.script)}</pre></details>` : `<div class="muted small">Текста нет, сравнивал по названию, описанию и превью</div>`}
+    </div>`;
+  }).join("");
+  return `<div class="card"><h2>🏆 Почему выстрелил «${esc(star.title || "")}»</h2>
+      <div class="muted small">${prViews(star.views)}${ptX(star)}</div>
+      <p style="font-size:1.05em">${nl(p.main_ru)}</p>
+      <p class="muted small">${nl(p.summary_ru)}${p.caveats_ru ? " " + nl(p.caveats_ru) : ""}</p></div>
+    ${(p.comparison || []).length ? `<div class="card"><h2>Хит против остальных</h2><table class="pt-cmp"><tr><th></th><th>🏆 Хит</th><th>Остальные ролики</th><th></th></tr>
+      ${p.comparison.map(r => `<tr><td><b>${esc(r.factor)}</b></td><td>${nl(r.star_ru)}</td><td>${nl(r.others_ru)}</td><td class="small nowrap">${PT_WEIGHT[r.weight] || ""}</td></tr>`).join("")}</table></div>` : ""}
+    <h2 style="margin:18px 0 6px">Разбор каждого ролика</h2>
+    <p class="muted small">✅ сделано хорошо · ➖ так себе · ❌ ошибка автора (под ней, как надо было)</p>
+    ${cards}${concl}${bars}`;
 }
 
 async function viewProducerOne(id) {
@@ -2574,7 +2602,12 @@ async function viewProducerOne(id) {
   ${pat ? prPatterns(m) : ""}
   ${items.map((x, i) => prItem(x, i, !running && items.length > 1)).join("")}
   <div class="card"><h2>Журнал</h2><pre class="log" style="white-space:pre-wrap;max-height:300px;overflow:auto">${esc(m.log || "Пока пусто.")}</pre>
-    <div class="row"><span class="grow"></span><button class="danger" id="pr-del" ${running ? "disabled" : ""}>Удалить разбор</button></div></div>`;
+    <div class="row">${pat && !running ? `<button id="pt-again">🔄 Разобрать заново</button>` : ""}<span class="grow"></span><button class="danger" id="pr-del" ${running ? "disabled" : ""}>Удалить разбор</button></div></div>`;
+  if ($("#pt-again")) $("#pt-again").onclick = async e => {
+    e.target.disabled = true;
+    try { const n = await api("/api/producer", { json: { link: m.source, mode: "patterns", count: m.count, tab: m.tab || "auto" } }); location.hash = `#/producer/${n.id}`; }
+    catch (er) { toast(er.message, true); e.target.disabled = false; }
+  };
   const save = $("#pr-save");
   if (save) save.onclick = async () => {
     const pid = $("#pr-proj").value;
