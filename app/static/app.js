@@ -1237,7 +1237,7 @@ function renderStages(d) {
     const count = () => { wc.textContent = `${(ta.value.match(/[0-9A-Za-zА-Яа-яЁё]+/g) || []).length} слов`; };
     ta.oninput = count; count();
     fSave.onclick = async () => {
-      if (!confirm("Сохранить ваш текст? Сцены, картинки, озвучка и видео будут сделаны заново по нему.")) return;
+      if (!confirm("Сохранить ваш текст? Сцены, озвучка и видео будут сделаны заново. Картинки абзацев, которые вы не меняли, останутся прежними, заново нарисуются только новые и изменённые.")) return;
       fSave.disabled = true;
       await api(`/api/jobs/${j.id}/script`, { json: { text: ta.value } })
         .then(() => toast("Текст сохранён, ролик собирается заново")).catch(e => { toast(e.message, true); fSave.disabled = false; });
@@ -1569,7 +1569,7 @@ const RENDER = {
         ${checksHtml(x.checks)}
       </details>`).join("")}
       ${r ? `<details ${d.job.status === "review" ? "open" : ""}><summary><b>✏️ Итоговый текст для озвучки — можно исправить вручную</b>${r.edited_by_owner ? " (исправлен вами)" : ""}</summary>
-        <p class="muted small">Здесь ровно то, что будет прочитано вслух. Исправьте что хотите и нажмите «Сохранить мой текст»: программа заново разобьёт его на сцены, нарисует картинки и озвучит. Пустая строка разделяет абзацы.${(d.job.options.characters || []).length ? " Реплика героя своим голосом пишется отдельным абзацем: «Имя: фраза»." : ""}</p>
+        <p class="muted small">Здесь ровно то, что будет прочитано вслух. Исправьте что хотите и нажмите «Сохранить мой текст»: программа заново разобьёт его на сцены и озвучит. Картинки неизменённых кусков останутся прежними (и их анимации тоже), платно рисуются только новые и изменённые. Пустая строка разделяет абзацы.${(d.job.options.characters || []).length ? " Реплика героя своим голосом пишется отдельным абзацем: «Имя: фраза»." : ""}</p>
         <textarea id="final-text" rows="14" style="width:100%" ${d.job.status === "running" ? "disabled" : ""}>${esc(r.final_script)}</textarea>
         <div class="row" style="margin-top:8px"><button class="primary" id="final-save" ${d.job.status === "running" ? "disabled title=\"Поставьте ролик на паузу\"" : ""}>Сохранить мой текст</button><span class="muted small" id="final-wc"></span></div>
       </details>` : ""}`;

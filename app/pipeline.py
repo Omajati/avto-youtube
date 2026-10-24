@@ -1299,7 +1299,7 @@ def set_final_script(jid: str, text: str):
     review["checks"] = script_checks(text, old.get("target_words", word_count(text)), wpm)
     write_json(d / "review.json", review)
     (d / "script_final.txt").write_text(text, "utf-8")
-    reset_from(jid, "scenes")
+    reset_from(jid, "scenes", keep_pictures=True)
 
 
 # Camera plan: neighbouring pictures never share a camera angle, so even one room looks alive.
@@ -1597,6 +1597,10 @@ def st_scenes(c: Ctx):
     c.log(f"Сценарий разбит на {len(chunks)} сцен, пишу описания картинок…")
     scenes = _prompts_for(c, chunks, c.vertical, (c.data("outline") or {}).get("title", ""))
     _logic_check(c, scenes)
+    reused = _reuse_pictures(c, scenes)
+    if reused:
+        c.log(f"Текст {len(reused)} сцен из {len(scenes)} не изменился: их картинки и анимации взяты из прошлой "
+              "версии, заново нарисуются только новые и изменённые.")
     _name_speakers(c, scenes)
     write_json(c.out("scenes"), {"scenes": scenes})
 
@@ -2507,18 +2511,79 @@ def _remove(d: Path, pattern: str):
         shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
 
 
-def reset_from(jid: str, stage: str):
-    """Delete the results of `stage` and whatever depends on it."""
+def _scene_key(sc: dict) -> str:
+    return (sc.get("speaker") or "") + "|" + re.sub(r"\s+", " ", sc.get("text") or "").strip().lower()
+
+
+def _stash_pictures(d: Path):
+    """Before the text is made again: keep the scene pictures and animations with their scene texts in reuse/."""
+    scenes = (read_json(d / "scenes.json") or {}).get("scenes") or []
+    pics = sorted((d / "images").glob("scene_*.png")) if (d / "images").exists() else []
+    if not scenes or not pics:
+        return  # nothing new to keep: an earlier stash, if any, stays
+    keep = d / "reuse"
+    shutil.rmtree(keep, ignore_errors=True)
+    keep.mkdir()
+    write_json(keep / "scenes.json", {"scenes": scenes,
+                                      "animated": (read_json(d / "animate.json") or {}).get("scene") or []})
+    for f in pics + sorted((d / "anim").glob("scene_*.mp4") if (d / "anim").exists() else []):
+        shutil.move(str(f), keep / f.name)
+
+
+def _reuse_pictures(c: "Ctx", scenes: list) -> list:
+    """Scenes with the same text as before the edit get their old description, picture and animation.
+    Returns [(new index, old index)]."""
+    keep = c.dir / "reuse"
+    old = read_json(keep / "scenes.json") or {}
+    if not old.get("scenes"):
+        return []
+    free = {}
+    for j, sc in enumerate(old["scenes"]):
+        if (keep / f"scene_{j:03d}.png").exists():
+            free.setdefault(_scene_key(sc), []).append(j)
+    pairs = []
+    img, adir = c.dir / "images", c.dir / "anim"
+    for i, sc in enumerate(scenes):
+        js = free.get(_scene_key(sc))
+        if not js:
+            continue
+        j = js.pop(0)
+        scenes[i] = {**old["scenes"][j], "text": sc["text"]}
+        img.mkdir(exist_ok=True)
+        shutil.copy(keep / f"scene_{j:03d}.png", img / f"scene_{i:03d}.png")
+        if (keep / f"scene_{j:03d}.mp4").exists():
+            adir.mkdir(exist_ok=True)
+            shutil.copy(keep / f"scene_{j:03d}.mp4", adir / f"scene_{i:03d}.mp4")
+        pairs.append((i, j))
+    # Scenes the owner chose to animate move with their pictures.
+    job = db.get(c.id) or {}
+    chosen = anim_scenes(job)
+    if chosen and pairs:
+        moved = {j: i for i, j in pairs}
+        db.update(c.id, options=dict(job["options"], anim_scenes=[moved[j] for j in chosen if j in moved]))
+    shutil.rmtree(keep, ignore_errors=True)
+    return pairs
+
+
+def reset_from(jid: str, stage: str, keep_pictures: bool = False):
+    """Delete the results of `stage` and whatever depends on it. keep_pictures: the text changes (the owner's edit or
+    a stage before the scenes), so the pictures of scenes whose text stays the same are kept for reuse. A redo of
+    the scenes themselves means the owner wants new pictures."""
     d = job_dir(jid)
     idx = STAGE_IDS.index(stage)
     if stage in RESET_PLAN:
         for pattern in RESET_PLAN[stage]:
             _remove(d, pattern)
     else:
+        # New text means new voice, images and clips. The pictures are kept aside first: a scene whose text did not
+        # change gets its old picture (and animation) back instead of a paid new one.
+        if keep_pictures or idx < STAGE_IDS.index("scenes"):
+            _stash_pictures(d)
+        else:
+            shutil.rmtree(d / "reuse", ignore_errors=True)
         for sid in STAGE_IDS[idx:]:
             (d / f"{sid}.json").unlink(missing_ok=True)
         (d / "review_progress.json").unlink(missing_ok=True)
-        # New text means new voice, images and clips.
         for rel in ("audio", "images", "anim", "clips", "clips_short", "output", "narration.wav", "short_narration.wav",
                     "thumb.json", "graphics_*.json"):
             _remove(d, rel)
