@@ -610,6 +610,11 @@ class Ctx:
         """A product commercial shot as one continuous camera move around the product on one set."""
         return bool(self.project.get("ad_mode") and self.project.get("one_take"))
 
+    def take_shots(self) -> int:
+        """One take: how many shots fit the video when every clip lasts its full 5 seconds."""
+        seconds = self.short_seconds if self.short_format else self.minutes * 60
+        return max(2, round(seconds / TAKE_CLIP))
+
     @property
     def mute(self) -> bool:
         """No voice: the video goes to music only, its text is shown on screen."""
@@ -968,7 +973,8 @@ class Ctx:
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
                   + (AD_OVERRIDE if self.project.get("ad_mode") else "")
                   + (ONE_TAKE_RULE if self.one_take else "")
-                  + (MUTE_OVERRIDE.format(lines=max(5, round(self.short_seconds / 3.2)) if self.short_format
+                  + (MUTE_OVERRIDE.format(lines=self.take_shots() if self.one_take
+                                          else max(5, round(self.short_seconds / 3.2)) if self.short_format
                                           else max(8, round(self.minutes * 60 / 3.5))) if self.mute else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
                   + self.lessons_block() + self.golden_block(prompt_file) + self.library_block(prompt_file)
@@ -1512,6 +1518,20 @@ TAKE_SHOTS = [
 TAKE_MOVE = {k: m for k, _, m, _ in TAKE_SHOTS}
 
 
+TAKE_CLIP = 5.0  # seconds of one Kling clip: one take shows each clip whole, at its own speed
+
+
+def take_chunks(chunks: list, n: int) -> list:
+    """Merges neighbouring pieces of the script into n scenes: one scene per 5-second clip."""
+    if len(chunks) <= n:
+        return chunks
+    out = []
+    for k in range(n):
+        part = chunks[round(k * len(chunks) / n):round((k + 1) * len(chunks) / n)]
+        out.append({**part[0], "text": " ".join(x["text"] for x in part), "paragraph_end": part[-1]["paragraph_end"]})
+    return out
+
+
 def take_plan(n: int) -> list:
     """The camera path for n pictures: starts wide, ends on the hero shot, the middle loops around the product."""
     keys = [k for k, *_ in TAKE_SHOTS]
@@ -1843,6 +1863,8 @@ def st_scenes(c: Ctx):
         _montage_world(c, script)
     chunks = split_chunks(c.strip_host_labels(script), c.scene_words("short_words_per_scene" if c.short_format else "words_per_scene"),
                           c.speakers())
+    if c.one_take:
+        chunks = take_chunks(chunks, c.take_shots())
     c.log(f"Сценарий разбит на {len(chunks)} сцен, пишу описания картинок…")
     scenes = _prompts_for(c, chunks, c.vertical, (c.data("outline") or {}).get("title", ""))
     _logic_check(c, scenes)
@@ -1977,8 +1999,8 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
         sc = scenes[i]
         mp3 = audio / f"{prefix}_{i:03d}.mp3"
         wav = audio / f"{prefix}_{i:03d}.wav"
-        if c.mute:  # silence as long as the line takes to read
-            media.silence(wav, mute_seconds(sc["text"]))
+        if c.mute:  # silence as long as the line takes to read, or one whole clip in one take
+            media.silence(wav, TAKE_CLIP if c.one_take else mute_seconds(sc["text"]))
             return i
         if c.demo:
             media.demo_audio(mp3, max(1.5, word_count(sc["text"]) / 2.5), i)
