@@ -325,12 +325,20 @@ PRODUCT COMMERCIAL OVERRIDE (this rule beats every instruction above and below a
 - Images: commercial product photography: the product is the hero of every picture with its exact look, studio or stylish set lighting, macro detail, clean backgrounds, dynamic elements (splashes, particles, light streaks, smoke) that fit the product. No people, no hands, no text."""
 
 
+ONE_TAKE_RULE = """
+
+ONE TAKE (this beats every rule above and below about locations, dynamic elements and changing scenes):
+- The whole video is one continuous camera move around the product on ONE set in ONE location, like a motion-control commercial shot in one take. The set never changes: the same surface or pedestal, the same background, the same light and the same few props in every picture.
+- In the outline give exactly one location: the set, described precisely (surface, background colour and texture, light direction, 1-3 matching props) so it can be drawn the same every time.
+- The product stands still in one spot the whole time; only the camera moves: it pushes in, circles, rises, dives into a macro detail, pulls back. No splashes, no levitation, no new objects, no jumps to other places."""
+
+
 MUTE_OVERRIDE = """
 
 NO VOICE (this beats every rule above and below about the narrator, speech, voice, word counts and length):
-- Nobody speaks in this video. It runs to music only, and the script is the text shown on screen, line by line, over the pictures.
-- Write about {lines} lines, one per paragraph (separate lines with a blank line). Each line is 2-7 words: a punchy caption a viewer reads in a glance, like text in a premium commercial or a Reels caption. No long sentences, no lists, no lines that only make sense spoken aloud.
-- The lines still follow the structure above (hook, desire, reveal, benefits shown in the picture, call to action), each line pairing with one picture."""
+- Nobody speaks in this video and no text is shown: it runs to music only, the pictures tell everything.
+- The script is only the plan of the shots: about {lines} lines, one per paragraph (separate lines with a blank line), each 3-8 words saying what this moment shows and makes the viewer feel ("The blade catches the light", "Slow reveal of the gold edge").
+- The lines still follow the structure above (hook, desire, reveal, benefits the camera shows, final hero shot), one line per shot."""
 
 
 SPOKEN_RULES = """
@@ -596,6 +604,11 @@ class Ctx:
         self.episode = int(self.opts.get("episode") or 0) if self.project.get("series") else 0
         self._lock = threading.Lock()
         self.stage = ""
+
+    @property
+    def one_take(self) -> bool:
+        """A product commercial shot as one continuous camera move around the product on one set."""
+        return bool(self.project.get("ad_mode") and self.project.get("one_take"))
 
     @property
     def mute(self) -> bool:
@@ -954,6 +967,7 @@ class Ctx:
                   + (KIDS_OVERRIDE if self.project.get("made_for_kids")
                      else FICTION_OVERRIDE if self.project.get("fiction") else "")
                   + (AD_OVERRIDE if self.project.get("ad_mode") else "")
+                  + (ONE_TAKE_RULE if self.one_take else "")
                   + (MUTE_OVERRIDE.format(lines=max(5, round(self.short_seconds / 3.2)) if self.short_format
                                           else max(8, round(self.minutes * 60 / 3.5))) if self.mute else "")
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
@@ -1475,6 +1489,44 @@ AD_SHOTS = [
 ]
 AD_MOVE = {k: m for k, _, m, _ in AD_SHOTS}
 
+# One take: a camera path around the product on one set; each framing is a short move from the previous one.
+# (key, framing, the move from this framing to the next one, still-picture move)
+TAKE_SHOTS = [
+    ("wide", "wide shot from the front at eye level: the whole set with the product standing in its spot in the middle",
+     "slow dolly push-in toward the product", "zoom_in"),
+    ("push", "medium shot from the front, the camera moved closer: the product fills about half of the frame",
+     "the camera glides closer while circling to the left", "zoom_in"),
+    ("left", "close three-quarter view from the front-left: the camera has circled to the left of the product",
+     "the camera pushes into an extreme macro of the key detail", "zoom_in"),
+    ("detail", "extreme macro close-up of the product's key functional detail seen from the front-left, very shallow depth of field, the set softly blurred behind",
+     "the camera pulls back from the macro and keeps circling to the side", "zoom_out"),
+    ("side", "close side view in profile from the left: the camera keeps circling around the product",
+     "the camera circles around the front to the right side", "pan_right"),
+    ("right", "medium three-quarter view from the front-right: the camera has circled to the right side",
+     "the camera rises and tilts down over the product", "pan_left"),
+    ("top", "high angle from above and slightly in front, looking down at the product in its spot on the set",
+     "the camera cranes down to a low angle in front of the product", "zoom_out"),
+    ("hero", "low-angle hero shot from the front, a little wider: the product towers over the set with a rim light",
+     "very slow push-in toward the product", "zoom_in"),
+]
+TAKE_MOVE = {k: m for k, _, m, _ in TAKE_SHOTS}
+
+
+def take_plan(n: int) -> list:
+    """The camera path for n pictures: starts wide, ends on the hero shot, the middle loops around the product."""
+    keys = [k for k, *_ in TAKE_SHOTS]
+    if n <= 1:
+        return ["hero"][:n]
+    short_paths = {2: ["wide", "hero"], 3: ["wide", "detail", "hero"], 4: ["wide", "push", "detail", "hero"],
+                   5: ["wide", "push", "detail", "side", "hero"], 6: ["wide", "push", "left", "detail", "right", "hero"],
+                   7: ["wide", "push", "left", "detail", "side", "top", "hero"]}
+    if n in short_paths:  # short videos keep the push-in and the macro detail, the heart of a product spot
+        return short_paths[n]
+    if n <= len(keys):
+        return keys[:n - 1] + ["hero"]
+    middle = keys[1:-1]
+    return ["wide"] + [middle[i % len(middle)] for i in range(n - 2)] + ["hero"]
+
 
 def ad_shot_plan(n: int, seed: str) -> list:
     """Opens on a macro tease, ends on the hero packshot, never repeats a neighbour in between."""
@@ -1524,9 +1576,13 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
     out = []
     batch = 45
     ad = bool(c.project.get("ad_mode"))
-    shots = (ad_shot_plan if ad else shot_plan)(len(chunks), f"{c.id}-{title}-{vertical}")
-    shot_text = {k: t for k, t, *_ in AD_SHOTS} if ad else dict(SHOTS)
-    still_move = {k: m for k, _, _, m in AD_SHOTS}
+    take = c.one_take
+    shots = take_plan(len(chunks)) if take else (ad_shot_plan if ad else shot_plan)(len(chunks), f"{c.id}-{title}-{vertical}")
+    table = TAKE_SHOTS if take else AD_SHOTS
+    shot_text = {k: t for k, t, *_ in table} if ad else dict(SHOTS)
+    still_move = {k: m for k, _, _, m in table}
+    move_of = TAKE_MOVE if take else AD_MOVE
+    the_set = next((x["name"] for x in o.get("locations", []) if x.get("name")), "") if take else ""
     for start in range(0, len(chunks), batch):
         part = chunks[start:start + batch]
         who = {x["id"]: c.char_name(x) for x in c.characters}
@@ -1560,6 +1616,11 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
                 "the picture shows the very detail that proves it. Premium commercial lighting, rich contrast, clean "
                 "backgrounds or stylish sets, dynamic elements that fit the product. Absolutely no people, faces, hands, "
                 "fingers or body parts, and no text or letters except the product's own labels.")
+            if take:
+                fx += ("\n\nONE TAKE: every picture is the same set (" + (the_set or "the one location") + ") with the product "
+                       "standing still in exactly the same spot, the same background, light and props; only the camera "
+                       "position changes as the [camera: ...] says. No splashes, particles, levitation or new objects. Put "
+                       "this set's name in location for every picture.")
             if any(ch.get("speaker") for ch in part):
                 fx += ("\n\nFragments marked [Name says] are lines spoken by that character: show that character "
                        "speaking or reacting, close enough to read the face.")
@@ -1586,8 +1647,8 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
                 "motion": still_move[shots[start + i]] if ad else media.MOTIONS[(start + i) % len(media.MOTIONS)],
                 "characters": visible,
                 "items": ([c.char_name(it) for it in c.items] if ad else list((p or {}).get("items") or [])),
-                **({"move": AD_MOVE[shots[start + i]]} if ad else {}),
-                "location": (p or {}).get("location", ""),
+                **({"move": move_of[shots[start + i]]} if ad else {}),
+                "location": the_set or (p or {}).get("location", ""),
                 **({"speaker": ch["speaker"]} if ch.get("speaker") else {}),
                 "effect": (p or {}).get("effect", "none"),
                 "sfx": (p or {}).get("sfx", "none"),
@@ -2202,6 +2263,15 @@ def st_images(c: Ctx):
                     continue  # a close-up or a detail shows almost no background: the cheap model draws it
                 if pl:
                     places[out] = pl
+    if c.one_take and scenes and not c.demo:
+        # One take: the first (wide) picture is drawn first and every next one copies its set, light and product spot.
+        master = img / "scene_000.png"
+        if not master.exists():
+            c.log("Одним дублем: сначала рисую общий план сцены, остальные кадры повторят его фон, свет и место товара…")
+            _make_image(c, scenes[0]["prompt"], master, c.vertical, 0, refs=refs.get(master), place=places.get(master),
+                        items=item_refs.get(master))
+        for i in range(1, len(scenes)):
+            places[img / f"scene_{i:03d}.png"] = master
     extras = c.data("extras") or {}
     if extras.get("thumbnail_prompt"):
         jobs.append((extras["thumbnail_prompt"], img / "thumbnail_src.png", c.vertical, 999))
@@ -2270,7 +2340,7 @@ def subs_on(job_or_opts, kind: str, settings: dict = None) -> bool:
     """Whether subtitles are burned into the long video ("video") or the short ("short")."""
     opts = job_or_opts.get("options", job_or_opts)
     if opts.get("voice_off"):
-        return True  # without a voice the text on screen is the whole message
+        return False  # no voice: the script is only the plan of the shots, nothing is written on screen
     key = "subs_video" if kind == "video" else "subs_short"
     if key in opts:
         return bool(opts[key])
@@ -2379,7 +2449,11 @@ def st_animate(c: Ctx):
     work_items = [("scene", i, scenes[i], voice["durations"][i], c.vertical) for i in sel]
     work_items += [("short", i, short["scenes"][i], voice["short_durations"][i], True) for i in ssel]
     todo = [w for w in work_items if not (adir / f"{w[0]}_{w[1]:03d}.mp4").exists()]
-    est = sum(animate.cost(c.settings, w[3]) for w in todo) if not c.demo else 0
+    # One take: every clip flies from its picture to the next one (Kling's end frame), so the cuts disappear.
+    aset = {**c.settings, "video_model": "kling25"} if c.one_take else c.settings
+    if c.one_take and c.settings.get("video_model") not in (None, "", "kling25"):
+        c.log("Одним дублем: для плавных переходов кадр в кадр беру Kling 2.5 Turbo Pro (он умеет конечный кадр).")
+    est = sum(animate.cost(aset, w[3]) for w in todo) if not c.demo else 0
     c.log(f"Оживляю сцены: {len(todo)} из {len(work_items)} "
           f"({animate.model(c.settings)['name'].split(' — ')[0]}, примерно ${est:.2f})…")
     done = [len(work_items) - len(todo)]
@@ -2394,13 +2468,16 @@ def st_animate(c: Ctx):
                 w_, h_ = (720, 1280) if vertical else (1280, 720)
                 media.render_clip(img, out, int(5 * 25), w_, h_, 25, "zoom_in", 0.3)
             else:
-                data = animate.generate(c.settings, img, sc["prompt"], need, vertical, c.check,
-                                        motion=animate.ad_motion(sc.get("move", "")) if c.project.get("ad_mode") else None)
+                nxt = c.dir / "images" / f"{prefix}_{i + 1:03d}.png"
+                tail = nxt if c.one_take and nxt.exists() else None
+                motion = (animate.take_motion(sc.get("move", ""), bool(tail)) if c.one_take
+                          else animate.ad_motion(sc.get("move", "")) if c.project.get("ad_mode") else None)
+                data = animate.generate(aset, img, sc["prompt"], need, vertical, c.check, motion=motion, tail=tail)
                 tmp = out.with_suffix(".part")
                 tmp.write_bytes(data)
                 tmp.replace(out)
-                c.add_usage("anim_cost", animate.cost(c.settings, need))
-                balance.record("fal", animate.cost(c.settings, need))
+                c.add_usage("anim_cost", animate.cost(aset, need))
+                balance.record("fal", animate.cost(aset, need))
         except UserError as e:
             if "ключ" in str(e) or "денег" in str(e) or "лимит" in str(e):
                 raise
@@ -2433,6 +2510,8 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     strength = float(c.settings["motion_strength"])
     anim = set((read_json(c.out("animate"), {}) or {}).get(prefix, []))
     fx = effects.plan(scenes, fx_mode(db.get(c.id) or c.opts), height > width)
+    if c.one_take:  # one smooth camera move: no punches or shakes between the shots
+        fx = [(i, "none", sfx if sfx == "whoosh" else "none") for i, _e, sfx in fx]
 
     def work(i):
         c.check()
@@ -2440,7 +2519,8 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
         src = c.dir / "anim" / f"{prefix}_{i:03d}.mp4"
         if i in anim and src.exists():
             media.render_anim_clip(src, clips[i], b - a, width, height, fps,
-                                   fade_in=(i == 0), fade_out=(i == len(scenes) - 1), effect=fx[i][1])
+                                   fade_in=(i == 0), fade_out=(i == len(scenes) - 1), effect=fx[i][1],
+                                   fit=c.one_take and i < len(scenes) - 1)
             return
         media.render_clip(c.dir / "images" / f"{prefix}_{i:03d}.png", clips[i], b - a, width, height, fps,
                           scenes[i]["motion"], strength, fade_in=(i == 0), fade_out=(i == len(scenes) - 1),

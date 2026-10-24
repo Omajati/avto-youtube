@@ -1,6 +1,6 @@
 {
- "version": 114,
- "label": "ролики без озвучки",
- "notes": "Ролики без озвучки: только музыка и текст на экране",
+ "version": 115,
+ "label": "реклама одной сценой",
+ "notes": "Реклама одной сценой: один фон, плавные переходы кадр в кадр, без текста при выключенной озвучке",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

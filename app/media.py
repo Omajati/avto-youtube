@@ -182,12 +182,13 @@ def video_duration(path: Path) -> float:
 
 
 def render_anim_clip(src: Path, out: Path, frames: int, width: int, height: int, fps: int,
-                     fade_in: bool = False, fade_out: bool = False, effect: str = "none"):
-    """Fits an animated clip to the scene length: slows it down a little if needed, then holds the last frame."""
+                     fade_in: bool = False, fade_out: bool = False, effect: str = "none", fit: bool = False):
+    """Fits an animated clip to the scene length: slows it down a little if needed, then holds the last frame.
+    fit: the whole clip is played, sped up or slowed down to the scene length (a clip that must reach its last frame)."""
     n = max(frames, 1)
     need = n / fps
     have = max(video_duration(src), 0.5)
-    factor = min(max(need / have, 1.0), 1.9)
+    factor = min(max(need / have, 0.25), 3.0) if fit else min(max(need / have, 1.0), 1.9)
     vf = (f"setpts={factor:.4f}*PTS,fps={fps},scale={width}:{height}:force_original_aspect_ratio=increase,"
           f"crop={width}:{height},setsar=1,tpad=stop_mode=clone:stop_duration={need:.3f}"
           + (_shake(width, height) if effect == "shake" else "") + ",format=yuv420p")

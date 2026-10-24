@@ -72,6 +72,18 @@ def ad_motion(move: str) -> str:
     return AD_MOTION.format(move=move or "slow dolly push-in toward the product")
 
 
+TAKE_MOTION = (
+    "One continuous smooth motion-control camera move{to_end}: {move}. Same set, same background and light; the "
+    "product stands perfectly still in the same spot and keeps its exact shape, proportions, colours, logo and labels. "
+    "No cuts, no people, no hands, no text, no new objects, no morphing."
+)
+
+
+def take_motion(move: str, to_end: bool) -> str:
+    return TAKE_MOTION.format(move=move or "very slow push-in toward the product",
+                              to_end=" from the first frame to the last frame" if to_end else "")
+
+
 def model(settings) -> dict:
     return VIDEO_MODELS.get(settings.get("video_model"), VIDEO_MODELS["kling25"])
 
@@ -127,12 +139,14 @@ def _data_uri(img: Path) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def generate(settings, img: Path, prompt: str, need: float, vertical: bool, check=None, motion=None) -> bytes:
-    """Returns mp4 bytes."""
+def generate(settings, img: Path, prompt: str, need: float, vertical: bool, check=None, motion=None, tail=None) -> bytes:
+    """Returns mp4 bytes. tail: the picture the clip must end on (Kling 2.5 Turbo Pro is used for it)."""
     key = settings.get("fal_key")
     if not key:
         raise UserError("Для анимации нужен ключ fal.ai. Вставьте его в Настройках, раздел «Картинки» → fal.ai.")
     mid = settings.get("video_model") if settings.get("video_model") in VIDEO_MODELS else "kling25"
+    if tail:
+        mid = "kling25"  # the model whose end frame works on fal.ai
     m = VIDEO_MODELS[mid]
     full = f"{prompt.strip().rstrip('.')}. {motion or MOTION_PROMPT}"
     image = _data_uri(img)
@@ -151,6 +165,8 @@ def generate(settings, img: Path, prompt: str, need: float, vertical: bool, chec
             body.update(start_image_url=image, generate_audio=False)
         else:
             body["image_url"] = image
+            if tail:
+                body["tail_image_url"] = _data_uri(tail)
     headers = {"Authorization": f"Key {key}"}
     r = net.request("fal.ai", "POST", f"https://queue.fal.run/{m['endpoint']}", headers=headers, json=body, timeout=120)
     sub = r.json()

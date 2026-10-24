@@ -18,7 +18,8 @@ FIELDS = {
     "voice_id": "", "voice_name": "", "channel_id": "", "format": "long", "duration_min": 10, "make_short": True,
     "anim_mode": "off", "anim_short": False, "anim_count": 3, "anim_pause": False, "images_pause": False, "subs_video": False, "subs_short": True, "graphics": True, "subs_smart": True, "cta_short": "both", "cta_lang": "auto", "fx_mode": "light",
     "platform": "youtube",  # youtube / instagram: Instagram niches live in their own block
-    "made_for_kids": False, "fiction": False, "ad_mode": False, "voice_off": False,  # ad_mode: a product commercial without people
+    "made_for_kids": False, "fiction": False, "ad_mode": False, "voice_off": False,
+    "one_take": False,  # product commercial on one set: every shot repeats the first one's set, clips fly frame to frame  # ad_mode: a product commercial without people
     # Series: episodes remember what happened before
     "series": False, "series_bible": "", "season_plan": "",
     "en_voice_id": "", "en_voice_name": "", "en_channel_id": "",  # last choice for the English version
@@ -179,8 +180,9 @@ _PRODUCT = ("premium commercial product photography, the product as the hero, st
             "advertising look, ultra detailed, no people, no hands, no text, no letters, no watermark")
 
 _AD = {"image_style": _PRODUCT, "ad_mode": True, "voice_mode": "narrator", "format": "short", "short_seconds": 35,
-       "make_short": False, "anim_mode": "all", "anim_short": True, "anim_count": 12, "fx_mode": "strong", "subs_video": True,
-       "subs_short": True, "subs_smart": True, "graphics": True, "cta_short": "off", "music_mode": "generate", "same_place": False}
+       "make_short": False, "anim_mode": "all", "anim_short": True, "anim_count": 12, "fx_mode": "light", "subs_video": True,
+       "subs_short": True, "subs_smart": True, "graphics": False, "cta_short": "off", "music_mode": "generate", "same_place": True,
+       "one_take": True}
 PRESETS["product_ad_ru"] = dict(_AD, name="Реклама товара (СНГ)", icon="📦", language="ru",
     niche="рекламные ролики товаров без людей, как дорогая реклама на ТВ: товар крупным планом, макросъёмка деталей и "
           "материала, плавные наезды и отъезды камеры, облёт вокруг товара, эффекты из его мира (брызги, частицы, дым, "
