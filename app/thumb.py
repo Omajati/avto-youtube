@@ -181,6 +181,8 @@ def render(src: Path, out: Path, text: str, side: str = "left", vertical: bool =
 
 def write_package(job_dir: Path, extras: dict, short: dict = None):
     """output/youtube.txt: title, description, tags (and the Short's), ready to paste."""
+    from . import pipeline  # here: pipeline imports this module
+    chapters = pipeline.chapters_text(job_dir.name) if (job_dir / "chapters.json").exists() else ""
     parts = [
         "=== ДЛИННОЕ ВИДЕО ===",
         "",
@@ -188,8 +190,8 @@ def write_package(job_dir: Path, extras: dict, short: dict = None):
         extras.get("youtube_title", ""),
         f"(по-русски: {extras.get('youtube_title_ru', '')})",
         "",
-        "ОПИСАНИЕ:",
-        extras.get("description", ""),
+        "ОПИСАНИЕ (тайм-коды уже внизу):" if chapters else "ОПИСАНИЕ:",
+        f"{extras.get('description', '')}\n\n{chapters}".strip() if chapters else extras.get("description", ""),
         "",
         "ТЕГИ (вставить в поле «Теги»):",
         ", ".join(extras.get("tags", [])),

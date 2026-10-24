@@ -337,6 +337,7 @@ def job_detail(jid: str):
         "own_images": pipeline.read_json(d / "own_images.json", []) or [],
         "images_waiting": pipeline.needs_images_choice(j),
         "improve": pipeline.read_json(d / "improve.json"),
+        "chapters": pipeline.chapters_text(jid),
         "files": {
             "video": (d / "output" / "video.mp4").exists(),
             "short": (d / "output" / "short.mp4").exists(),
@@ -420,6 +421,18 @@ def job_script(jid: str, data: dict = Body(...)):
     db.update(jid, status="queued", error="")
     worker.wake()
     return {"ok": True}
+
+
+@app.post("/api/jobs/{jid}/chapters")
+def job_chapters(jid: str):
+    """Timestamps for the description of a video made before they existed (or made again)."""
+    _job_or_404(jid)
+    pipeline.make_chapters(jid)
+    pipeline.make_package(jid)
+    text = pipeline.chapters_text(jid)
+    if not text:
+        raise UserError("Ролик слишком короткий для тайм-кодов: YouTube показывает главы, если их хотя бы три и каждая не короче 10 секунд.")
+    return {"text": text}
 
 
 @app.post("/api/jobs/{jid}/improve")

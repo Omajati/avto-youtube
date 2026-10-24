@@ -101,7 +101,7 @@ def _run(jid, kind, channel_id, privacy, publish_at, profile):
             tags = extras.get("tags", [])
             short_format = job["options"].get("format") == "short"
             if kind == "video":
-                title, desc, file = extras.get("youtube_title", ""), extras.get("description", ""), d / "output" / "video.mp4"
+                title, desc, file = extras.get("youtube_title", ""), pipeline.full_description(jid, extras), d / "output" / "video.mp4"
                 if short_format:
                     if "#shorts" not in title.lower():
                         title = f"{title} #shorts"

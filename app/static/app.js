@@ -1244,6 +1244,13 @@ function renderStages(d) {
       lastStagesKey = "";
     };
   }
+  const chGo = el.querySelector("#ch-go");
+  if (chGo) chGo.onclick = async () => {
+    chGo.disabled = true; chGo.textContent = "⏳ Делаю тайм-коды…";
+    await api(`/api/jobs/${j.id}/chapters`, { method: "POST" }).then(() => toast("Тайм-коды добавлены в описание"))
+      .catch(e => { toast(e.message, true); chGo.disabled = false; chGo.textContent = "⏱ Сделать тайм-коды"; });
+    lastStagesKey = "";
+  };
   const impGo = el.querySelector("#imp-go");
   if (impGo) impGo.onclick = async () => {
     impGo.disabled = true; impGo.textContent = "⏳ Ищу слабые места, это минута…";
@@ -1668,7 +1675,8 @@ const RENDER = {
     <h3>Для загрузки на YouTube</h3>
     <div class="kv">
       <div>Название</div><div><b>${esc(r.youtube_title)}</b> ${copyBtn(r.youtube_title)}<div class="muted small">${esc(r.youtube_title_ru)}</div></div>
-      <div>Описание</div><div><div class="small" style="white-space:pre-wrap">${esc(r.description)}</div>${copyBtn(r.description)}</div>
+      <div>Описание</div><div><div class="small" style="white-space:pre-wrap">${esc(d.chapters ? r.description + "\n\n" + d.chapters : r.description)}</div>${copyBtn(d.chapters ? r.description + "\n\n" + d.chapters : r.description)}
+        ${d.chapters ? `<div class="muted small">Тайм-коды внизу описания посчитаны по озвучке: YouTube сам сделает из них главы.</div>` : d.files.video && d.format !== "short" ? `<div style="margin-top:6px"><button class="sm" id="ch-go">⏱ Сделать тайм-коды</button> <span class="muted small">главы ролика вопросами, по точному времени озвучки, около цента</span></div>` : ""}</div>
       <div>Теги</div><div class="tags">${(r.tags || []).map(t => `<span>${esc(t)}</span>`).join("")} ${copyBtn((r.tags || []).join(", "))}</div>
     </div>
     ${d.files.youtube_txt ? `<p><a class="btn" href="/files/${d.job.id}/output/youtube.txt" target="_blank">📄 Всё для YouTube одним файлом</a> <span class="muted small">Название, описание и теги для видео и шортса. Лежит в папке ролика рядом с видео.</span></p>` : ""}

@@ -2442,6 +2442,72 @@ def _music_for(c: Ctx, total: float):
     return track
 
 
+SCHEMA_CHAPTERS = {"type": "object", "properties": {"chapters": {"type": "array", "items": {"type": "object", "properties": {
+    "scene": {"type": "integer"}, "title": {"type": "string"}, "title_ru": {"type": "string"}},
+    "required": ["scene", "title", "title_ru"]}}}, "required": ["chapters"]}
+
+
+def make_chapters(jid: str, usage: dict = None) -> list:
+    """YouTube chapters of a long video: the scene where each part starts and a title phrased as the viewer's
+    question. The times come from the voice, so a new voice or speed keeps the titles and moves the times."""
+    d = job_dir(jid)
+    scenes = (read_json(d / "scenes.json") or {}).get("scenes") or []
+    if not scenes:
+        raise UserError("Сцен ещё нет.")
+    job = db.get(jid) or {}
+    lang = job_language(job)
+    rows = "\n".join(f"[{i + 1}] {sc.get('text', '')}" for i, sc in enumerate(scenes))
+    user = (f"Here is the narration of a YouTube video split into numbered scenes. Split it into 4-10 chapters for the "
+            f"video description so viewers can jump to the answers they want. Each chapter starts at a scene number; "
+            f"the first chapter starts at scene 1 (the hook). A chapter starts where a new question or part begins, "
+            f"never mid-thought, and chapters are not too short. Write each title as the question this part answers, "
+            f"short (at most 60 characters), concrete and curious, in the video's language ({lang}), for example "
+            f"\"Why did people in Mehrgarh drill holes in teeth?\". title_ru: the same in Russian.\n\n{rows}")
+    settings = _check_settings(load_settings())
+    r = llm.call_json(settings, "You write YouTube chapters. Answer only with JSON.", user, SCHEMA_CHAPTERS,
+                      usage if usage is not None else {}, 4000)
+    items = sorted({int(x["scene"]): x for x in r.get("chapters") or [] if 1 <= int(x.get("scene") or 0) <= len(scenes)}.values(),
+                   key=lambda x: x["scene"])
+    if items and items[0]["scene"] != 1:
+        items[0]["scene"] = 1
+    write_json(d / "chapters.json", {"items": items})
+    return items
+
+
+def _clock(t: float) -> str:
+    t = int(t)
+    return f"{t // 3600}:{t // 60 % 60:02d}:{t % 60:02d}" if t >= 3600 else f"{t // 60}:{t % 60:02d}"
+
+
+def chapters_text(jid: str) -> str:
+    """The chapter lines for the description (empty when there are none or YouTube would not accept them)."""
+    d = job_dir(jid)
+    items = (read_json(d / "chapters.json") or {}).get("items") or []
+    durs = (read_json(d / "voice.json") or {}).get("durations") or []
+    if not items or not durs:
+        return ""
+    opts = (db.get(jid) or {}).get("options") or {}
+    speed = float(opts.get("speed_video") or 1) or 1
+    starts = [sum(durs[:i]) / speed for i in range(len(durs))]
+    lines, last = [], None
+    for x in items:
+        i = x["scene"] - 1
+        if i >= len(starts):
+            continue
+        t = 0 if not lines else starts[i]
+        if last is not None and t - last < 10:  # YouTube wants every chapter to be at least 10 seconds long
+            continue
+        lines.append(f"{_clock(t)} {x['title']}")
+        last = t
+    return "\n".join(lines) if len(lines) >= 3 else ""
+
+
+def full_description(jid: str, extras: dict) -> str:
+    desc = (extras.get("description") or "").strip()
+    ch = chapters_text(jid)
+    return f"{desc}\n\n{ch}".strip() if ch else desc
+
+
 def st_video(c: Ctx):
     scenes = c.data("scenes")["scenes"]
     voice = c.data("voice")
@@ -2453,6 +2519,15 @@ def st_video(c: Ctx):
     c.log(f"Видео готово: {r['duration'] / 60:.1f} мин" if not c.vertical else f"Шортс готов: {r['duration']:.0f} сек")
     write_json(c.out("video"), r)
     _respeed_after_build(c, "video")
+    if not c.vertical and not c.demo and r.get("duration", 0) >= 90 and not (c.dir / "chapters.json").exists():
+        c.log("Делаю тайм-коды для описания…")
+        try:
+            make_chapters(c.id, c.usage)
+            c.save_usage()
+        except Exception as e:  # noqa: BLE001 - timestamps are an extra
+            c.log(f"Тайм-коды сделать не получилось: {e}")
+    if not c.vertical:
+        make_package(c.id)
 
 
 def st_short_video(c: Ctx):
@@ -2523,6 +2598,8 @@ def set_speed(jid: str, kind: str, speed: float) -> dict:
     opts = dict(j.get("options") or {})
     opts["speed_video" if kind == "video" else "speed_short"] = speed
     db.update(jid, options=opts)
+    if kind == "video":
+        make_package(jid)  # the timestamps in the description follow the speed
     export(jid)
     return {"speed": speed, "duration": info.get("duration")}
 
@@ -2673,7 +2750,7 @@ def reset_from(jid: str, stage: str, keep_pictures: bool = False):
             (d / f"{sid}.json").unlink(missing_ok=True)
         (d / "review_progress.json").unlink(missing_ok=True)
         for rel in ("audio", "images", "anim", "clips", "clips_short", "output", "narration.wav", "short_narration.wav",
-                    "thumb.json", "graphics_*.json"):
+                    "thumb.json", "graphics_*.json", "chapters.json"):
             _remove(d, rel)
     if not (d / "images").exists():
         # The pictures are gone, the owner's own ones too: forget their marks and stop for new uploads again.
