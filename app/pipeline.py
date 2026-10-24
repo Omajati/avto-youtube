@@ -2413,6 +2413,25 @@ def _graphics_for(c: Ctx, prefix: str, scenes: list, durations: list, total: flo
         return []
 
 
+SCHEMA_MUSIC = {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}
+
+
+def _music_prompt(c: Ctx, wish: str, extras: dict) -> str:
+    """The owner's music wish (often in Russian) as an English prompt for the music model. The owner's style wins;
+    the video's mood only fills in what he did not say."""
+    try:
+        r = llm.call_json(c.settings, "You write prompts for an AI music generator. Answer only with JSON.",
+                          f"The owner wants this background music (may be in Russian): {wish}\n"
+                          f"The video's mood, only for what the owner did not specify: {extras.get('music_prompt', '')}\n"
+                          "Return prompt: one English prompt for instrumental background music under a voiceover: genre, "
+                          "mood, tempo, instruments, exactly as the owner asked. No vocals, nothing that distracts.",
+                          SCHEMA_MUSIC, c.usage, 2000)
+        c.save_usage()
+        return (r.get("prompt") or "").strip() or wish
+    except UserError:
+        return f"Instrumental background music, no vocals. Style: {wish}"
+
+
 def _music_for(c: Ctx, total: float):
     """Background track: none, a fitting one from the music folder, or a new one composed for this video."""
     opts = (db.get(c.id) or {}).get("options") or c.opts
@@ -2431,13 +2450,16 @@ def _music_for(c: Ctx, total: float):
         c.log("Музыка выключена для этого ролика.")
         return None
     extras = c.data("extras") or {}
-    mood = " ".join([extras.get("music_style_ru", ""), extras.get("music_prompt", "")])
+    # The owner's own words about the music (this video, then the project) beat the style the writer guessed.
+    wish = (opts.get("music_style") or c.project.get("music_style") or "").strip()
+    mood = wish or " ".join([extras.get("music_style_ru", ""), extras.get("music_prompt", "")])
     own = c.dir / "music.mp3"
     if mode == "generate" and not c.demo:
         if own.exists():
             return own
-        prompt = extras.get("music_prompt") or f"Instrumental background music for a video about: {c.niche}"
-        style = extras.get("music_style_ru") or "фоновая музыка"
+        prompt = (_music_prompt(c, wish, extras) if wish else extras.get("music_prompt")) \
+            or f"Instrumental background music for a video about: {c.niche}"
+        style = wish[:50] if wish else extras.get("music_style_ru") or "фоновая музыка"
         sec = musiclib.length_for(total, c.vertical)
         c.log(f"Сочиняю музыку «{style}» ({sec:.0f} сек, ElevenLabs, примерно ${musiclib.cost(sec):.2f})…")
         try:

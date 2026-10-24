@@ -847,6 +847,7 @@ async function viewProject(id) {
       <div id="pj-anim-n"><label class="f">Сколько сцен оживлять <span class="hint">Конкретные сцены можно выбрать на странице ролика</span></label><input type="number" data-q="anim_count" min="1" max="60" value="${esc(p.anim_count || 3)}"></div>
       <div id="pj-anim-est" class="muted small" style="margin-top:4px"></div>
       <label class="f">Музыка по умолчанию <span class="hint">В «Новом ролике» можно поменять для каждого ролика</span></label>${sel("music_mode", Object.entries(META.music_modes))}
+      <label class="f">Стиль музыки <span class="hint">своими словами, можно по-русски. Его слушаются и подбор из раздела «Музыка», и сочинение новой. Пусто — стиль под каждый сценарий</span></label><input type="text" data-q="music_style" value="${esc(p.music_style || "")}" placeholder="например: тихий тревожный эмбиент, без барабанов">
       <label class="f">Эффекты</label>${sel("fx_mode", Object.entries(META.fx_modes))}
       <label class="f">Призыв на шортсах <span class="hint">анимированные кнопки «Подписаться» и «Нравится» в стиле YouTube во второй половине каждого шортса</span></label>${sel("cta_short", Object.entries(META.cta_modes))}
       <label class="f">Язык кнопок призыва</label>${sel("cta_lang", Object.entries(META.cta_langs))}
@@ -1389,8 +1390,16 @@ function renderStages(d) {
     };
     box.querySelector(".mb-go").onclick = async e => {
       const b = e.target; b.disabled = true;
-      await api(`/api/jobs/${j.id}/music`, { json: { track: sel.value, volume: box.querySelector(".mb-vol").value } })
+      await api(`/api/jobs/${j.id}/music`, { json: { track: sel.value, volume: box.querySelector(".mb-vol").value, style: box.querySelector(".mb-style").value } })
         .then(() => toast("Музыка выбрана, ролик пересобирается")).catch(er => { toast(er.message, true); b.disabled = false; });
+      lastStagesKey = "";
+    };
+    box.querySelector(".mb-gen").onclick = async e => {
+      const st = box.querySelector(".mb-style").value.trim() || (d.project && d.project.music_style) || "";
+      if (!st && !confirm("Стиль не указан: программа сочинит музыку по сценарию. Продолжить?")) return;
+      const b = e.target; b.disabled = true;
+      await api(`/api/jobs/${j.id}/music`, { json: { track: "", compose: true, volume: box.querySelector(".mb-vol").value, style: box.querySelector(".mb-style").value } })
+        .then(() => toast("Сочиняю музыку и пересобираю ролик")).catch(er => { toast(er.message, true); b.disabled = false; });
       lastStagesKey = "";
     };
   });
@@ -1845,9 +1854,12 @@ function musicBox(d, r) {
     <p class="muted small">Выберите трек из раздела «Музыка» или загрузите свой. Ролик и шортс пересоберутся бесплатно, картинки и голос не меняются. Выбранный трек остаётся и при следующих пересборках.</p>
     <select class="mb-track"><option value="">Подобрать автоматически по стилю ролика</option><option value="none" ${o.music_track === "none" ? "selected" : ""}>Без музыки</option></select>
     <audio class="mb-audio" controls preload="none" style="display:none;margin-top:6px;width:100%"></audio>
+    <label class="f">Какую музыку хотите <span class="hint">своими словами, можно по-русски: «спокойное пианино», «эпичный оркестр без барабанов», «лоу-фай, медленно». Пусто — программа выберет по сценарию${d.project && d.project.music_style ? ` (сейчас из проекта: «${esc(d.project.music_style)}»)` : ""}</span></label>
+    <input type="text" class="mb-style" value="${esc(o.music_style || "")}" placeholder="${esc((d.project && d.project.music_style) || "например: спокойное пианино, медленно")}">
     <label class="f">Громкость музыки: <b class="mb-vv">${Math.round(vol * 100)}%</b> <span class="hint">обычно 8–15%, голос всегда главнее</span></label>
     <input type="range" class="mb-vol" min="0" max="0.4" step="0.01" value="${esc(vol)}">
     <div class="row" style="margin-top:8px"><button class="primary mb-go" ${busy ? "disabled" : ""}>🎵 Поставить и пересобрать</button>
+      <button class="mb-gen" ${busy ? "disabled" : ""} title="ElevenLabs сочинит новый трек в этом стиле, около $0.3–1">🎼 Сочинить новую в этом стиле</button>
       <label class="btn" style="display:inline-block;cursor:pointer">📤 Загрузить свой трек<input type="file" class="mb-up" accept="audio/*" style="display:none"></label>
       ${busy ? `<span class="muted small">Сначала дождитесь конца работы или поставьте на паузу</span>` : ""}</div></details>`;
 }

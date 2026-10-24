@@ -1,6 +1,6 @@
 {
- "version": 106,
- "label": "разборы продюсера в резервной копии",
- "notes": "Разборы ИИ продюсера теперь тоже попадают в резервную копию",
+ "version": 107,
+ "label": "свой стиль музыки",
+ "notes": "Свой стиль музыки: в проекте и для каждого ролика; кнопка «Сочинить новую в этом стиле»",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

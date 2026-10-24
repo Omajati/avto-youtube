@@ -623,6 +623,13 @@ def job_music(jid: str, data: dict = Body(...)):
     if track and track != "none" and not (MUSIC_DIR / Path(track).name).is_file():
         raise UserError("Такого трека нет в разделе «Музыка».")
     opts["music_track"] = Path(track).name if track not in ("", "none") else track
+    if "style" in data:  # the owner's own words about the music for this video
+        opts["music_style"] = str(data.get("style") or "").strip()[:300]
+    if data.get("compose"):  # compose a new track in that style
+        opts["music_track"] = ""
+        opts["music_mode"] = "generate"
+        pipeline._remove(pipeline.job_dir(jid), "music.mp3")
+        track = ""
     if not track:
         opts.pop("music_picked", None)  # automatic again: pick anew
     if data.get("volume") not in (None, ""):
