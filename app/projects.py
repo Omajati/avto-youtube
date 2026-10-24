@@ -28,7 +28,7 @@ FIELDS = {
     "same_place": True,  # one reference picture per location so every scene there shows the same place
     "characters": [],  # ids from the shared character library used by default
     "items": [],  # ids from the shared library of items and products shown in the pictures by default
-    "voice_mode": "mixed", "short_seconds": 50, "music_mode": "library", "music_style": "",  # narrator / mixed (narrator + characters' lines) / dialogue (cartoon, mostly dialogue) / host (the hero tells it all)
+    "voice_mode": "mixed", "short_seconds": 50, "music_mode": "library", "music_style": "", "voice_tempo": "",  # narrator / mixed (narrator + characters' lines) / dialogue (cartoon, mostly dialogue) / host (the hero tells it all)
     # Voice details (empty = general settings)
     "tts_model": "", "voice_stability": "", "voice_similarity": "", "voice_style": "", "voice_speed": "",
 }

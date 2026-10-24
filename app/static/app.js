@@ -837,6 +837,7 @@ async function viewProject(id) {
     </div><div>
       <label class="f">Выразительность (0–1)</label><input type="number" step="0.05" min="0" max="1" data-q="voice_style" value="${esc(p.voice_style)}">
       <label class="f">Скорость (0.7–1.2)</label><input type="number" step="0.01" min="0.7" max="1.2" data-q="voice_speed" value="${esc(p.voice_speed)}">
+      <label class="f">Темп речи (0.8–1.6) <span class="hint">ускоряет саму речь сверх 1.2, голос не становится выше. Паузы тоже короче. Картинки идут под голос, анимации не ускоряются. 1 — как есть, 1.15–1.3 — бодро</span></label><input type="number" step="0.05" min="0.8" max="1.6" data-q="voice_tempo" value="${esc(p.voice_tempo)}" placeholder="1">
       <div class="row" style="margin-top:14px"><button class="sm" id="pj-ru-voice">Настройки для русского</button><button class="sm" id="pj-short-voice">Под шортс</button><button class="sm" id="pj-test-voice">▶ Проверить голос проекта</button></div>
       <audio id="pj-audio" controls style="display:none;margin-top:8px;width:100%"></audio>
     </div></div>
@@ -1418,7 +1419,7 @@ function renderStages(d) {
     box.querySelector(".rv-go").onclick = async e => {
       const b = e.target, o = sel.options[sel.selectedIndex];
       const body = { voice_id: sel.value, voice_name: sel.value ? (o.dataset.name || o.text) : "" };
-      for (const k of ["voice_speed", "voice_stability", "voice_style", "voice_similarity"]) body[k] = box.querySelector(`.rv-${k}`).value;
+      for (const k of ["voice_tempo", "voice_speed", "voice_stability", "voice_style", "voice_similarity"]) body[k] = box.querySelector(`.rv-${k}`).value;
       if (!confirm("Сделать озвучку заново и пересобрать ролик? Готовое видео заменится новым.")) return;
       b.disabled = true;
       await api(`/api/jobs/${j.id}/revoice`, { json: body }).then(() => toast("Переозвучиваю, потом пересоберу видео"))
@@ -1870,7 +1871,7 @@ function revoiceBox(d) {
   return `<details class="revoice" style="margin-top:10px"><summary><b>🎙 Сменить голос и пересобрать</b></summary>
     <p class="muted small">Озвучка делается заново выбранным голосом, ролик и шортс пересобираются. Сценарий, картинки и анимации остаются, платите только за новую озвучку. Реплики героев со своими голосами звучат как раньше.</p>
     <div class="row" style="gap:6px;flex-wrap:nowrap"><select class="rv-voice"><option value="">Тот же голос (${esc(o.voice_name || "как в проекте")})</option></select><button class="sm rv-play" title="Послушать голос">▶</button></div>
-    <div class="grid2">${num("voice_speed", 0.7, 1.2, 0.01, "Скорость голоса (0.7–1.2)")}${num("voice_stability", 0, 1, 0.05, "Стабильность (0–1), меньше — эмоциональнее")}${num("voice_style", 0, 1, 0.05, "Выразительность (0–1)")}${num("voice_similarity", 0, 1, 0.05, "Похожесть на оригинал (0–1)")}</div>
+    <div class="grid2">${num("voice_tempo", 0.8, 1.6, 0.05, "Темп речи (0.8–1.6): быстрее сверх 1.2. Если меняете только его, это бесплатно")}${num("voice_speed", 0.7, 1.2, 0.01, "Скорость голоса (0.7–1.2)")}${num("voice_stability", 0, 1, 0.05, "Стабильность (0–1), меньше — эмоциональнее")}${num("voice_style", 0, 1, 0.05, "Выразительность (0–1)")}${num("voice_similarity", 0, 1, 0.05, "Похожесть на оригинал (0–1)")}</div>
     <div class="row" style="margin-top:8px"><button class="primary rv-go" ${busy ? "disabled" : ""}>🎙 Переозвучить и пересобрать</button>${busy ? `<span class="muted small">Сначала дождитесь конца работы или поставьте на паузу</span>` : ""}</div>
     <audio class="rv-audio"></audio></details>`;
 }

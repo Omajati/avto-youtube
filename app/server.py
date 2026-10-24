@@ -658,16 +658,22 @@ def job_revoice(jid: str, data: dict = Body(...)):
     if not (d / "voice.json").exists():
         raise UserError("Озвучки у этого ролика ещё нет: голос выбирается в проекте или на странице нового ролика.")
     opts = dict(j["options"])
+    before = dict(opts)
     if data.get("voice_id"):
         opts.update(voice_id=str(data["voice_id"]), voice_name=str(data.get("voice_name") or ""))
-    for k, lo, hi in (("voice_speed", 0.7, 1.2), ("voice_stability", 0, 1), ("voice_similarity", 0, 1), ("voice_style", 0, 1)):
+    for k, lo, hi in (("voice_speed", 0.7, 1.2), ("voice_stability", 0, 1), ("voice_similarity", 0, 1), ("voice_style", 0, 1),
+                      ("voice_tempo", pipeline.TEMPO_MIN, pipeline.TEMPO_MAX)):
         if data.get(k) not in (None, ""):
             try:
                 opts[k] = min(hi, max(lo, float(data[k])))
             except (TypeError, ValueError):
                 raise UserError("Проверьте числа в настройках голоса.")
     db.update(jid, options=opts)
-    pipeline.reset_from(jid, "voice")
+    changed = {k for k in set(opts) | set(before) if opts.get(k) != before.get(k)}
+    if changed <= {"voice_tempo"}:
+        pipeline.retempo(jid)  # only the tempo: the clips ElevenLabs made are reused, nothing is paid
+    else:
+        pipeline.reset_from(jid, "voice")
     if j["status"] in ("done", "error", "paused", "review"):
         db.update(jid, status="queued", error="")
         worker.wake()

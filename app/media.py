@@ -98,9 +98,11 @@ def trim_borders(path: Path, min_frac: float = 0.015):
     return False
 
 
-def to_wav(src: Path, out: Path):
+def to_wav(src: Path, out: Path, tempo: float = 1.0):
+    """tempo > 1 speeds the speech up without raising the pitch."""
     tmp = out.with_suffix(".tmp.wav")
-    run(["-i", src, "-ar", 44100, "-ac", 1, "-c:a", "pcm_s16le", tmp], "Звук")
+    tempo_af = ["-af", f"atempo={tempo:.3f}"] if abs(tempo - 1) > 0.005 else []
+    run(["-i", src, *tempo_af, "-ar", 44100, "-ac", 1, "-c:a", "pcm_s16le", tmp], "Звук")
     tmp.replace(out)
 
 

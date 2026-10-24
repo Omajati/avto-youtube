@@ -49,6 +49,7 @@ CRITERIA_RU = {
 }
 
 WORDS_PER_MIN = 150
+TEMPO_MIN, TEMPO_MAX = 0.8, 1.6
 WPM = {"en": 150, "ru": 125, "de": 125, "es": 160, "fr": 150}  # longer words (Russian, German) fit fewer in a minute
 
 LANG_OVERRIDE = {
@@ -569,6 +570,14 @@ class Ctx:
         self.episode = int(self.opts.get("episode") or 0) if self.project.get("series") else 0
         self._lock = threading.Lock()
         self.stage = ""
+
+    def voice_tempo(self) -> float:
+        """How much faster the speech is played than ElevenLabs said it (its own speed stops at 1.2)."""
+        try:
+            t = float(self.opts.get("voice_tempo") or self.project.get("voice_tempo") or 1)
+        except (TypeError, ValueError):
+            t = 1.0
+        return min(TEMPO_MAX, max(TEMPO_MIN, t))
 
     # -- bookkeeping
     def log(self, msg: str):
@@ -1812,6 +1821,8 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
         wav = audio / f"{prefix}_{i:03d}.wav"
         if c.demo:
             media.demo_audio(mp3, max(1.5, word_count(sc["text"]) / 2.5), i)
+        elif mp3.exists():
+            pass  # only the speech tempo changed: the voice already said this, no new ElevenLabs characters
         else:
             who = sc.get("speaker", "")
             same = lambda s: s.get("speaker", "") == who  # context only from the same voice
@@ -1823,7 +1834,7 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
                 settings = {**c.settings, "elevenlabs_voice_id": ch["voice_id"]}
             chars = tts.synthesize(settings, sc["text"], mp3, prev_t, next_t, c.lang)
             c.add_usage("tts_chars", chars)
-        media.to_wav(mp3, wav)
+        media.to_wav(mp3, wav, c.voice_tempo())
         return i
 
     with ThreadPoolExecutor(max_workers=1 if c.demo else 3) as ex:
@@ -1845,6 +1856,7 @@ def st_voice(c: Ctx):
     gap, pgap = float(c.settings["scene_gap"]), float(c.settings["paragraph_gap"])
     if c.short_format:
         gap, pgap = 0.1, 0.2  # Shorts need a fast, continuous voice
+    gap, pgap = gap / c.voice_tempo(), pgap / c.voice_tempo()  # a faster manner has shorter pauses too
     # A long sentence cut at a comma is one breath: no scene pause inside it.
     mid = lambda t: not re.search(r"[.!?…][\"”’')\]»]*\s*$", t)
     parts = [(c.dir / "audio" / f"scene_{i:03d}.wav",
@@ -3160,3 +3172,20 @@ def make_translation(jid: str, lang: str = "en", voice_id: str = "", voice_name:
     o["flipped"] = flipped
     db.update(job["id"], options=o, title=src.get("title", ""), status="queued")
     return db.get(job["id"])
+
+
+def retempo(jid: str):
+    """A new speech tempo: the voice is rebuilt from the clips ElevenLabs already made (free) and the video reassembled."""
+    audio = job_dir(jid) / "audio"
+    keep = job_dir(jid) / "audio_keep"
+    shutil.rmtree(keep, ignore_errors=True)
+    if audio.is_dir():
+        keep.mkdir()
+        for f in audio.glob("*.mp3"):
+            f.replace(keep / f.name)
+    reset_from(jid, "voice")
+    if keep.is_dir():
+        audio.mkdir(exist_ok=True)
+        for f in keep.glob("*.mp3"):
+            f.replace(audio / f.name)
+        shutil.rmtree(keep, ignore_errors=True)
