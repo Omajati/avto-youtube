@@ -751,10 +751,13 @@ def add_library(pid: str, entries: list) -> int:
     return n
 
 
-def remove_library(pid: str, eid: str):
-    lib = library(pid)
-    lib["items"] = [x for x in lib["items"] if x.get("id") != eid]
+def remove_library(pid: str, eid: str = "", sources: set = None) -> list:
+    """Removes an entry (or every entry with one of these sources) and returns what was removed."""
+    lib = {**_raw_library(pid), **library(pid)}
+    gone = [x for x in lib["items"] if (eid and x.get("id") == eid) or (sources and x.get("source") in sources)]
+    lib["items"] = [x for x in lib["items"] if x not in gone]
     _save_library(pid, lib)
+    return gone
 
 
 def set_playbook(pid: str, playbook_ru: str, playbook: str = None, niche_prev: str = None):

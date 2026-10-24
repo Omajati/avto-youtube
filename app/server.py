@@ -1391,10 +1391,38 @@ def producer_get(aid: str):
     return producer.get(aid)
 
 
+def _forget(pid: str, gone: list) -> str:
+    """Rules and niche description without what came from removed analyses. Returns a note for the owner."""
+    if not gone:
+        return ""
+    proj, lib = projects.get(pid), projects.library(pid)
+    if not (lib.get("playbook_ru") or "").strip():  # no rules were built from it: nothing else to clean
+        return ""
+    try:
+        r = producer.forget_playbook(load_settings(), proj.get("niche", ""), lib.get("playbook_ru", ""), lib["items"], gone)
+    except UserError as e:
+        return f"Разбор убран, но правила ниши пересобрать не получилось ({e}). Нажмите «Обновить правила» позже."
+    niche = (r.get("niche") or "").strip()
+    old = proj.get("niche", "")
+    if niche and niche != old.strip():
+        projects.save(pid, {"niche": niche})
+    projects.set_playbook(pid, r.get("playbook_ru", ""), r.get("playbook", ""),
+                          niche_prev=old if niche and niche != old.strip() else None)
+    return r.get("changed_ru") or "Правила ниши пересобраны без этого разбора."
+
+
 @app.delete("/api/producer/{aid}")
-def producer_delete(aid: str):
+def producer_delete(aid: str, library: bool = False):
+    notes = []
+    if library:  # also take everything this analysis saved out of every niche library
+        sources = producer.library_sources(aid)
+        for p in projects.list_all():
+            gone = projects.remove_library(p["id"], sources=sources)
+            if gone:
+                note = _forget(p["id"], gone)
+                notes.append(f"{p.get('name', '')}: убрано {len(gone)}. {note}".strip())
     producer.delete(aid)
-    return {"ok": True}
+    return {"ok": True, "notes": notes}
 
 
 @app.post("/api/producer/{aid}/save")
@@ -1413,8 +1441,8 @@ def library_get(pid: str):
 
 @app.delete("/api/projects/{pid}/library/{eid}")
 def library_remove(pid: str, eid: str):
-    projects.remove_library(pid, eid)
-    return projects.library(pid)
+    note = _forget(pid, projects.remove_library(pid, eid))
+    return {**projects.library(pid), "note": note, "niche": projects.get(pid).get("niche", "")}
 
 
 @app.post("/api/projects/{pid}/library/playbook")

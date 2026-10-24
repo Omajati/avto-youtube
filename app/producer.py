@@ -692,16 +692,20 @@ SCHEMA_PLAYBOOK = {"type": "object", "properties": {"playbook_ru": {"type": "str
                    "required": ["playbook_ru", "playbook", "niche"]}
 
 
-def build_playbook(settings: dict, niche: str, items: list) -> dict:
-    """The rules of this niche distilled from every saved analysis, plus a new or updated niche description."""
-    if not items:
-        raise UserError("В хранилище этой ниши пока нет разборов.")
-    brief = "\n\n".join(f"### {x.get('title', '')} ({x.get('views') or '?'} views, {x.get('kind', '')})\n"
+def _brief(items: list) -> str:
+    return "\n\n".join(f"### {x.get('title', '')} ({x.get('views') or '?'} views, {x.get('kind', '')})\n"
                         f"What it is about: {x.get('summary_ru', '')}\n"
                         f"Why it worked: {x.get('why_ru', '')}\nHook: {x.get('hook_ru', '')}\n"
                         f"Techniques: {'; '.join(x.get('techniques') or [])}\n"
                         + (f"Avoid: {'; '.join(x['avoid_ru'])}\n" if x.get("avoid_ru") else "")
                         + f"Topic ideas: {'; '.join((x.get('topics_ru') or [])[:6])}" for x in items[-40:])
+
+
+def build_playbook(settings: dict, niche: str, items: list) -> dict:
+    """The rules of this niche distilled from every saved analysis, plus a new or updated niche description."""
+    if not items:
+        raise UserError("В хранилище этой ниши пока нет разборов.")
+    brief = _brief(items)
     current = niche.strip()
     task_niche = (
         "niche: the channel's niche description, which the scriptwriter reads before every video. The owner already "
@@ -718,3 +722,32 @@ def build_playbook(settings: dict, niche: str, items: list) -> dict:
             "thumbnails), and the mistakes to avoid.\nplaybook: the same rules in English for the scriptwriter, "
             "imperative and concrete.\n" + task_niche)
     return llm.call_json(settings, "You are a YouTube producer. Answer only with JSON.", user, SCHEMA_PLAYBOOK, {}, 16000)
+
+
+SCHEMA_FORGET = {"type": "object", "properties": {"playbook_ru": {"type": "string"}, "playbook": {"type": "string"},
+                                                   "niche": {"type": "string"}, "changed_ru": {"type": "string"}},
+                 "required": ["playbook_ru", "playbook", "niche", "changed_ru"]}
+
+
+def forget_playbook(settings: dict, niche: str, playbook_ru: str, items: list, removed: list) -> dict:
+    """After the owner removed analyses from the library: the rules and the niche description without what came
+    only from them. Everything the remaining analyses or the owner say stays."""
+    user = (f"The owner removed these analyses from the niche library, because they are wrong or not wanted:\n\n"
+            f"{_brief(removed)}\n\nAnalyses that stay in the library:\n\n{_brief(items) if items else '(none)'}\n\n"
+            f"Current niche description:\n{niche.strip()[:4000] or '(empty)'}\n\nCurrent playbook (Russian):\n"
+            f"{playbook_ru.strip()[:4000] or '(empty)'}\n\nReturn:\n"
+            "playbook_ru: the playbook rewritten from the analyses that stay only, in Russian, 10-20 short numbered rules "
+            "(topics, hooks, structure and rhythm, tone, packaging, mistakes to avoid). Drop every rule that rests only on "
+            "the removed analyses. If no analyses stay, an empty string.\n"
+            "playbook: the same rules in English for the scriptwriter, imperative and concrete (empty if none stay).\n"
+            "niche: the niche description with only the parts removed that clearly come from the removed analyses (their "
+            "channel, topics, formula or style). Keep every other word exactly as it is, in its language; when unsure, "
+            "keep it.\nchanged_ru: in Russian, one or two sentences: what was removed from the rules and the description.")
+    return llm.call_json(settings, "You are a YouTube producer. Answer only with JSON.", user, SCHEMA_FORGET, {}, 16000)
+
+
+def library_sources(aid: str) -> set:
+    """Every library source an analysis can have saved: its link, its patterns entry and each video."""
+    m = get(aid)
+    src = {m.get("source", ""), m.get("source", "") + "#patterns"} | {x.get("source", "") for x in m.get("items") or []}
+    return {x for x in src if x and x != "#patterns"}

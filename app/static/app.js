@@ -2749,7 +2749,16 @@ async function viewProducerOne(id) {
       toast(`Сохранено в хранилище: ${r.added}`);
     } catch (e) { toast(e.message, true); }
   };
-  $("#pr-del").onclick = async () => { if (!confirm("Удалить этот разбор? В хранилище сохранённое останется.")) return; await api(`/api/producer/${id}`, { method: "DELETE" }); location.hash = "#/producer"; };
+  $("#pr-del").onclick = async () => {
+    if (!confirm("Удалить этот разбор?")) return;
+    const lib = confirm("Убрать его и из хранилища сценариев?\n\nОК — убрать отовсюду: сценарист перестанет на него опираться, правила ниши пересоберутся без него.\nОтмена — удалить только здесь, в хранилище он останется.");
+    const b = $("#pr-del"); b.disabled = true; b.textContent = lib ? "⏳ Убираю и пересобираю правила…" : "Удаляю…";
+    try {
+      const r = await api(`/api/producer/${id}?library=${lib ? 1 : 0}`, { method: "DELETE" });
+      toast((r.notes || []).join("\n") || "Разбор удалён");
+      location.hash = "#/producer";
+    } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = "Удалить разбор"; }
+  };
   if (running) timer = setInterval(async () => {
     const n = await api(`/api/producer/${id}`).catch(() => null);
     if (!n || location.hash !== `#/producer/${id}`) return;
@@ -2783,8 +2792,9 @@ async function viewLibrary() {
   </div>
   <div class="card"><h2>Правила ниши</h2>
     <p class="muted small">Кнопка ниже изучает все разборы этой ниши и пишет правила, а заодно описание ниши вверху страницы. Если описание уже заполнено, продюсер его дополнит и ничего вашего не выкинет. Правила можно поправить руками: тогда сценарист будет читать ваш вариант.</p>
+    ${!lib.items.length && lib.playbook_ru ? `<div class="banner info small">Разборов в хранилище нет, а правила остались от удалённых. Сценарист их всё ещё читает. Если они не нужны, нажмите «🧹 Очистить правила».</div>` : ""}
     <textarea id="lb-pb" rows="10" placeholder="Пока пусто. Сохраните сюда несколько разборов и нажмите кнопку ниже.">${esc(lib.playbook_ru || "")}</textarea>
-    <div class="row" style="margin-top:6px"><button class="primary" id="lb-build" ${lib.items.length ? "" : "disabled"}>✨ Обновить правила и описание ниши</button><button id="lb-pb-save">Сохранить мои правки</button>
+    <div class="row" style="margin-top:6px"><button class="primary" id="lb-build" ${lib.items.length ? "" : "disabled"}>✨ Обновить правила и описание ниши</button><button id="lb-pb-save">Сохранить мои правки</button>${lib.playbook_ru ? `<button id="lb-pb-clear">🧹 Очистить правила</button>` : ""}
       ${lib.playbook_at ? `<span class="muted small">обновлено ${new Date(lib.playbook_at * 1000).toLocaleString("ru")}</span>` : ""}</div>
   </div>
   ${topics.length ? `<div class="card"><h2>Темы из разборов</h2><p class="muted small">Идеи, которые продюсер предложил по мотивам удачных роликов. Можно брать как свою тему на странице нового ролика.</p>${prList(topics)}</div>` : ""}
@@ -2806,14 +2816,21 @@ async function viewLibrary() {
     try { const r = await api(`/api/projects/${pid}/library/niche-undo`, { method: "POST" }); $("#lb-niche").value = r.niche; toast("Прежнее описание возвращено"); } catch (e) { toast(e.message, true); }
   };
   $("#lb-pb-save").onclick = () => api(`/api/projects/${pid}/library/playbook`, { json: { playbook_ru: $("#lb-pb").value } }).then(() => toast("Правила сохранены")).catch(e => toast(e.message, true));
+  if ($("#lb-pb-clear")) $("#lb-pb-clear").onclick = async () => {
+    if (!confirm("Очистить правила ниши? Сценарист перестанет их читать. Описание ниши останется.")) return;
+    await api(`/api/projects/${pid}/library/playbook`, { json: { playbook_ru: "" } }).then(() => toast("Правила очищены")).catch(e => toast(e.message, true));
+    viewLibrary();
+  };
   $("#lb-build").onclick = async () => {
     const b = $("#lb-build"); b.disabled = true; b.textContent = "⏳ Изучаю все разборы ниши…";
     try { await api(`/api/projects/${pid}/library/build`, { method: "POST" }); toast("Правила и описание ниши обновлены"); viewLibrary(); }
     catch (e) { toast(e.message, true); b.disabled = false; b.textContent = "✨ Обновить правила и описание ниши"; }
   };
   main.querySelectorAll("[data-lbdel]").forEach(b => b.onclick = async () => {
-    if (!confirm("Убрать этот разбор из хранилища?")) return;
-    await api(`/api/projects/${pid}/library/${b.dataset.lbdel}`, { method: "DELETE" }).catch(e => toast(e.message, true));
+    if (!confirm("Убрать этот разбор из хранилища? Сценарист перестанет на него опираться, а правила и описание ниши пересоберутся без его выводов (описание можно будет вернуть кнопкой «↩»).")) return;
+    b.disabled = true; b.textContent = "⏳ Убираю и пересобираю правила…";
+    const r = await api(`/api/projects/${pid}/library/${b.dataset.lbdel}`, { method: "DELETE" }).catch(e => { toast(e.message, true); return null; });
+    if (r && r.note) toast(r.note);
     viewLibrary();
   });
 }
