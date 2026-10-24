@@ -133,7 +133,7 @@ async function route() {
     else if (page === "montage") await viewMontage();
     else if (page === "remake") await viewRemake(id);
     else if (page === "producer") await viewProducer(id);
-    else if (page === "library") await viewLibrary();
+    else if (page === "library") await viewLibrary(id);
     else if (page === "help") viewHelp();
     else if (page === "balance") await viewBalance();
     else await viewJobs();
@@ -491,7 +491,7 @@ async function renderChars() {
         <label class="btn sm" style="cursor:pointer">📤 Загрузить свой<input type="file" accept="image/*" class="c-file" style="display:none"></label>
         <span class="grow"></span><button class="sm danger c-del">Удалить</button>` : ""}
     </div></div>`;
-  box.innerHTML = (list.length ? `<div class="clist">${list.map(c => `<div class="citem">
+  box.innerHTML = (list.length ? `<div class="clist tiles">${list.map(c => `<details class="citem ctile"><summary>${charIcon(c, 64)}<b>${esc(c.name)}</b><span class="muted small">${esc(c.role)}</span></summary><div class="cbody">
       ${charIcon(c, 72)}<div class="grow"><b>${esc(c.name)}</b> <span class="muted small">${esc(c.role)}</span>
       <div class="small">${esc(c.description_ru)}</div>${c.appearance ? `<div class="en">${esc(c.appearance)}</div>` : ""}${c.extra_ru ? `<div class="small" style="margin-top:2px">➕ Дополнения для сцен: ${esc(c.extra_ru)}</div>` : ""}${c.speech_ru ? `<div class="small" style="margin-top:2px">💬 Манера речи: ${esc(c.speech_ru)}</div>` : ""}<div class="small" style="margin-top:2px">${c.voice_id ? `🗣 Свой голос: ${esc(c.voice_name || c.voice_id)}` : `<span class="muted">🗣 Своего голоса нет, его слова пересказывает рассказчик</span>`}</div><div class="small muted" style="margin-top:2px">${styleDesc(oldStyle(c)).replace("Выбрано", "Стиль портрета")}</div>
       <div class="row" style="margin-top:6px;gap:6px"><button class="sm c-edit" data-cid="${c.id}">Изменить</button>
@@ -500,8 +500,8 @@ async function renderChars() {
         <label class="btn sm" style="cursor:pointer">📷 Фото с разных сторон (${(c.refs || []).length}/8)<input type="file" accept="image/*" multiple class="c-refs" data-cid="${c.id}" style="display:none"></label></div>
       ${(c.refs || []).length ? `<div class="refstrip">${c.refs.map(r => `<div class="ref"><img src="/charrefs/${c.id}/${r}?v=${Date.now()}">
         <b data-rmain="${c.id}/${r}" title="Сделать главным портретом">★</b><b data-rdel="${c.id}/${r}" title="Удалить фото">×</b></div>`).join("")}</div>` : ""}
-      </div></div>`).join("")}</div>` : `<p class="muted">Персонажей пока нет.</p>`)
-    + `<h3>Новый персонаж</h3>` + form();
+      </div></div></details>`).join("")}</div>` : `<p class="muted">Персонажей пока нет.</p>`)
+    + `<details class="cnew" ${list.length ? "" : "open"}><summary><b>＋ Новый персонаж</b></summary>` + form() + `</details>`;
   const bind = (root) => {
     const cid = root.dataset.cid;
     const val = cls => root.querySelector(cls)?.value ?? "";
@@ -636,7 +636,7 @@ async function renderItems() {
       <button class="primary sm i-save">${it.id ? "Сохранить" : "Добавить предмет"}</button>
       ${it.id ? `<button class="sm i-desc-btn">🔍 Описать по фото</button><span class="grow"></span><button class="sm danger i-del">Удалить</button>` : ""}
     </div></div>`;
-  box.innerHTML = (list.length ? `<div class="clist">${list.map(it => `<div class="citem">
+  box.innerHTML = (list.length ? `<div class="clist tiles">${list.map(it => `<details class="citem ctile"><summary>${itemIcon(it, 64)}<b>${esc(it.name)}</b><span class="muted small">${esc(it.kind)}</span></summary><div class="cbody">
       ${itemIcon(it, 72)}<div class="grow"><b>${esc(it.name)}</b> <span class="muted small">${esc(it.kind)}</span>
       <div class="small">${esc(it.description_ru)}</div>${it.appearance ? `<div class="en">${esc(it.appearance)}</div>` : ""}${it.extra_ru ? `<div class="small" style="margin-top:2px">🎬 В кадре: ${esc(it.extra_ru)}</div>` : ""}
       ${it.has_photo ? "" : `<div class="small" style="margin-top:2px;color:var(--bad, #b91c1c)">Нет фото: без него предмет рисуется только по описанию и может отличаться.</div>`}
@@ -645,8 +645,8 @@ async function renderItems() {
         <label class="btn sm" style="cursor:pointer">📷 Фото с разных сторон (${(it.refs || []).length}/8)<input type="file" accept="image/*" multiple class="i-refs" data-iid="${it.id}" style="display:none"></label></div>
       ${(it.refs || []).length ? `<div class="refstrip">${it.refs.map(r => `<div class="ref"><img src="/itemrefs/${it.id}/${r}?v=${Date.now()}">
         <b data-rmain="${it.id}/${r}" title="Сделать главным фото">★</b><b data-rdel="${it.id}/${r}" title="Удалить фото">×</b></div>`).join("")}</div>` : ""}
-      </div></div>`).join("")}</div>` : `<p class="muted">Предметов пока нет.</p>`)
-    + `<h3>Новый предмет</h3>` + form();
+      </div></div></details>`).join("")}</div>` : `<p class="muted">Предметов пока нет.</p>`)
+    + `<details class="cnew" ${list.length ? "" : "open"}><summary><b>＋ Новый предмет</b></summary>` + form() + `</details>`;
   const bind = (root) => {
     const iid = root.dataset.iid;
     const val = cls => root.querySelector(cls)?.value ?? "";
@@ -811,13 +811,13 @@ async function viewProjects(id) {
   const niches = await api("/api/niches").catch(() => META.presets);
   main.innerHTML = `<h1>Проекты и ниши</h1>
   <p class="muted">Проект — это ниша со своими готовыми настройками: язык, тема канала, стиль картинок, голос, анимация, субтитры. Ролики каждого проекта хранятся отдельно. При запуске ролика проект выбирается одной кнопкой.</p>
-  ${projs.length ? `<h2>Мои проекты</h2><div class="pgrid">${projs.map(p => `<a class="pcard" href="#/projects/${p.id}">
+  ${projs.length ? `<h2>Мои проекты</h2><div class="pgrid sm">${projs.map(p => `<a class="pcard" href="#/projects/${p.id}">
       <div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b>
-      <div class="muted small">${esc(META.languages[p.language] || p.language)} · роликов: ${p.count}</div></div>
+      <div class="muted small">${esc(LANG_RU[p.language] || p.language)} · ${p.count} ${p.count % 10 === 1 && p.count % 100 !== 11 ? "ролик" : [2, 3, 4].includes(p.count % 10) && ![12, 13, 14].includes(p.count % 100) ? "ролика" : "роликов"}</div></div>
       <b class="pdel" data-del="${p.id}" data-count="${p.count}" title="Удалить проект">×</b></a>`).join("")}</div>` : ""}
   <div class="card"><h2>Новый проект из ниши</h2>
     <p class="muted small">Выберите нишу: все настройки подставятся сами, потом их можно поменять. Если проект с этой нишей уже есть, откроется он, а не новая копия. Ненужную нишу уберите крестиком в углу: готовые ниши скрываются (их можно вернуть внизу), ваши удаляются. Проекты при этом не трогаются. Свой проект можно сделать нишей кнопкой «⭐ Сохранить как свою нишу» в проекте: тогда он появится здесь с пометкой «моя ниша», и из него можно быстро делать новые проекты.</p>
-    <div class="pgrid">${Object.entries(niches).filter(([k, p]) => !p.hidden).sort((a, b) => (b[1].mine ? 1 : 0) - (a[1].mine ? 1 : 0)).map(([k, p]) => `<button class="pcard" data-preset="${k}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${p.mine ? "⭐ моя ниша · " : ""}${LANG_IN[p.language] || "на английском"}${p.project || projs.some(x => x.preset === k) ? " · ✓ уже есть" : ""}</div></div><b class="pdel" data-ndel="${k}" data-mine="${p.mine ? 1 : ""}" title="Убрать из списка ниш">×</b></button>`).join("")}
+    <div class="pgrid sm">${Object.entries(niches).filter(([k, p]) => !p.hidden).sort((a, b) => (b[1].mine ? 1 : 0) - (a[1].mine ? 1 : 0)).map(([k, p]) => `<button class="pcard" data-preset="${k}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b><div class="muted small">${p.mine ? "⭐ моя ниша · " : ""}${LANG_IN[p.language] || "на английском"}${p.project || projs.some(x => x.preset === k) ? " · ✓ уже есть" : ""}</div></div><b class="pdel" data-ndel="${k}" data-mine="${p.mine ? 1 : ""}" title="Убрать из списка ниш">×</b></button>`).join("")}
       <button class="pcard" data-preset="custom"><div class="pic">＋</div><div><b>Свой проект</b><div class="muted small">с нуля</div></div></button></div>
     ${Object.values(niches).some(p => p.hidden) ? `<details style="margin-top:14px"><summary class="muted">Скрытые ниши (${Object.values(niches).filter(p => p.hidden).length})</summary>
       <div class="row" style="gap:6px;margin-top:8px">${Object.entries(niches).filter(([k, p]) => p.hidden).map(([k, p]) => `<button class="sm" data-nshow="${k}" title="Вернуть в список">${esc(p.icon)} ${esc(p.name)} · вернуть</button>`).join("")}</div></details>` : ""}
@@ -1990,6 +1990,15 @@ api("/api/settings").then(s => SETTINGS_CACHE = s).catch(() => { });
 // Keeps a model typed by hand earlier selectable after the field became a list.
 const withCurrent = (cur, opts) => cur && !opts.some(([v]) => v === cur) ? [[cur, cur], ...opts] : opts;
 
+// Cards whose heading opens and closes them; which ones are open is remembered per page.
+function foldCards(root, key) {
+  root.querySelectorAll(":scope > .card").forEach(c => {
+    const h = c.querySelector(":scope > h2"); if (!h) return;
+    const k = `ay_fold:${key}:${h.textContent.replace(/\(\d+\)/, "").trim()}`;
+    c.classList.add("fold"); c.classList.toggle("open", lsGet(k) === "1");
+    h.onclick = () => lsSet(k, c.classList.toggle("open") ? "1" : "");
+  });
+}
 function field(key, label, s, opts = {}) {
   const hint = opts.hint ? `<span class="hint">${opts.hint}</span>` : "";
   if (opts.type === "secret") return `<label class="f">${label}${hint}</label><input type="password" data-k="${key}" placeholder="${s[key] ? "сохранён: " + esc(s[key]) + " (вставьте новый, чтобы заменить)" : "вставьте ключ сюда"}" autocomplete="off">`;
@@ -2186,9 +2195,10 @@ async function viewSettings(id) {
     } catch (e) { r.textContent = ""; toast(e.message, true); }
   };
   if ($("#ig-off")) $("#ig-off").onclick = async () => { if (!confirm("Отключить Instagram?")) return; await api("/api/instagram/disconnect", { json: {} }); viewSettings("instagram"); };
-  if (id === "instagram") $("#igcard").scrollIntoView();
+  foldCards(main, "set");
+  if (id === "instagram") { $("#igcard").classList.add("open"); $("#igcard").scrollIntoView(); }
   if (id === "youtube-ok") toast("Канал подключён");
-  if (id && id.startsWith("youtube")) $("#ytcard").scrollIntoView();
+  if (id && id.startsWith("youtube")) { $("#ytcard").classList.add("open"); $("#ytcard").scrollIntoView(); }
   $("#ytfile-btn").onclick = () => $("#ytfile").click();
   $("#ytfile").onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
@@ -2333,16 +2343,41 @@ async function viewPrompts(name) {
 }
 
 // ------------------------------------------------------------------ music
+// Tracks grouped into folders: composed ones apart, the rest by the genre their style names.
+const MUSIC_GENRES = [["Поп", /поп|pop/], ["Джаз", /джаз|нуар|jazz/], ["Рок", /рок|гитар|rock/], ["Хип-хоп", /хип|рэп|трэп|hip|rap|trap/],
+  ["Лоу-фай", /лоу-?фай|lo-?fi/], ["Оркестр и кино", /оркестр|эпич|кинемат|cinemat|orchestr|epic/], ["Электроника", /эмби|синт|электр|ambient|synth|electr/],
+  ["Кантри", /кантри|country/], ["Комедийная", /комед|пиццикато|игрив/], ["Мрачная", /мрач|напряж|тревож|хоррор|dark/], ["Спокойная", /спокой|лирич|пианино|piano|calm/]];
+function musicGenre(style) {
+  const t = (style || "").toLowerCase(); if (!t.trim()) return "";
+  const g = MUSIC_GENRES.find(([, re]) => re.test(t));
+  if (g) return g[0];
+  const w = t.split(/[,.;]/)[0].trim(); return w[0].toUpperCase() + w.slice(1);
+}
+function musicFolders(files) {
+  const groups = {};
+  for (const f of files) {
+    const g = f.made_for ? "🎼 Сочинённая программой" : musicGenre(f.style) || "Без стиля";
+    (groups[g] = groups[g] || []).push(f);
+  }
+  const names = Object.keys(groups).sort((a, b) => (a.startsWith("🎼") ? 1 : 0) - (b.startsWith("🎼") ? 1 : 0) || (a === "Без стиля") - (b === "Без стиля") || a.localeCompare(b, "ru"));
+  return names.map(g => `<div class="card"><h2>${g === "Без стиля" || g.startsWith("🎼") ? g : "📁 " + esc(g)} (${groups[g].length})</h2>
+    <div class="mlist">${groups[g].map(f => `<div class="mrow"><div class="grow"><div class="small"><b>${esc(f.name)}</b></div>
+      <input type="text" class="mstyle" list="mgenres" data-name="${esc(f.name)}" value="${esc(f.style || "")}" placeholder="Стиль или папка, например «Поп» или «весёлый поп, бодрый»">
+      ${f.made_for ? `<div class="muted small">Сочинена для ролика «${esc(f.made_for)}»</div>` : ""}</div>
+      <audio controls preload="none" src="/music/${encodeURIComponent(f.name)}"></audio><button class="sm danger" data-del="${esc(f.name)}">Удалить</button></div>`).join("")}</div></div>`).join("") + `<datalist id="mgenres">${MUSIC_GENRES.map(([g]) => `<option value="${g}">`).join("")}</datalist>`;
+}
 async function viewMusic() {
   const files = await api("/api/music");
   main.innerHTML = `<h1>Фоновая музыка</h1>
   <div class="card">
     <p>Для каждого ролика программа выбирает отсюда трек, который больше всего подходит по стилю к настроению ролика, и тихо подкладывает его под голос. Если раздел пустой, ролик будет без музыки.</p>
+    <p class="muted small">Треки разложены по папкам по стилю: напишите у трека стиль (или просто выберите папку из подсказки, например «Поп»), и он переедет в свою папку. Сочинённые программой треки лежат в отдельной папке. Папки открываются нажатием.</p>
     <p class="muted small">Можно включить в «Новом ролике» «Сочинять новую»: программа сочинит музыку через ElevenLabs (около $0.30 за минуту) и сохранит её сюда со стилем, чтобы использовать снова бесплатно. Стиль можно подписать и у своих треков: по нему программа подбирает музыку.</p>
     <p class="muted small">Где взять музыку без проблем с авторскими правами: в <a href="https://studio.youtube.com/" target="_blank">YouTube Studio → Фонотека</a> (бесплатно, можно использовать на YouTube). Ищите спокойные, атмосферные или «cinematic» треки без слов.</p>
     <div class="row"><input type="file" id="mfile" multiple accept="audio/*" style="display:none"><button class="primary" onclick="document.getElementById('mfile').click()">＋ Добавить треки</button><button id="mopen">📂 Открыть папку с музыкой</button></div>
   </div>
-  <div class="card">${files.length ? `<table>${files.map(f => `<tr><td>${esc(f.name)}<div><input type="text" class="mstyle" data-name="${esc(f.name)}" value="${esc(f.style || "")}" placeholder="Стиль, например «весёлый поп, бодрый»" style="margin-top:4px;max-width:320px"></div>${f.made_for ? `<div class="muted small">Сочинена для ролика «${esc(f.made_for)}»</div>` : ""}</td><td><audio controls preload="none" src="/music/${encodeURIComponent(f.name)}"></audio></td><td><button class="sm danger" data-del="${esc(f.name)}">Удалить</button></td></tr>`).join("")}</table>` : `<p class="muted">Треков пока нет.</p>`}</div>`;
+  ${files.length ? musicFolders(files) : `<div class="card"><p class="muted">Треков пока нет.</p></div>`}`;
+  foldCards(main, "music");
   $("#mfile").onchange = async e => {
     for (const f of e.target.files) {
       try { await api(`/api/music/upload?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f }); } catch (err) { toast(err.message, true); }
@@ -2350,7 +2385,7 @@ async function viewMusic() {
     toast("Музыка добавлена"); viewMusic();
   };
   $("#mopen").onclick = () => api("/api/open", { json: { what: "music" } });
-  main.querySelectorAll(".mstyle").forEach(i => i.onchange = () => api(`/api/music/${encodeURIComponent(i.dataset.name)}/style`, { json: { style: i.value } }).then(() => toast("Стиль сохранён")).catch(e => toast(e.message, true)));
+  main.querySelectorAll(".mstyle").forEach(i => i.onchange = () => api(`/api/music/${encodeURIComponent(i.dataset.name)}/style`, { json: { style: i.value } }).then(() => { toast("Стиль сохранён"); viewMusic(); }).catch(e => toast(e.message, true)));
   main.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => { await api(`/api/music/${encodeURIComponent(b.dataset.del)}`, { method: "DELETE" }); viewMusic(); });
 }
 
@@ -2853,23 +2888,28 @@ async function viewProducerOne(id) {
 }
 
 // ------------------------------------------------------------------ script library of a niche
-async function viewLibrary() {
+async function viewLibrary(id) {
   clearInterval(timer); timer = null;
   const projs = await api("/api/projects").catch(() => []);
   if (!projs.length) {
     main.innerHTML = `<h1>📚 Хранилище сценариев</h1><div class="card"><p>Хранилище есть у каждой ниши. Сначала создайте проект в разделе <a href="#/projects">«📁 Проекты и ниши»</a>.</p></div>`;
     return;
   }
-  let pid = ""; try { pid = localStorage.getItem("ay_lib_project") || ""; } catch (e) { }
-  if (!projs.some(p => p.id === pid)) pid = projs[0].id;
+  const pid = id;
   const proj = projs.find(p => p.id === pid);
+  if (!proj) {
+    const libs = await Promise.all(projs.map(p => api(`/api/projects/${p.id}/library`).catch(() => ({ items: [] }))));
+    main.innerHTML = `<h1>📚 Хранилище сценариев</h1>
+    <p class="muted">У каждой ниши своё хранилище: разборы удачных роликов и правила, по которым пишет сценарист. Нажмите на нишу, чтобы открыть её хранилище.</p>
+    <div class="pgrid sm">${projs.map((p, i) => `<a class="pcard" href="#/library/${p.id}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name || "Без названия")}</b>
+      <div class="muted small">разборов: ${libs[i].items.length}${libs[i].playbook_ru ? " · есть правила" : ""}</div></div></a>`).join("")}</div>`;
+    return;
+  }
   const lib = await api(`/api/projects/${pid}/library`);
   const items = [...lib.items].reverse();
   const topics = [...new Set(lib.items.flatMap(x => x.topics_ru || []))].slice(-40).reverse();
-  main.innerHTML = `<h1>📚 Хранилище сценариев</h1>
+  main.innerHTML = `<a href="#/library" class="small">← Все ниши</a><h1>${esc(proj.icon || "")} ${esc(proj.name || "Без названия")}</h1>
   <div class="card">
-    <label class="f">Ниша</label>
-    <select id="lb-proj">${projs.map(p => `<option value="${p.id}" ${p.id === pid ? "selected" : ""}>${esc((p.icon || "") + " " + (p.name || "Без названия"))}</option>`).join("")}</select>
     <p class="muted small">Здесь лежат разборы роликов, которые сработали. Сценарист этой ниши читает правила ниши и последние разборы перед каждым новым роликом: учится приёмам, но не копирует темы и текст. Новые ниши появляются в списке сами, когда вы создаёте проект.</p>
     <label class="f">Описание ниши <span class="hint">то же поле, что в проекте</span></label>
     ${nicheIsLeftover(proj) ? LEFTOVER_NICHE : ""}
@@ -2898,7 +2938,6 @@ async function viewLibrary() {
       <div class="row" style="margin-top:6px"><button class="danger sm" data-lbdel="${x.id}">Убрать из хранилища</button></div></details>`).join("")
       : `<p class="muted">Пусто. Откройте <a href="#/producer">«🎓 ИИ продюсер»</a>, разберите удачный ролик и сохраните разбор сюда.</p>`}
   </div>`;
-  $("#lb-proj").onchange = e => { try { localStorage.setItem("ay_lib_project", e.target.value); } catch (er) { } viewLibrary(); };
   $("#lb-niche-save").onclick = () => api(`/api/projects/${pid}`, { json: { niche: $("#lb-niche").value } }).then(() => toast("Описание ниши сохранено")).catch(e => toast(e.message, true));
   if ($("#lb-niche-undo")) $("#lb-niche-undo").onclick = async () => {
     if (!confirm("Вернуть описание ниши, которое было до обновления продюсером?")) return;
@@ -2908,11 +2947,11 @@ async function viewLibrary() {
   if ($("#lb-pb-clear")) $("#lb-pb-clear").onclick = async () => {
     if (!confirm("Очистить правила ниши? Сценарист перестанет их читать. Описание ниши останется.")) return;
     await api(`/api/projects/${pid}/library/playbook`, { json: { playbook_ru: "" } }).then(() => toast("Правила очищены")).catch(e => toast(e.message, true));
-    viewLibrary();
+    viewLibrary(pid);
   };
   $("#lb-build").onclick = async () => {
     const b = $("#lb-build"); b.disabled = true; b.textContent = "⏳ Изучаю все разборы ниши…";
-    try { await api(`/api/projects/${pid}/library/build`, { method: "POST" }); toast("Правила и описание ниши обновлены"); viewLibrary(); }
+    try { await api(`/api/projects/${pid}/library/build`, { method: "POST" }); toast("Правила и описание ниши обновлены"); viewLibrary(pid); }
     catch (e) { toast(e.message, true); b.disabled = false; b.textContent = "✨ Обновить правила и описание ниши"; }
   };
   const sels = () => [...main.querySelectorAll("[data-lbsel]")];
@@ -2926,14 +2965,14 @@ async function viewLibrary() {
     const b = $("#lb-rm"); b.disabled = true; b.textContent = "⏳ Убираю и пересобираю правила…";
     const r = await api(`/api/projects/${pid}/library/remove`, { json: { ids } }).catch(e => { toast(e.message, true); return null; });
     if (r && r.note) toast(r.note);
-    viewLibrary();
+    viewLibrary(pid);
   };
   main.querySelectorAll("[data-lbdel]").forEach(b => b.onclick = async () => {
     if (!confirm("Убрать этот разбор из хранилища? Сценарист перестанет на него опираться, а правила и описание ниши пересоберутся без его выводов (описание можно будет вернуть кнопкой «↩»).")) return;
     b.disabled = true; b.textContent = "⏳ Убираю и пересобираю правила…";
     const r = await api(`/api/projects/${pid}/library/${b.dataset.lbdel}`, { method: "DELETE" }).catch(e => { toast(e.message, true); return null; });
     if (r && r.note) toast(r.note);
-    viewLibrary();
+    viewLibrary(pid);
   });
 }
 
