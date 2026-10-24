@@ -9,30 +9,33 @@
 <link rel="apple-touch-icon" href="/static/icon-180.png">
 <script>(function () { var m; try { m = localStorage.getItem("ay_theme"); } catch (e) { } m = m || "auto";
   var dark = m === "dark" || (m === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
-  document.documentElement.dataset.theme = dark ? "dark" : "light"; })();</script>
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  try { var lk = localStorage.getItem("ay_look"); if (lk) document.documentElement.dataset.look = lk; } catch (e) { } })();</script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <aside class="side">
   <div class="logo">▶ Авто ютуб</div>
-  <div class="ver">версия от 24 октября (108): темп речи до 1.6</div>
+  <div class="ver">версия от 24 октября (109): 5 оформлений и свой порядок разделов</div>
   <div id="updbox"></div>
   <nav>
-    <a href="#/new" data-nav="new">＋ Новый ролик</a>
-    <a href="#/jobs" data-nav="jobs">🎬 Ролики</a>
-    <a href="#/montage" data-nav="montage">✂️ Монтаж по своему тексту</a>
-    <a href="#/remake" data-nav="remake">🔁 Переделка ролика</a>
-    <a href="#/producer" data-nav="producer">🎓 ИИ продюсер</a>
-    <a href="#/library" data-nav="library">📚 Хранилище сценариев</a>
-    <a href="#/projects" data-nav="projects">📁 Проекты и ниши</a>
-    <a href="#/characters" data-nav="characters">🧑‍🎨 Персонажи</a>
-    <a href="#/items" data-nav="items">📦 Предметы</a>
-    <a href="#/settings" data-nav="settings">⚙️ Настройки</a>
-    <a href="#/prompts" data-nav="prompts">📝 Шаблоны сценария</a>
-    <a href="#/music" data-nav="music">🎵 Музыка</a>
-    <a href="#/balance" data-nav="balance">💰 Балансы</a>
-    <a href="#/help" data-nav="help">❓ Как пользоваться</a>
+    <a href="#/new" data-nav="new"><i>＋</i> Новый ролик</a>
+    <a href="#/jobs" data-nav="jobs"><i>🎬</i> Ролики</a>
+    <a href="#/montage" data-nav="montage"><i>✂️</i> Монтаж по своему тексту</a>
+    <a href="#/remake" data-nav="remake"><i>🔁</i> Переделка ролика</a>
+    <a href="#/producer" data-nav="producer"><i>🎓</i> ИИ продюсер</a>
+    <a href="#/library" data-nav="library"><i>📚</i> Хранилище сценариев</a>
+    <a href="#/projects" data-nav="projects"><i>📁</i> Проекты и ниши</a>
+    <a href="#/characters" data-nav="characters"><i>🧑‍🎨</i> Персонажи</a>
+    <a href="#/items" data-nav="items"><i>📦</i> Предметы</a>
+    <a href="#/settings" data-nav="settings"><i>⚙️</i> Настройки</a>
+    <a href="#/prompts" data-nav="prompts"><i>📝</i> Шаблоны сценария</a>
+    <a href="#/music" data-nav="music"><i>🎵</i> Музыка</a>
+    <a href="#/balance" data-nav="balance"><i>💰</i> Балансы</a>
+    <a href="#/help" data-nav="help"><i>❓</i> Как пользоваться</a>
   </nav>
+  <a class="navedit" id="navedit">↕ Переставить разделы</a>
+  <select class="looksel" id="looksel" title="Оформление программы"><option value="">Оформление: обычное</option><option value="graphite">Графит</option><option value="paper">Бумага</option><option value="navy">Ночной синий</option><option value="studio">Студия</option><option value="swiss">Швейцарский</option></select>
   <a href="#/balance" id="balside" class="balside"></a>
   <div class="themesw" id="themesw" title="Оформление"><button data-th="auto">Авто</button><button data-th="light">☀️ Светлая</button><button data-th="dark">🌙 Тёмная</button></div>
   <a href="#" id="quit" class="quit">⏻ Выключить программу</a>

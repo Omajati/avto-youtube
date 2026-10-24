@@ -49,6 +49,43 @@ document.querySelectorAll("#themesw [data-th]").forEach(b => b.onclick = () => {
 });
 applyTheme();
 
+// ------------------------------------------------------------------ strict looks and the owner's order of the sidebar sections
+const lsGetRaw = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { } };
+(function () {
+  const ls = document.getElementById("looksel");
+  if (ls) {
+    ls.value = lsGetRaw("ay_look") || "";
+    ls.onchange = () => { lsSetRaw("ay_look", ls.value || null); if (ls.value) document.documentElement.dataset.look = ls.value; else delete document.documentElement.dataset.look; };
+  }
+  const nav = document.querySelector(".side nav"), btn = document.getElementById("navedit");
+  if (!nav || !btn) return;
+  const links = () => [...nav.querySelectorAll("a[data-nav]")];
+  const save = () => lsSetRaw("ay_nav", JSON.stringify(links().map(a => a.dataset.nav)));
+  let order = []; try { order = JSON.parse(lsGetRaw("ay_nav") || "[]"); } catch (e) { }
+  order.forEach(k => { const a = nav.querySelector(`a[data-nav="${k}"]`); if (a) nav.appendChild(a); });
+  links().filter(a => !order.includes(a.dataset.nav) && order.length).forEach(a => nav.appendChild(a));  // new sections go last
+  links().forEach(a => {
+    a.insertAdjacentHTML("beforeend", `<span class="mv"><b data-up title="Выше">▲</b><b data-dn title="Ниже">▼</b></span>`);
+    a.querySelector("[data-up]").onclick = e => { e.preventDefault(); e.stopPropagation(); if (a.previousElementSibling) nav.insertBefore(a, a.previousElementSibling); save(); };
+    a.querySelector("[data-dn]").onclick = e => { e.preventDefault(); e.stopPropagation(); if (a.nextElementSibling) nav.insertBefore(a.nextElementSibling, a); save(); };
+    a.addEventListener("dragstart", e => { a.classList.add("drag"); e.dataTransfer.effectAllowed = "move"; });
+    a.addEventListener("dragend", () => { a.classList.remove("drag"); save(); });
+    a.addEventListener("dragover", e => {
+      const cur = nav.querySelector("a.drag"); if (!cur || cur === a) return;
+      e.preventDefault(); const r = a.getBoundingClientRect();
+      nav.insertBefore(cur, e.clientY < r.top + r.height / 2 ? a : a.nextSibling);
+    });
+    a.addEventListener("click", e => { if (nav.classList.contains("editing")) e.preventDefault(); });
+  });
+  btn.onclick = () => {
+    const on = !nav.classList.contains("editing");
+    nav.classList.toggle("editing", on); links().forEach(a => a.draggable = on);
+    btn.textContent = on ? "✓ Готово" : "↕ Переставить разделы";
+    if (!on) save();
+  };
+})();
+
 // ------------------------------------------------------------------ router
 async function route() {
   clearInterval(timer); timer = null;

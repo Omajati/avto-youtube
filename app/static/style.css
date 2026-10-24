@@ -233,3 +233,73 @@ table.pt-f td:nth-child(2) { width: 170px; } table.pt-cmp td:first-child { width
 .imp-e { border-top: 1px solid var(--line); padding: 8px 0; }
 .imp-old { text-decoration: line-through; opacity: .6; margin: 2px 0; }
 .imp-new { border-left: 3px solid var(--ok); padding-left: 8px; margin: 4px 0; }
+
+/* ---------------------------------------------------------------- strict looks (html[data-look]), on top of light/dark.
+   Each look sets its own colors, so it ignores the light/dark switch. */
+.side nav a i { font-style: normal; display: inline-block; width: 1.4em; }
+html[data-look] .side nav a i { filter: grayscale(1); opacity: .75; }
+html[data-look] h1 { letter-spacing: -.01em; }
+html[data-look] button, html[data-look] .btn { border-radius: var(--btnr); }
+html[data-look] .card, html[data-look] .stage, html[data-look] .jobcard, html[data-look] .pcard, html[data-look] .cbtn { border: 1px solid var(--line); box-shadow: none; }
+html[data-look] input[type=text], html[data-look] input[type=password], html[data-look] input[type=number], html[data-look] select, html[data-look] textarea { border-radius: var(--btnr); }
+html[data-look] .side nav a.active, html[data-look] button.primary, html[data-look] .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--onaccent); }
+html[data-look] .side { backdrop-filter: none; }
+html[data-look] .side nav a { border-radius: var(--btnr); }
+
+/* 1. Графит: dark, monochrome, one cold blue accent */
+html[data-look="graphite"] { --bg: #16181c; --panel: #1e2126; --text: #e6e7e9; --muted: #8b9098; --line: #2c3037; --accent: #4f8cff; --accent2: #4f8cff; --onaccent: #fff;
+  --field: #16181c; --fieldline: #33373f; --btn: #262a31; --btnhover: #2f343c; --soft: #1d2a40; --ring: rgba(79,140,255,.3); --tab: #1a1d21; --radius: 6px; --btnr: 6px; --bad: #ff6b6b;
+  --okbg: #15291d; --warnbg: #2e2510; --badbg: #331819; --infobg: #172238; --oktx: #7ee2a8; --warntx: #f5c451; --badtx: #fca5a5; --infotx: #9cc2ff; color-scheme: dark; }
+html[data-look="graphite"] .side { background: #111316; border-right-color: #23262b; }
+html[data-look="graphite"] .side nav a:hover { background: #1c1f24; }
+html[data-look="graphite"] .side nav a.active { background: #232a36; color: #fff; box-shadow: inset 3px 0 0 var(--accent); }
+
+/* 2. Бумага: white, black ink, thin lines, no color except the essentials */
+html[data-look="paper"] { --bg: #fafafa; --panel: #fff; --text: #111; --muted: #6b6b6b; --line: #e4e4e4; --accent: #111; --accent2: #111; --onaccent: #fff;
+  --field: #fff; --fieldline: #d6d6d6; --btn: #fff; --btnhover: #f2f2f2; --soft: #f4f4f4; --ring: rgba(0,0,0,.12); --tab: #f2f2f2; --radius: 4px; --btnr: 4px;
+  --okbg: #eef6ef; --warnbg: #fbf5e6; --badbg: #fbeeee; --infobg: #f1f3f6; --oktx: #1e6b33; --warntx: #7a5600; --badtx: #a32020; --infotx: #333; color-scheme: light; }
+html[data-look="paper"] .side { background: #fff; border-right: 1px solid #e4e4e4; }
+html[data-look="paper"] .side nav a:hover { background: #f4f4f4; }
+html[data-look="paper"] button, html[data-look="paper"] .btn { border: 1px solid #d6d6d6; }
+html[data-look="paper"] h1 { font-weight: 600; }
+
+/* 3. Ночной синий: deep navy, violet accent, compact like a pro tool */
+html[data-look="navy"] { --bg: #0e1220; --panel: #151a2c; --text: #e3e6f0; --muted: #8a91a8; --line: #252c44; --accent: #7c6cff; --accent2: #7c6cff; --onaccent: #fff;
+  --field: #0e1220; --fieldline: #2a3150; --btn: #1c2238; --btnhover: #242b46; --soft: #211f45; --ring: rgba(124,108,255,.35); --tab: #121729; --radius: 8px; --btnr: 7px; --bad: #ff7b8a;
+  --okbg: #11291f; --warnbg: #2d2512; --badbg: #331a22; --infobg: #1b2142; --oktx: #79e2ae; --warntx: #f3c766; --badtx: #ffa3b0; --infotx: #a9b4ff; color-scheme: dark; }
+html[data-look="navy"] .side { background: #0a0d18; border-right-color: #1b2136; }
+html[data-look="navy"] .side nav a:hover { background: #151a2c; }
+html[data-look="navy"] main { font-size: 14px; }
+
+/* 4. Студия: black, YouTube red, uppercase captions */
+html[data-look="studio"] { --bg: #0b0b0b; --panel: #151515; --text: #f1f1f1; --muted: #9a9a9a; --line: #262626; --accent: #e62117; --accent2: #e62117; --onaccent: #fff;
+  --field: #0b0b0b; --fieldline: #2e2e2e; --btn: #1f1f1f; --btnhover: #2a2a2a; --soft: #2a1210; --ring: rgba(230,33,23,.35); --tab: #111; --radius: 2px; --btnr: 2px; --bad: #ff5c52;
+  --okbg: #11261a; --warnbg: #2b230f; --badbg: #331311; --infobg: #1b1b1b; --oktx: #6fdc9b; --warntx: #f2c14e; --badtx: #ff9d96; --infotx: #ddd; color-scheme: dark; }
+html[data-look="studio"] .side { background: #000; border-right-color: #1c1c1c; }
+html[data-look="studio"] .side nav a { text-transform: uppercase; font-size: 12px; letter-spacing: .06em; font-weight: 600; }
+html[data-look="studio"] .side nav a:hover { background: #141414; }
+html[data-look="studio"] h1, html[data-look="studio"] h2 { text-transform: uppercase; letter-spacing: .03em; }
+html[data-look="studio"] .card { border-top: 2px solid #262626; }
+
+/* 5. Швейцарский: light grey page, black sidebar, orange accent, strict grid */
+html[data-look="swiss"] { --bg: #ededea; --panel: #fff; --text: #141414; --muted: #6a6a66; --line: #d9d9d4; --accent: #ff5a1f; --accent2: #ff5a1f; --onaccent: #fff;
+  --field: #f6f6f3; --fieldline: #d4d4ce; --btn: #f1f1ed; --btnhover: #e6e6e1; --soft: #fff1ea; --ring: rgba(255,90,31,.25); --tab: #e3e3df; --radius: 0px; --btnr: 0px;
+  --okbg: #e6f3e8; --warnbg: #fbf1dc; --badbg: #fbe6e1; --infobg: #ececea; --oktx: #1d6b34; --warntx: #7b5300; --badtx: #a8261a; --infotx: #333; color-scheme: light; }
+html[data-look="swiss"] .side { background: #141414; color: #eee; border-right: 0; }
+html[data-look="swiss"] .logo { color: #fff; } html[data-look="swiss"] .side nav a { color: #d8d8d4; }
+html[data-look="swiss"] .side nav a:hover { background: #222; color: #fff; }
+html[data-look="swiss"] .side nav a i { filter: grayscale(1) brightness(1.6); opacity: .9; }
+html[data-look="swiss"] .balside, html[data-look="swiss"] .balside .bl b { color: #cfcfca; }
+html[data-look="swiss"] .themesw { background: #222; }
+html[data-look="swiss"] h1 { font-weight: 800; letter-spacing: -.03em; font-size: 28px; }
+html[data-look="swiss"] .card { border-left: 4px solid var(--text); }
+
+/* sidebar order editing */
+.side nav.editing a { cursor: grab; outline: 1px dashed var(--line); margin-bottom: 4px; }
+.side nav.editing a.drag { opacity: .4; }
+.side nav a .mv { display: none; float: right; } .side nav.editing a .mv { display: inline-flex; gap: 2px; }
+.side nav a .mv b { font-weight: 400; padding: 0 4px; border-radius: 4px; cursor: pointer; } .side nav a .mv b:hover { background: rgba(127,127,127,.25); }
+.navedit { display: block; margin: 6px 8px 0; font-size: 12px; color: var(--muted) !important; text-decoration: none; cursor: pointer; }
+.navedit:hover { text-decoration: underline; }
+.looksel { margin: 8px 8px 0; width: calc(100% - 16px); font-size: 12px; padding: 4px 6px !important; }
+html[data-look] .themesw { display: none; }
