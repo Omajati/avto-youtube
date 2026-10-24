@@ -32,14 +32,14 @@ def init():
 
 
 # status: queued | running | review | paused | done | error
-def create(topic: str, options: dict) -> dict:
+def create(topic: str, options: dict, status: str = "queued") -> dict:
     jid = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
     now = time.time()
     with _lock, _conn() as c:
         c.execute(
             "INSERT INTO jobs (id, created, updated, status, stage, progress, title, topic, options, error, approved, position)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            (jid, now, now, "queued", "", 0, "", topic, json.dumps(options, ensure_ascii=False), "", 0, now),
+            (jid, now, now, status, "", 0, "", topic, json.dumps(options, ensure_ascii=False), "", 0, now),
         )
     (JOBS_DIR / jid).mkdir(parents=True, exist_ok=True)
     return get(jid)

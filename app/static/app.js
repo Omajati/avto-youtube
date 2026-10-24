@@ -64,6 +64,7 @@ async function route() {
     else if (page === "items") await viewItems();
     else if (page === "prompts") await viewPrompts(id);
     else if (page === "music") await viewMusic();
+    else if (page === "montage") await viewMontage();
     else if (page === "remake") await viewRemake(id);
     else if (page === "producer") await viewProducer(id);
     else if (page === "library") await viewLibrary();
@@ -1209,7 +1210,8 @@ function renderStages(d) {
     try { body = enabled ? (RENDER[sid] ? RENDER[sid](data, d) : "") : (d.format === "short" ? `<p class="muted">Режим «Только шортс»: основное видео и есть шортс.</p>` : `<p class="muted">Шортс не заказан для этого ролика.</p>`); }
     catch (e) { body = `<p class="muted">Не удалось показать: ${esc(e.message)}</p>`; }
     if (!data && enabled && !body) body = `<p class="muted">${cur ? "Выполняется…" : "Ещё не начато."}</p>`;
-    const redo = enabled && data && sid !== "approval" ? `<button class="sm" data-redo="${sid}">↻ Переделать с этого шага</button>` : "";
+    const writing = ["idea", "outline", "script", "review", "approval"].includes(sid);
+    const redo = enabled && data && sid !== "approval" && !(j.options.montage && writing) ? `<button class="sm" data-redo="${sid}">↻ Переделать с этого шага</button>` : "";
     return `<details class="stage ${enabled ? "" : "off"} ${cur ? "cur" : ""}" data-sid="${sid}" ${openStages.has(sid) || (cur && j.status === "error") || (sid === "animate" && d.anim && d.anim.waiting) ? "open" : ""}>
       <summary><span class="ic">${stageIcon(sid, d)}</span><span class="nm">${esc(st.name)}</span>${redo}</summary>
       <div class="content">${body}</div></details>`;
@@ -1467,6 +1469,7 @@ const img = (d, name, cls = "sc") => d.images.includes(name) ? `<a href="/files/
 const RENDER = {
   idea(r, d) {
     if (!r) return "";
+    if (r.montage) return `<p>Монтаж по вашему тексту: тему не придумывали. Название ролика: <b>${esc(r.ideas[0].title_ru || r.ideas[0].title)}</b></p>`;
     const j = d.job, busy = j.status === "running";
     const wait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked;
     const rate = x => x.viewer ? (+x.viewer.stop_scroll || 0) + (+x.viewer.unpredictable || 0) + (+x.viewer.payoff || 0) : x.total * 3;
@@ -1489,8 +1492,13 @@ const RENDER = {
       ${wait ? "" : `<span class="muted small">Если тема сменится, сценарий, картинки и озвучка сделаются заново.</span>`}</div>`}
     <p class="muted small">«Итог» — средняя оценка самого сценариста (любопытство, эмоции, понятность, новизна, наглядность).</p>`;
   },
-  outline(o) {
+  outline(o, d) {
     if (!o) return "";
+    if (d && d.job.options.montage) {
+      const list = (t, xs) => (xs || []).length ? `<h3>${t}</h3><ul>${xs.map(x => `<li><b>${esc(x.name)}</b> <span class="en">${esc(x.visual)}</span></li>`).join("")}</ul>` : "";
+      return `<p class="muted">Монтаж по вашему тексту: структуру не придумывали. Ниже места и люди из вашего текста, по ним картинки одного места рисуются одинаковыми.</p>`
+        + (list("Места", o.locations) + list("Люди", o.characters) || `<p class="muted">Появятся на шаге «Сцены».</p>`);
+    }
     return `<h3>Хук (первые 15 секунд)</h3><div class="banner info">${esc(o.hook?.why_ru)}<div class="en">${esc(o.hook?.text_idea)}<br>Главный вопрос: ${esc(o.hook?.big_question)}</div></div>
     <h3>Сюжет коротко</h3><p>${nl(o.summary_ru)}</p>
     <h3>Структура</h3>
@@ -1499,8 +1507,9 @@ const RENDER = {
     ${(o.open_loops || []).length ? `<h3>Открытые вопросы, которые держат зрителя</h3><ul>${o.open_loops.map(l => `<li class="en">${esc(l.question)} (открыт: ${esc(l.opened_in)}, закрыт: ${esc(l.closed_in)})</li>`).join("")}</ul>` : ""}
     ${(o.characters || []).length ? `<h3>Герои (для одинаковой внешности на всех картинках)</h3><ul>${o.characters.map(c => `<li><b>${esc(c.name)}</b> <span class="en">${esc(c.visual)}</span></li>`).join("")}</ul>` : ""}`;
   },
-  script(r) {
+  script(r, d) {
     if (!r) return "";
+    if (d && d.job.options.montage) return `<p>Ваш текст: ${r.checks.word_count} слов, примерно ${r.checks.minutes} мин озвучки. Он озвучивается ровно как вставлен, его можно поправить в шаге «Проверка редактором».</p>`;
     return checksHtml(r.checks) + `<details><summary>Первый вариант текста (английский)</summary><pre class="text">${esc(r.script)}</pre></details>
     <p class="muted small">Этот текст дальше проверяет и улучшает редактор. Русский перевод итогового текста в шаге «Перевод и описание для YouTube».</p>`;
   },
@@ -1510,10 +1519,11 @@ const RENDER = {
     const rounds = (r || live).rounds;
     const thr = `порог ${esc(SETTINGS_CACHE?.quality_threshold ?? 8)}`;
     let head = "";
-    if (r) head = r.passed ? `<div class="banner ok">✓ Сценарий прошёл проверку: итоговая оценка <b>${r.final_overall}</b> из 10 (${thr}).</div>`
+    if (r && r.montage) head = `<div class="banner info">Монтаж по вашему тексту: редактор его не проверял и не переписывал.</div>`;
+    else if (r) head = r.passed ? `<div class="banner ok">✓ Сценарий прошёл проверку: итоговая оценка <b>${r.final_overall}</b> из 10 (${thr}).</div>`
       : `<div class="banner warn">Сценарий не дотянул до порога за отведённые раунды. Взята лучшая версия (оценка <b>${r.final_overall}</b>). Можно нажать «Переделать с этого шага» или поправить шаблон редактора.</div>`;
-    return head + `<table><tr><th>Раунд</th><th>Оценка</th><th>Худший пункт</th><th>Слов</th><th>Решение</th></tr>
-      ${rounds.map((x, i) => `<tr><td>${i + 1}</td><td>${score(x.overall)}</td><td>${score(x.min_score)}</td><td>${x.checks.word_count}</td><td>${x.passed ? "принято" : x.score_only ? "финальная проверка" : "переписан"}</td></tr>`).join("")}</table>
+    return head + (rounds.length ? `<table><tr><th>Раунд</th><th>Оценка</th><th>Худший пункт</th><th>Слов</th><th>Решение</th></tr>
+      ${rounds.map((x, i) => `<tr><td>${i + 1}</td><td>${score(x.overall)}</td><td>${score(x.min_score)}</td><td>${x.checks.word_count}</td><td>${x.passed ? "принято" : x.score_only ? "финальная проверка" : "переписан"}</td></tr>`).join("")}</table>` : "") + `
       ${rounds.map((x, i) => `<details ${i === rounds.length - 1 ? "open" : ""}><summary><b>Раунд ${i + 1}: подробно</b></summary>
         <table><tr><th>Критерий</th><th>Оценка</th><th>Комментарий редактора</th></tr>
         ${x.scores.map(s => `<tr><td>${esc(s.criterion_ru)}</td><td>${score(s.score)}</td><td class="small">${esc(s.comment_ru)}</td></tr>`).join("")}</table>
@@ -2553,4 +2563,93 @@ async function viewLibrary() {
     await api(`/api/projects/${pid}/library/${b.dataset.lbdel}`, { method: "DELETE" }).catch(e => toast(e.message, true));
     viewLibrary();
   });
+}
+
+
+// ---------------------------------------------------------------- montage: the owner's own text and pictures
+async function viewMontage() {
+  const s = await api("/api/settings");
+  const projs = await api("/api/projects").catch(() => []);
+  let vs = VOICES || [];
+  let cur = lsGet("ay_montage_proj");
+  if (!projs.find(p => p.id === cur)) cur = "";
+  const opt = (pairs, v) => pairs.map(([k, n]) => `<option value="${esc(k)}" ${String(k) === String(v) ? "selected" : ""}>${esc(n)}</option>`).join("");
+  const draw = () => {
+    const p = projs.find(x => x.id === cur) || {};
+    const num = k => p[k] !== undefined && p[k] !== "" ? p[k] : s[k];
+    const fmt = p.format || "long";
+    main.innerHTML = `<h1>✂️ Монтаж по своему тексту</h1>
+    <p class="muted">Вставьте свой готовый сценарий. Программа сразу, без сценариста и редактора, разобьёт его на сцены, озвучит, остановится, чтобы вы загрузили свои картинки (недостающие дорисует сама), и смонтирует по всем нашим правилам: эффекты, звуки, музыка, субтитры, кнопки «Подписаться» и «Нравится».</p>
+    <div class="card">
+      <div class="grid2"><div>
+        <label class="f">Проект <span class="hint">берутся его персонажи, стиль картинок и голос</span></label>
+        <select id="mt-proj"><option value="">Без проекта (общие настройки)</option>${projs.map(x => `<option value="${x.id}" ${x.id === cur ? "selected" : ""}>${esc(x.icon || "")} ${esc(x.name)}</option>`).join("")}</select>
+        <label class="f">Название ролика <span class="hint">необязательно</span></label>
+        <input type="text" id="mt-title" placeholder="Например: Почему она не пишет первой">
+      </div><div>
+        <label class="f">Формат</label>
+        <select id="mt-fmt">${opt([["short", "Шортс / рилс (вертикальный 9:16)"], ["long", "Длинный ролик (горизонтальный 16:9)"]], fmt)}</select>
+        <label class="f">Язык</label>
+        <select id="mt-lang">${opt([["ru", "Русский"], ["en", "Английский"]], p.language || "ru")}</select>
+      </div></div>
+      <label class="f">Текст для озвучки <span class="hint">ровно то, что будет прочитано. Пустая строка разделяет абзацы. Реплика героя своим голосом: «Имя: фраза» отдельным абзацем, имя вслух не читается</span></label>
+      <textarea id="mt-text" rows="12" placeholder="Вставьте сценарий сюда"></textarea>
+      <div class="muted small" id="mt-wc"></div>
+    </div>
+    <div class="card"><h2>Картинки</h2>
+      <label class="check"><input type="radio" name="mt-img" value="own" checked> Свои картинки: после озвучки пауза, загружаете их (по одной или пачкой, номер сцены в имени файла), недостающие дорисует ИИ</label>
+      <label class="check"><input type="radio" name="mt-img" value="ai"> Все картинки рисует ИИ по тексту (в стиле проекта)</label>
+    </div>
+    <div class="card"><h2>Голос</h2>
+      <div class="grid2"><div>
+        <label class="f">Голос</label>
+        <select id="mt-voice"><option value="">Как в проекте (${esc(p.voice_name || s.elevenlabs_voice_name || "общие настройки")})</option>${voiceOptions(vs, "", p.language || "ru")}</select>
+        <label class="f">Стабильность (0–1) <span class="hint">меньше — эмоциональнее</span></label><input type="number" step="0.05" min="0" max="1" id="mt-voice_stability" value="${esc(num("voice_stability"))}">
+        <label class="f">Похожесть на оригинал (0–1)</label><input type="number" step="0.05" min="0" max="1" id="mt-voice_similarity" value="${esc(num("voice_similarity"))}">
+      </div><div>
+        <label class="f">Выразительность (0–1)</label><input type="number" step="0.05" min="0" max="1" id="mt-voice_style" value="${esc(num("voice_style"))}">
+        <label class="f">Скорость голоса (0.7–1.2)</label><input type="number" step="0.01" min="0.7" max="1.2" id="mt-voice_speed" value="${esc(num("voice_speed"))}">
+      </div></div>
+    </div>
+    <div class="card"><h2>Монтаж</h2>
+      <div class="grid2"><div>
+        <label class="f">Музыка</label><select id="mt-music">${opt(Object.entries(META.music_modes), p.music_mode || "library")}</select>
+        <label class="f">Эффекты и звуки</label><select id="mt-fx">${opt(Object.entries(META.fx_modes), p.fx_mode || s.fx_mode || "light")}</select>
+        <label class="f">Скорость готового ролика <span class="hint">голос и картинка вместе, тон голоса не меняется</span></label>
+        <select id="mt-speed">${opt([1, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.4, 1.5].map(x => [x, x === 1 ? "Обычная" : `×${x}`]), 1)}</select>
+        <label class="check"><input type="checkbox" id="mt-subs" ${(fmt === "short" ? p.subs_short ?? s.subtitles_short : p.subs_video ?? s.subtitles_long) ? "checked" : ""}> Субтитры на видео</label>
+      </div><div>
+        <label class="f">Призыв на вертикальном видео</label><select id="mt-cta">${opt(Object.entries(META.cta_modes), p.cta_short || s.cta_short || "both")}</select>
+        <label class="f">Язык кнопок призыва</label><select id="mt-cta-lang">${opt(Object.entries(META.cta_langs), p.cta_lang || s.cta_lang || "auto")}</select>
+        <label class="f">Анимация сцен <span class="hint">платно</span></label><select id="mt-anim">${opt(animModes(), p.anim_mode || s.anim_mode || "off")}</select>
+        <label class="f">Сколько сцен оживлять</label><input type="number" id="mt-anim-n" min="1" max="60" value="${esc(p.anim_count || 3)}">
+        <label class="check"><input type="checkbox" id="mt-anim-p" ${p.anim_pause ? "checked" : ""}> Пауза перед анимацией: выбрать сцены самому</label>
+      </div></div>
+    </div>
+    <div class="row"><button class="primary" id="mt-go">🎬 Начать монтаж</button><span class="muted small">Текст не проверяется и не переписывается: озвучивается ровно как вставлен.</span></div>`;
+    const ta = $("#mt-text"), wc = $("#mt-wc");
+    const count = () => { const n = (ta.value.match(/[0-9A-Za-zА-Яа-яЁё]+/g) || []).length; wc.textContent = n ? `${n} слов, примерно ${(n / (($("#mt-lang").value === "ru") ? 130 : 150) * 60).toFixed(0)} сек озвучки` : ""; };
+    ta.oninput = count;
+    $("#mt-proj").onchange = e => { cur = e.target.value; lsSet("ay_montage_proj", cur); const t = ta.value, ti = $("#mt-title").value; draw(); $("#mt-text").value = t; $("#mt-title").value = ti; $("#mt-text").oninput(); };
+    $("#mt-go").onclick = async () => {
+      if ((ta.value.match(/[0-9A-Za-zА-Яа-яЁё]+/g) || []).length < 3) return toast("Вставьте текст сценария", true);
+      const v = $("#mt-voice"), vo = v.selectedOptions[0];
+      const body = { montage_script: ta.value, topic: $("#mt-title").value, project_id: cur, format: $("#mt-fmt").value, language: $("#mt-lang").value,
+        images_pause: main.querySelector('input[name="mt-img"]:checked').value === "own", review_pause: false, idea_pause: false,
+        voice_id: v.value || undefined, voice_name: v.value ? (vo.dataset.name || vo.textContent) : undefined,
+        voice_stability: $("#mt-voice_stability").value, voice_similarity: $("#mt-voice_similarity").value, voice_style: $("#mt-voice_style").value, voice_speed: $("#mt-voice_speed").value,
+        music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, speed_video: +$("#mt-speed").value,
+        subs_video: $("#mt-subs").checked, subs_short: $("#mt-subs").checked, cta_short: $("#mt-cta").value, cta_lang: $("#mt-cta-lang").value,
+        anim_mode: $("#mt-anim").value, anim_count: +$("#mt-anim-n").value, anim_pause: $("#mt-anim-p").checked };
+      $("#mt-go").disabled = true;
+      try { const jobs = await api("/api/jobs", { json: body }); draftClear(); toast("Монтаж начат"); location.hash = `#/job/${jobs[0].id}`; }
+      catch (e) { toast(e.message, true); $("#mt-go").disabled = false; }
+    };
+  };
+  draw();
+  // The voice list comes from ElevenLabs and may be slow: the page opens at once, the list fills in when ready.
+  if (!VOICES) loadVoices().then(v => {
+    vs = v; const sel = $("#mt-voice"); if (!sel) return;
+    const c = sel.value; sel.innerHTML = sel.options[0].outerHTML + voiceOptions(vs, c, $("#mt-lang").value); sel.value = c;
+  }).catch(() => { });
 }

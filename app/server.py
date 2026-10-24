@@ -213,18 +213,35 @@ def create_job(data: dict = Body(...)):
         "short_seconds": _short_seconds(data.get("short_seconds") or proj.get("short_seconds")),
         "music_mode": data.get("music_mode") if data.get("music_mode") in musiclib.MODES else proj.get("music_mode") or "library",
     }
+    if data.get("montage_script"):  # the montage page: one video from the owner's own text, voice chosen there
+        opts["make_short"] = False
+        for k in projects.VOICE_NUM:
+            if data.get(k) not in (None, ""):
+                opts[k] = float(data[k])
+        if data.get("voice_id"):
+            opts["voice_id"], opts["voice_name"] = data["voice_id"], data.get("voice_name", "")
+        if data.get("tts_model"):
+            opts["tts_model"] = data["tts_model"]
+        if data.get("speed_video"):
+            opts["speed_video"] = min(pipeline.SPEEDS, key=lambda x: abs(x - float(data["speed_video"])))
+        for k, allowed in (("cta_short", cta.MODES), ("cta_lang", cta.LANGS)):
+            if data.get(k) in allowed:
+                opts[k] = data[k]
+        count = 1
     chars = projects.list_chars(set(data.get("characters", proj.get("characters", [])) or []))
     opts["characters"] = [c["id"] for c in chars]
     items = projects.list_items(set(data.get("items", proj.get("items", [])) or []))
     opts["items"] = [it["id"] for it in items]
     created = []
-    first_ep = _next_episode(proj) if proj.get("series") else 0
+    # A montage video is the owner's own text, not the next episode of the series.
+    first_ep = _next_episode(proj) if proj.get("series") and not data.get("montage_script") else 0
     if first_ep and str(data.get("episode") or "").strip().isdigit():
         first_ep = max(1, int(data["episode"]))
     for n in range(count):
         if first_ep:
             opts["episode"] = first_ep + n
-        created.append(db.create(topic, dict(opts)))
+        # Paused until its files are copied: the worker must not start a job with no characters or text yet.
+        created.append(db.create(topic, dict(opts), status="paused"))
     for j in created:
         # The job keeps its own copy, so later edits of a character don't change a video in progress.
         if chars:
@@ -255,6 +272,17 @@ def create_job(data: dict = Body(...)):
                 snap.append({k: it.get(k, "") for k in ("id", "name", "name_en", "kind", "description_ru", "appearance", "extra_ru")}
                             | {"photos": photos})
             pipeline.write_json(jd / "items.json", snap)
+    if data.get("montage_script"):
+        for j in created:
+            try:
+                pipeline.prepare_montage(j["id"], topic, data["montage_script"])
+            except UserError:
+                for x in created:
+                    db.delete(x["id"])
+                raise
+    for j in created:
+        db.update(j["id"], status="queued")
+    created = [db.get(j["id"]) for j in created]
     worker.wake()
     return created
 
@@ -349,6 +377,8 @@ def job_action(jid: str, data: dict = Body(...)):
         stage = data.get("stage")
         if stage not in pipeline.STAGE_IDS:
             raise HTTPException(400, "Неизвестный шаг")
+        if (j.get("options") or {}).get("montage") and stage in ("idea", "outline", "script", "review", "approval"):
+            raise HTTPException(400, "Это монтаж по вашему тексту: сценарист здесь не работает. Чтобы поменять текст, начните новый монтаж.")
         # A running job is stopped first; the worker redoes it from this step once the current call returns.
         if not worker.reset_when_stopped(jid, stage):
             pipeline.reset_from(jid, stage)
@@ -367,6 +397,8 @@ def job_action(jid: str, data: dict = Body(...)):
 def job_idea(jid: str, data: dict = Body(...)):
     """Owner's choice of the topic out of the proposed ones."""
     j = _job_or_404(jid)
+    if j["options"].get("montage"):
+        raise UserError("Это монтаж по вашему тексту: темы здесь не выбираются.")
     if j["status"] == "running":
         raise UserError("Подождите, пока шаг доделается, или поставьте ролик на паузу.")
     pipeline.choose_idea(jid, int(data.get("index", -1)))
@@ -537,6 +569,8 @@ def job_effects(jid: str, data: dict = Body(...)):
 @app.post("/api/jobs/{jid}/ideas/more")
 def job_more_ideas(jid: str):
     j = _job_or_404(jid)
+    if j["options"].get("montage"):
+        raise UserError("Это монтаж по вашему тексту: темы здесь не придумываются.")
     if j["status"] == "running":
         raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
     return {"added": pipeline.more_ideas(jid)}

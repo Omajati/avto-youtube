@@ -521,6 +521,10 @@ class Ctx:
         for k in ("voice_stability", "voice_similarity", "voice_style", "voice_speed"):
             if self.project.get(k) not in (None, ""):
                 self.settings[k] = float(self.project[k])
+            if self.opts.get(k) not in (None, ""):  # the montage page sets the voice for one video
+                self.settings[k] = float(self.opts[k])
+        if self.opts.get("tts_model"):
+            self.settings["elevenlabs_model"] = self.opts["tts_model"]
         self.lang = self.opts.get("language") or self.project.get("language") or "en"
         self.characters = read_json(self.dir / "characters.json", []) or []
         self.items = read_json(self.dir / "items.json", []) or []
@@ -1547,10 +1551,45 @@ def _check_pictures(c: Ctx, items: list, refs: dict, places: dict, item_refs: di
           if stats["bad"] else "Контролёр картинок: все картинки в порядке.")
 
 
+SCHEMA_WORLD = {"type": "object", "properties": {
+    "locations": {"type": "array", "items": {"type": "object", "properties": {
+        "name": {"type": "string"}, "visual": {"type": "string"}}}},
+    "characters": {"type": "array", "items": {"type": "object", "properties": {
+        "name": {"type": "string"}, "visual": {"type": "string"}}}}}}
+
+
+def _montage_world(c: Ctx, script: str):
+    """Montage has no writer's outline: the places and people of the owner's text are described once, so every
+    picture of one place shows the same place and every person keeps one look."""
+    o = c.data("outline") or {}
+    if o.get("locations") or c.demo:
+        return
+    c.log("Описываю места и людей из вашего текста, чтобы на всех картинках они были одинаковыми…")
+    known = ", ".join(c.char_name(ch) for ch in c.characters)
+    try:
+        r = llm.call_json(_check_settings(c.settings), "You prepare the visual world of an illustrated video. Answer only with JSON.",
+                          "Read the narration below. List the places where its scenes happen (locations: a short name and "
+                          "visual, one English sentence with the look, light and key objects of the place) and the people "
+                          "who appear in it (characters: name as in the text or a short role like 'the passenger', and "
+                          "visual, one English sentence with age, build, hair and clothes). Merge places that are the same "
+                          "place. At most 8 locations and 8 characters."
+                          + (f" These recurring characters already have a fixed look, do not list them: {known}." if known else "")
+                          + "\n\nNARRATION:\n" + script[:20000], SCHEMA_WORLD, c.usage, 4000)
+        c.save_usage()
+    except UserError as e:
+        c.log(f"Описать места не получилось ({e}), картинки рисуются без образцов мест.")
+        return
+    o["locations"] = [x for x in r.get("locations") or [] if (x.get("name") or "").strip() and x.get("visual")][:8]
+    o["characters"] = [x for x in r.get("characters") or [] if (x.get("name") or "").strip() and x.get("visual")][:8]
+    write_json(c.out("outline"), o)
+
+
 def st_scenes(c: Ctx):
     if c.opts.get("translate_from"):
         return _translate_scenes(c)
     script = c.data("review")["final_script"]
+    if c.opts.get("montage"):
+        _montage_world(c, script)
     chunks = split_chunks(c.strip_host_labels(script), c.scene_words("short_words_per_scene" if c.short_format else "words_per_scene"),
                           c.speakers())
     c.log(f"Сценарий разбит на {len(chunks)} сцен, пишу описания картинок…")
@@ -2060,9 +2099,9 @@ def anim_scenes(job_or_opts) -> list:
 def needs_anim_choice(job: dict) -> bool:
     """The owner asked to stop before animation and has not chosen the scenes yet."""
     opts = job.get("options", {})
-    # Only after the script is approved: earlier review stops (topics, script) are not about animation.
+    # Only once the pictures are ready: earlier stops (topics, script, own pictures) are not about animation.
     return (job.get("status") == "review" and bool(opts.get("anim_pause")) and not opts.get("anim_picked")
-            and bool(job.get("id")) and (job_dir(job["id"]) / "approval.json").exists())
+            and bool(job.get("id")) and (job_dir(job["id"]) / "images.json").exists())
 
 
 def anim_suggest(jid: str, job: dict) -> list:
@@ -2203,8 +2242,9 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     media.concat_clips(clips, joined)
     if height > width:
         src = c.project if c.project.get("id") else c.settings
-        mode = src.get("cta_short") or "both"
-        lang = src.get("cta_lang") if src.get("cta_lang") in ("ru", "en") else c.lang
+        mode = c.opts.get("cta_short") or src.get("cta_short") or "both"
+        lang_pick = c.opts.get("cta_lang") or src.get("cta_lang")
+        lang = lang_pick if lang_pick in ("ru", "en") else c.lang
         with_cta = clips_dir / "joined_cta.mp4"
         try:
             if cta.overlay(joined, with_cta, mode, lang, total, width, height, clips_dir):
@@ -2436,6 +2476,12 @@ def reset_from(jid: str, stage: str):
         for rel in ("audio", "images", "anim", "clips", "clips_short", "output", "narration.wav", "short_narration.wav",
                     "thumb.json"):
             _remove(d, rel)
+    if not (d / "images").exists():
+        # The pictures are gone, the owner's own ones too: forget their marks and stop for new uploads again.
+        (d / "own_images.json").unlink(missing_ok=True)
+        job = db.get(jid) or {}
+        if (job.get("options") or {}).get("images_picked"):
+            db.update(jid, options=dict(job["options"], images_picked=False))
     if stage not in RESET_PLAN or stage == "approval":
         db.update(jid, approved=0)
 
@@ -2449,6 +2495,30 @@ def _drop_scene_outputs(d: Path, kind: str, index: int):
     (d / "images.json").unlink(missing_ok=True)
     (d / ("short_video.json" if kind == "short" else "video.json")).unlink(missing_ok=True)
     (d / "output" / ("short.mp4" if kind == "short" else "video.mp4")).unlink(missing_ok=True)
+
+
+def prepare_montage(jid: str, title: str, script: str):
+    """Montage only: the owner's own text is the final script. The writing stages are marked done, so the
+    program goes straight to scenes, voice, pictures (his own ones first) and assembly."""
+    d = job_dir(jid)
+    job = db.get(jid) or {}
+    opts = job.get("options") or {}
+    text = re.sub(r"\n{3,}", "\n\n", script.replace("\r", "")).strip()
+    if word_count(text) < 3:
+        raise UserError("Вставьте текст сценария.")
+    title = (title or "").strip() or re.sub(r"^[^:\n]{1,40}:\s*", "", text.split("\n")[0])[:70]
+    lang = opts.get("language") or "ru"
+    wpm = WPM.get(lang, WORDS_PER_MIN)
+    checks = script_checks(text, word_count(text), wpm)
+    write_json(d / "idea.json", {"ideas": [{"title": title, "title_ru": title, "premise": text[:300], "premise_ru": text[:300],
+                                            "total": 0}], "chosen_index": 0, "montage": True})
+    write_json(d / "outline.json", {"title": title, "locations": [], "characters": [], "sections": []})
+    write_json(d / "script.json", {"script": text, "checks": checks})
+    write_json(d / "review.json", {"rounds": [], "final_script": text, "final_overall": 0, "passed": True,
+                                   "checks": checks, "edited_by_owner": True, "montage": True})
+    (d / "script_final.txt").write_text(text, "utf-8")
+    write_json(d / "approval.json", {"approved_at": time.time(), "montage": True})
+    db.update(jid, title=title, options=dict(opts, title_ru=title, montage=True))
 
 
 def scene_prompts(jid: str) -> dict:
@@ -2716,8 +2786,7 @@ def make_translation(jid: str, lang: str = "en", voice_id: str = "", voice_name:
              anim_picked=True, channel_id=channel_id, voice_id=voice_id, voice_name=voice_name, restyle=bool(restyle))
     short_ok = o.get("format") != "short" and o.get("make_short") and (sd / "short_script.json").exists()
     o["make_short"] = bool(short_ok)
-    job = db.create(src.get("topic", ""), o)
-    db.update(job["id"], status="paused")  # the worker must not start it before the files are copied
+    job = db.create(src.get("topic", ""), o, status="paused")  # the worker must not start it before the files are copied
     d = job_dir(job["id"])
     for name in TRANSLATE_COPY:
         p = sd / name
