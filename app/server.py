@@ -467,7 +467,7 @@ async def job_own_image(jid: str, request: Request, kind: str = "scene", index: 
     raw = await request.body()
     if len(raw) > 40 * 1024 * 1024:
         raise UserError("Картинка больше 40 МБ.")
-    pipeline.own_image(jid, "short" if kind == "short" else "scene", int(index), raw)
+    pipeline.own_image(jid, kind if kind in ("short", "thumbnail") else "scene", int(index), raw)
     return {"ok": True}
 
 

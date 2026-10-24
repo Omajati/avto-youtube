@@ -1271,7 +1271,7 @@ function renderStages(d) {
   el.querySelectorAll("[data-own]").forEach(inp => inp.onchange = async () => {
     const [kind, idx] = inp.dataset.own.split(":");
     if (!inp.files[0]) return;
-    try { await ownUp(kind, +idx, inp.files[0]); toast(`Ваша картинка поставлена в сцену ${+idx + 1}`); } catch (e) { toast(e.message, true); }
+    try { await ownUp(kind, +idx, inp.files[0]); toast(kind === "thumbnail" ? "Ваша картинка поставлена в превью" : `Ваша картинка поставлена в сцену ${+idx + 1}`); } catch (e) { toast(e.message, true); }
     lastStagesKey = "";
   });
   const promptsBtn = el.querySelector("#own-prompts");
@@ -1659,9 +1659,10 @@ const RENDER = {
         <div class="row" style="margin-top:10px">
           <button class="primary" id="th-apply" ${d.files.thumbnail_src ? "" : "disabled"}>Обновить надпись</button>
           ${d.files.thumbnail ? `<a class="btn" href="/files/${d.job.id}/output/thumbnail.jpg" download="thumbnail.jpg">⬇ Скачать превью</a>` : ""}
-          <button data-regen="thumbnail:0" ${d.files.thumbnail_src ? "" : "disabled"}>Перерисовать картинку</button>
+          <button data-regen="thumbnail:0" ${d.job.status === "running" ? "disabled" : ""}>Перерисовать картинку</button>
+          <label class="btn" style="cursor:pointer">📤 Своя картинка<input type="file" accept="image/*" data-own="thumbnail:0" style="display:none" ${d.job.status === "running" ? "disabled" : ""}></label>
         </div>
-        <p class="muted small">Надпись меняется бесплатно и сразу. «Перерисовать картинку» заново рисует саму картинку (стоит как одна картинка).</p>
+        <p class="muted small">Надпись меняется бесплатно и сразу. «Перерисовать картинку» заново рисует саму картинку (стоит как одна картинка); можно написать, что исправить. «Своя картинка» ставит вашу картинку под надпись.${d.files.thumbnail_src ? "" : " <b>Картинки для превью сейчас нет:</b> нарисуйте её заново или загрузите свою."}</p>
       </div>
     </div>
     <h3>Для загрузки на YouTube</h3>

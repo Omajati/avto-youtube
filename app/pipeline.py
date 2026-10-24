@@ -2102,6 +2102,11 @@ def st_images(c: Ctx):
         neighbours = [img / f"{prefix}_{k:03d}.png" for k in (idx - 1, idx + 1, idx - 2, idx + 2)]
         src = next((n for n in neighbours if n.exists()), None)
         if out.name == "thumbnail_src.png":
+            first = next((p for p in sorted(img.glob("scene_*.png"))), None)
+            if first:
+                shutil.copy(first, out)
+                c.log("Картинку для превью нарисовать не получилось, поставил картинку первой сцены. В шаге «Перевод и "
+                      "описание для YouTube» можно перерисовать превью с исправленным описанием или загрузить своё.")
             continue
         if not src:
             raise UserError(f"Не удалось сделать картинку {idx + 1}. Попробуйте шаг ещё раз или смените сервис.")
@@ -2737,6 +2742,17 @@ def own_image(jid: str, kind: str, index: int, raw: bytes):
     import io
     d = job_dir(jid)
     job = db.get(jid) or {}
+    if kind == "thumbnail":  # the owner's own picture under the thumbnail headline
+        try:
+            im = ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB")
+        except Exception:
+            raise UserError("Это не картинка или формат не поддерживается. Подойдут JPG, PNG или WEBP.")
+        vertical = (job.get("options") or {}).get("format") == "short"
+        out = d / "images" / "thumbnail_src.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        ImageOps.fit(im, (1080, 1920) if vertical else (1920, 1080), Image.LANCZOS).save(out)
+        make_package(jid)
+        return
     if kind == "short":
         scenes = (read_json(d / "short_script.json") or {}).get("scenes") or []
         vertical = True
