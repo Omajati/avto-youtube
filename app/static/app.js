@@ -284,7 +284,7 @@ async function viewNew() {
   const applyProj = () => {
     const p = projs.find(x => x.id === curProj);
     main.querySelectorAll("[data-proj]").forEach(b => b.classList.toggle("on", b.dataset.proj === curProj));
-    $("#niche").value = (p && p.niche) || s.niche;
+    $("#niche").value = p ? (p.niche || "") : s.niche;  // a project never borrows the general (history) default
     $("#lang").value = p ? p.language : "en";
     $("#dur").value = p ? p.duration_min : s.duration_min;
     $("#sec").value = p ? p.short_seconds || 50 : 50;
@@ -653,6 +653,10 @@ async function viewItems() {
 }
 
 const AUD = { ru: "🇷🇺 Для русской аудитории", en: "🇺🇸 Для английской аудитории", de: "🇩🇪 Для немецкой аудитории", es: "🇪🇸 Для испанской аудитории", fr: "🇫🇷 Для французской аудитории", both: "🌍 Не определено (можно пометить в Настройках)" };
+// The project's niche is still a template text (e.g. the history default) that has nothing to do with the project.
+const nicheIsLeftover = p => { const n = x => (x || "").split(/\s+/).join(" ").trim().toLowerCase(), d = META.default_niches || {};
+  return !!p && !!n(p.niche) && Object.values(d).some(v => n(v) === n(p.niche)) && n(d[p.preset]) !== n(p.niche); };
+const LEFTOVER_NICHE = `<div class="banner bad small">⚠️ Описание ниши здесь стандартное, оно осталось от шаблона про историю, а не про ваш канал. Из-за него сценарист придумывает исторические темы. Сотрите его и опишите свою нишу своими словами, или сохраните в хранилище разборы и нажмите «✨ Обновить правила и описание ниши»: продюсер напишет описание по ним.</div>`;
 const LANG_RU = { ru: "русский", en: "английский", de: "немецкий", es: "испанский", fr: "французский" };
 const LANG_IN = { ru: "на русском", en: "на английском", de: "на немецком", es: "на испанском", fr: "на французском" };
 const LANG_FLAG = { ru: "🇷🇺", en: "🇺🇸", de: "🇩🇪", es: "🇪🇸", fr: "🇫🇷" };
@@ -808,6 +812,7 @@ async function viewProject(id) {
     <label class="f">Формат роликов</label>
     ${sel("format", [["long", "Видео + шортс"], ["short", "Только шортс (вертикальные до 60 секунд)"]])}
     <label class="f">Ниша и тематика канала <span class="hint">Можно по-русски. Чем конкретнее, тем лучше темы.</span></label>
+    ${nicheIsLeftover(p) ? LEFTOVER_NICHE : ""}
     <textarea data-q="niche">${esc(p.niche)}</textarea>
     <label class="f">Стиль картинок <span class="hint">Пусто — как в общих настройках. По-английски.</span></label>
     <textarea data-q="image_style">${esc(p.image_style)}</textarea>
@@ -2787,6 +2792,7 @@ async function viewLibrary() {
     <select id="lb-proj">${projs.map(p => `<option value="${p.id}" ${p.id === pid ? "selected" : ""}>${esc((p.icon || "") + " " + (p.name || "Без названия"))}</option>`).join("")}</select>
     <p class="muted small">Здесь лежат разборы роликов, которые сработали. Сценарист этой ниши читает правила ниши и последние разборы перед каждым новым роликом: учится приёмам, но не копирует темы и текст. Новые ниши появляются в списке сами, когда вы создаёте проект.</p>
     <label class="f">Описание ниши <span class="hint">то же поле, что в проекте</span></label>
+    ${nicheIsLeftover(proj) ? LEFTOVER_NICHE : ""}
     <textarea id="lb-niche" rows="4">${esc(proj.niche || "")}</textarea>
     <div class="row" style="margin-top:6px"><button id="lb-niche-save">Сохранить описание</button>${lib.niche_prev != null ? `<button id="lb-niche-undo" title="Вернуть описание, которое было до последнего обновления продюсером">↩ Вернуть прежнее описание</button>` : ""}</div>
   </div>

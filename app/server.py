@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from . import analytics, animate, cta, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, thumb, tts, updater, uploader, worker, youtube
-from .config import (DATA_DIR, MUSIC_DIR, PROMPTS_DEFAULT_DIR, PROMPTS_DIR, load_settings,
+from .config import (DATA_DIR, DEFAULTS, MUSIC_DIR, PROMPTS_DEFAULT_DIR, PROMPTS_DIR, load_settings,
                      public_settings, save_settings)
 from .net import UserError
 
@@ -100,6 +100,7 @@ def meta():
         "anim_modes": animate.MODES, "video_model": load_settings().get("video_model", "kling25"),
         "fx_modes": effects.MODES, "cta_modes": cta.MODES, "cta_langs": cta.LANGS, "thumb_fonts": {k: v[0] for k, v in thumb.STYLE_FONTS.items()}, "thumb_looks": thumb.LOOKS, "effect_ru": effects.EFFECT_RU, "sfx_ru": effects.SFX_RU,
         "image_styles": projects.IMAGE_STYLES,
+        "default_niches": {**{k: v.get("niche", "") for k, v in projects.PRESETS.items()}, "": DEFAULTS["niche"]},
         "presets": {k: {"name": v["name"], "icon": v["icon"], "language": v["language"]} for k, v in projects.PRESETS.items()},
         "languages": projects.LANGUAGES,
         "data_dir": str(DATA_DIR),
@@ -196,7 +197,8 @@ def create_job(data: dict = Body(...)):
         "review_pause": bool(data.get("review_pause", False)),
         "idea_pause": bool(data.get("idea_pause", False)),
         "duration_min": float(data.get("duration_min") or proj.get("duration_min") or s["duration_min"]),
-        "niche": _job_niche(data.get("niche"), proj.get("niche") or _channel_niche(data, proj) or s["niche"]),
+        "niche": _job_niche(data.get("niche"), proj.get("niche") or _channel_niche(data, proj)
+                            or (proj.get("name", "") if proj.get("id") else s["niche"])),
         "demo": bool(data.get("demo", False)),
         # "" means "Без канала" was picked on purpose; only a missing key falls back to the project's channel.
         "channel_id": _job_channel(data, proj),
@@ -895,7 +897,7 @@ def project_create(data: dict = Body(...)):
     preset = data.get("preset", "")
     if preset == "custom":
         s = load_settings()
-        return projects.save("", {"name": "Новый проект", "icon": "🎬", "niche": s["niche"],
+        return projects.save("", {"name": "Новый проект", "icon": "🎬", "niche": "",
                                   "duration_min": s["duration_min"]})
     have = projects.project_of(preset)  # one project per niche: the existing one opens instead of a copy
     return projects.get(have) if have else projects.create_from_preset(preset, load_settings())
@@ -1475,7 +1477,8 @@ def library_build(pid: str):
     proj = projects.get(pid)
     if not proj:
         raise UserError("Проект не найден")
-    pb = producer.build_playbook(load_settings(), proj.get("niche", ""), projects.library(pid)["items"])
+    own = "" if projects.is_placeholder(proj.get("niche", "")) else proj.get("niche", "")  # a leftover default is replaced
+    pb = producer.build_playbook(load_settings(), own, projects.library(pid)["items"])
     if (pb.get("niche") or "").strip():
         projects.save(pid, {"niche": pb["niche"].strip()})
     lib = projects.set_playbook(pid, pb.get("playbook_ru", ""), pb.get("playbook", ""), niche_prev=proj.get("niche", ""))

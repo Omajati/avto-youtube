@@ -711,7 +711,8 @@ def build_playbook(settings: dict, niche: str, items: list) -> dict:
         "niche: the channel's niche description, which the scriptwriter reads before every video. The owner already "
         "wrote one (below). Update it: keep every fact, rule, character, tone and wish of the owner exactly, never "
         "drop or contradict them; add what the analyses show about the audience, the topics that win, the angle and "
-        "the format. Write it in the same language as the owner's text, as flowing paragraphs, 120-300 words."
+        "the format. Exception: a short generic line about a clearly different topic than every analysis (a leftover "
+        "default, e.g. history while the analyses are about sport) is not the owner's wish: replace it. Write it in the same language as the owner's text, as flowing paragraphs, 120-300 words."
         if current else
         "niche: a new niche description for the scriptwriter, written in Russian as flowing paragraphs, 120-250 words: "
         "what the channel is about, for whom, which topics and angles win, the tone and the format, what to avoid.")

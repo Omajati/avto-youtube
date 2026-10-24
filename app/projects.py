@@ -216,6 +216,17 @@ RU_VOICE = {"tts_model": "eleven_multilingual_v2", "voice_stability": 0.45, "voi
             "voice_style": 0.15, "voice_speed": 1.0}
 
 
+def is_placeholder(niche: str) -> bool:
+    """The default niche of the program or of a niche template, never edited by the owner. Old projects got the
+    history default when created without a template, whatever they were about."""
+    n = " ".join((niche or "").split()).lower()
+    if not n:
+        return True
+    from .config import DEFAULTS
+    texts = {DEFAULTS["niche"]} | {str(v.get("niche", "")) for v in PRESETS.values()}
+    return n in {" ".join(t.split()).lower() for t in texts if t}
+
+
 def _path(pid: str):
     if not re.fullmatch(r"[a-z0-9]{6,32}", pid or ""):
         raise UserError("Проект не найден")
