@@ -362,7 +362,10 @@ async function viewNew() {
     $("#music").value = p ? p.music_mode || "library" : "library";
     $("#short").checked = p ? p.make_short : true;
     $("#mute").checked = !!(p && p.voice_off);
-    $("#anim").value = p ? p.anim_mode : s.anim_mode;
+    const take = !!(p && p.ad_mode && p.one_take);  // one take: the camera glides over one picture, nothing to animate
+    $("#anim").value = take ? "off" : p ? p.anim_mode : s.anim_mode;
+    $("#anim").disabled = take;
+    $("#anim").title = take ? "Одним дублем: камера едет по одному кадру с товаром, Kling не нужен" : "";
     $("#anim-s").checked = p ? p.anim_short : s.anim_short;
     $("#anim-n").value = (p && p.anim_count) || s.anim_count || 3;
     $("#anim-p").checked = !!(p && p.anim_pause);
@@ -941,7 +944,7 @@ async function viewProject(id) {
       <label class="check"><input type="checkbox" data-q="fiction" ${p.fiction ? "checked" : ""}> Выдуманные истории <span class="muted small">(мультики, сказки, притчи: сюжеты придумываются, а не берутся из реальных событий)</span></label>
       <label class="check"><input type="checkbox" data-q="voice_off" ${p.voice_off ? "checked" : ""}> Без озвучки <span class="muted small">(ролик идёт только под музыку: без голоса и без текста на экране)</span></label>
       <label class="check"><input type="checkbox" data-q="ad_mode" ${p.ad_mode ? "checked" : ""}> Рекламный ролик товара <span class="muted small">(без людей: товар в каждом кадре, макро, наезды и облёт камеры; товар выбирается в «Предметах в ролике»)</span></label>
-      <label class="check" style="margin-left:24px"><input type="checkbox" data-q="one_take" ${p.one_take ? "checked" : ""}> Одна сцена, как одним дублем <span class="muted small">(для рекламы: один фон и одно место товара во всех кадрах, камера переходит от кадра к кадру плавно; анимация через Kling 2.5)</span></label>
+      <label class="check" style="margin-left:24px"><input type="checkbox" data-q="one_take" ${p.one_take ? "checked" : ""}> Одна сцена, как одним дублем <span class="muted small">(для рекламы: товар рисуется один раз, камера плавно едет по кадру: наезд, макро деталей, отъезд. Товар не искажается, Kling не нужен)</span></label>
     </div></div>
     <div class="row" style="margin-top:16px"><button class="primary" id="pj-save">Сохранить проект</button><button id="pj-tpl" title="Проект появится в списке ниш, из него можно будет быстро создавать новые проекты с такими же настройками">⭐ Сохранить как свою нишу</button><span class="grow"></span><button class="danger" id="pj-del">Удалить проект</button></div>
   </div>

@@ -9,7 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import animate, balance, captions, cta, db, effects, graphics, images, llm, media, music as musiclib, thumb, tts
+from . import animate, balance, captions, cta, db, effects, graphics, images, llm, media, music as musiclib, take, thumb, tts
 from .config import JOBS_DIR, MUSIC_DIR, PROMPTS_DIR, PROMPTS_DEFAULT_DIR, load_settings
 from .net import Cancelled, UserError
 
@@ -1498,7 +1498,9 @@ AD_MOVE = {k: m for k, _, m, _ in AD_SHOTS}
 # One take: a camera path around the product on one set; each framing is a short move from the previous one.
 # (key, framing, the move from this framing to the next one, still-picture move)
 TAKE_SHOTS = [
-    ("wide", "wide shot from the front at eye level: the whole set with the product standing in its spot in the middle",
+    ("wide", "front view at eye level: the product standing upright in the middle of the set and filling about 60% of "
+             "the frame height, the whole product tack-sharp from top to bottom with every detail and texture crisp, "
+             "the set around it visible",
      "slow dolly push-in toward the product", "zoom_in"),
     ("push", "medium shot from the front, the camera moved closer: the product fills about half of the frame",
      "the camera glides closer while circling to the left", "zoom_in"),
@@ -2033,7 +2035,7 @@ def st_voice(c: Ctx):
     scenes = c.data("scenes")["scenes"]
     short = c.data("short_script") if c.stage_enabled("short_script") else None
     total = len(scenes) + (len(short["scenes"]) if short else 0)
-    c.log(f"Без озвучки: {len(scenes)} строк текста на экране под музыку…" if c.mute else
+    c.log(f"Без озвучки: {len(scenes)} сцен под музыку, без текста на экране…" if c.mute else
           f"Озвучиваю {len(scenes)} фрагментов голосом {c.settings.get('elevenlabs_voice_name') or ''}…")
     for n, _ in _voice_list(c, scenes, "scene"):
         c.progress(n / total)
@@ -2255,6 +2257,73 @@ def needs_images_choice(job: dict) -> bool:
             and bool(job.get("id")) and (job_dir(job["id"]) / "voice.json").exists())
 
 
+SCHEMA_TAKE = {"type": "object", "properties": {
+    "product": {"type": "array", "items": {"type": "number"}},
+    "detail": {"type": "array", "items": {"type": "number"}},
+    "detail_ru": {"type": "string"},
+    "detail2": {"type": "array", "items": {"type": "number"}},
+    "detail2_ru": {"type": "string"}},
+    "required": ["product", "detail", "detail_ru", "detail2", "detail2_ru"]}
+
+
+def _take_boxes(c: Ctx, master: Path) -> dict:
+    """Where the product and its two most selling details are in the picture (fractions x0, y0, x1, y1)."""
+    from PIL import Image
+    import io
+    im = Image.open(master).convert("RGB")
+    im.thumbnail((1024, 1024))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=90)
+    names = ", ".join(f"{x.get('name', '')} ({x.get('appearance', '')[:300]})" for x in c.items) or "the product"
+    try:
+        return llm.call_json(_check_settings(c.settings), "You mark regions of a product photo. Answer only with JSON.",
+                             "A camera will glide over this product photo for an ad: push in, macro of details, pull back. "
+                             "Give boxes as fractions of the picture width and height: [x0, y0, x1, y1], 0..1, "
+                             "(0, 0) is the top-left corner. product: a tight box around the whole product. detail: "
+                             "a tight box around its key functional part (the blade, the nozzle, the lens, the cap…). "
+                             "detail2: a tight box around a second attractive detail of the product (a button, a logo, "
+                             "a texture, a metal accent), different from detail. Both details lie inside the product "
+                             f"box. Name each detail in Russian in 2-4 words.\nPRODUCT: {names}",
+                             SCHEMA_TAKE, c.usage, 2000, images=[buf.getvalue()])
+    except UserError as e:
+        c.log(f"Не удалось разметить товар на кадре ({e}), камера пойдёт по центру.")
+        return {"product": [0.3, 0.25, 0.7, 0.8], "detail": [], "detail2": [], "detail_ru": "", "detail2_ru": ""}
+
+
+def _take_frames(c: Ctx, scenes: list, master: Path):
+    """Plans the camera path over the one picture and saves a still of each scene's opening framing."""
+    from PIL import Image
+    tk_file = c.dir / "take.json"
+    tk = read_json(tk_file)
+    if not tk:
+        c.log("Одним дублем: размечаю товар и его детали на кадре для наездов и макро…")
+        tk = _take_boxes(c, master)
+    tk["path"] = [list(x) for x in take.path_for(len(scenes))]
+    write_json(tk_file, tk)
+    im = Image.open(master).convert("RGB")
+    w, h = (1080, 1920) if c.vertical else (1920, 1080)
+    fr = take.framings(im.width, im.height, w / h, tk["product"], tk.get("detail") or None, tk.get("detail2") or None)
+    data = c.data("scenes")
+    names = dict(take.NAMES)
+    if tk.get("detail_ru"):
+        names["detail"] = f"макро: {tk['detail_ru']}"
+    if tk.get("detail2_ru"):
+        names["detail2"] = f"макро: {tk['detail2_ru']}"
+    for i, (a, b) in enumerate(tk["path"]):
+        sc = data["scenes"][i]
+        sc["move"] = f"{names[a.rstrip('~')]} → {names[b.rstrip('~')]}" if a.rstrip("~") != b.rstrip("~") \
+            else f"медленно: {names[b]}"
+        sc["one_take"] = True
+        if i:
+            cx, cy, hh = fr[a]
+            ww = hh * w / h
+            im.crop((round(cx - ww / 2), round(cy - hh / 2), round(cx + ww / 2), round(cy + hh / 2))) \
+                .resize((w, h), Image.LANCZOS).save(c.dir / "images" / f"scene_{i:03d}.png")
+    scenes[:] = data["scenes"]
+    write_json(c.out("scenes"), data)
+    (c.dir / "images" / "take_big.jpg").unlink(missing_ok=True)
+
+
 def st_images(c: Ctx):
     job = db.get(c.id) or {"options": c.opts}
     if job["options"].get("images_pause") and not job["options"].get("images_picked"):
@@ -2286,14 +2355,13 @@ def st_images(c: Ctx):
                 if pl:
                     places[out] = pl
     if c.one_take and scenes and not c.demo:
-        # One take: the first (wide) picture is drawn first and every next one copies its set, light and product spot.
+        # One take: ONE picture of the product; every scene is a camera move over it, so the product never changes.
         master = img / "scene_000.png"
         if not master.exists():
-            c.log("Одним дублем: сначала рисую общий план сцены, остальные кадры повторят его фон, свет и место товара…")
+            c.log("Одним дублем: рисую один кадр с товаром, камера потом будет ездить по нему…")
             _make_image(c, scenes[0]["prompt"], master, c.vertical, 0, refs=refs.get(master), place=places.get(master),
                         items=item_refs.get(master))
-        for i in range(1, len(scenes)):
-            places[img / f"scene_{i:03d}.png"] = master
+        _take_frames(c, scenes, master)
     extras = c.data("extras") or {}
     if extras.get("thumbnail_prompt"):
         jobs.append((extras["thumbnail_prompt"], img / "thumbnail_src.png", c.vertical, 999))
@@ -2462,6 +2530,10 @@ def st_animate(c: Ctx):
     short = c.data("short_script") if c.stage_enabled("short_script") else None
     ssel = anim_short_pick(short["scenes"], mode, count) if short and anim_short else []
     result = {"mode": mode, "model": c.settings.get("video_model"), "scene": sel, "short": ssel, "failed": []}
+    if c.one_take and not c.demo:
+        c.log("Одним дублем: оживлять нечего, камера поедет по одному кадру, товар не исказится. Kling не нужен.")
+        write_json(c.out("animate"), dict(result, scene=[], short=[], one_take=True))
+        return
     if not sel and not ssel:
         c.log("Анимация выключена: в видео будут картинки с плавным движением камеры.")
         write_json(c.out("animate"), result)
@@ -2477,7 +2549,7 @@ def st_animate(c: Ctx):
         c.log("Одним дублем: для плавных переходов кадр в кадр беру Kling 2.5 Turbo Pro (он умеет конечный кадр).")
     est = sum(animate.cost(aset, w[3]) for w in todo) if not c.demo else 0
     c.log(f"Оживляю сцены: {len(todo)} из {len(work_items)} "
-          f"({animate.model(c.settings)['name'].split(' — ')[0]}, примерно ${est:.2f})…")
+          f"({animate.model(aset)['name'].split(' — ')[0]}, примерно ${est:.2f})…")
     done = [len(work_items) - len(todo)]
 
     def work(w):
@@ -2534,10 +2606,33 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     fx = effects.plan(scenes, fx_mode(db.get(c.id) or c.opts), height > width)
     if c.one_take:  # one smooth camera move: no punches or shakes between the shots
         fx = [(i, "none", sfx if sfx == "whoosh" else "none") for i, _e, sfx in fx]
+    tk = None
+    if c.one_take and prefix == "scene" and not c.demo and (c.dir / "images" / "scene_000.png").exists():
+        tk = read_json(c.dir / "take.json")
+        if not tk or len(tk.get("path") or []) != len(scenes):  # pictures made before: the first one is the frame
+            _take_frames(c, scenes, c.dir / "images" / "scene_000.png")
+            tk = read_json(c.dir / "take.json")
+    if tk and len(tk.get("path") or []) == len(scenes):
+        from PIL import Image
+        Image.MAX_IMAGE_PIXELS = None
+        big_path = c.dir / "images" / "take_big.jpg"
+        if not big_path.exists():
+            take.prepare(c.dir / "images" / "scene_000.png", big_path)
+        big = Image.open(big_path).convert("RGB")
+        fr = take.framings(big.width, big.height, width / height, tk["product"], tk.get("detail"), tk.get("detail2"))
+        path = tk["path"]
+        fx = [(i, "none", "whoosh" if i and path[i][0] != path[i - 1][1] else "none") for i in range(len(scenes))]
+        c.log("Одним дублем: камера едет по кадру с товаром (наезды, макро, отъезд), товар не перерисовывается.")
+    else:
+        tk = None
 
     def work(i):
         c.check()
         a, b = bounds[i]
+        if tk:
+            take.render_scene(big, fr[path[i][0]], fr[path[i][1]], b - a, clips[i], width, height, fps,
+                              fade_in=(i == 0), fade_out=(i == len(scenes) - 1), glint=(i == len(scenes) - 1))
+            return
         src = c.dir / "anim" / f"{prefix}_{i:03d}.mp4"
         if i in anim and src.exists():
             media.render_anim_clip(src, clips[i], b - a, width, height, fps,
@@ -2660,6 +2755,10 @@ def _music_for(c: Ctx, total: float):
     """Background track: none, a fitting one from the music folder, or a new one composed for this video."""
     opts = (db.get(c.id) or {}).get("options") or c.opts
     chosen = opts.get("music_track") or ""
+    mute_off = c.mute and (chosen == "none" or (not chosen and (opts.get("music_mode") or "library") == "off"))
+    if mute_off:  # without voice the music is the whole sound: a silent video is never what the owner wants
+        c.log("Ролик без голоса: без музыки он был бы беззвучным, поэтому беру трек из раздела «Музыка».")
+        chosen, opts = "", dict(opts, music_mode="library")
     if chosen == "none":
         c.log("Музыка выключена для этого ролика.")
         return None
@@ -2929,7 +3028,7 @@ RESET_PLAN = {
     "approval": ["approval.json"],
     "voice": ["voice.json", "audio", "narration.wav", "short_narration.wav", "animate.json", "video.json", "clips",
               "output/video.mp4", "short_video.json", "clips_short", "output/short.mp4"],
-    "images": ["images.json", "images", "anim", "animate.json", "output/thumbnail.jpg", "output/thumbnail_clean.png", "video.json",
+    "images": ["images.json", "images", "take.json", "anim", "animate.json", "output/thumbnail.jpg", "output/thumbnail_clean.png", "video.json",
                "clips", "output/video.mp4", "short_video.json", "clips_short", "output/short.mp4"],
     "animate": ["animate.json", "anim", "video.json", "clips", "output/video.mp4", "short_video.json", "clips_short",
                 "output/short.mp4"],
@@ -3016,7 +3115,7 @@ def reset_from(jid: str, stage: str, keep_pictures: bool = False):
         for sid in STAGE_IDS[idx:]:
             (d / f"{sid}.json").unlink(missing_ok=True)
         (d / "review_progress.json").unlink(missing_ok=True)
-        for rel in ("audio", "images", "anim", "clips", "clips_short", "output", "narration.wav", "short_narration.wav",
+        for rel in ("audio", "images", "take.json", "anim", "clips", "clips_short", "output", "narration.wav", "short_narration.wav",
                     "thumb.json", "graphics_*.json", "chapters.json"):
             _remove(d, rel)
     if not (d / "images").exists():

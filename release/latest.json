@@ -1,6 +1,6 @@
 {
- "version": 117,
- "label": "одна сцена на каждые 5 секунд",
- "notes": "Одна сцена: по кадру на каждые 5 секунд, клипы Kling идут целиком",
+ "version": 118,
+ "label": "реклама одним дублем без искажений",
+ "notes": "Реклама одним дублем: товар рисуется один раз, камера едет по кадру, без Kling и без искажений",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

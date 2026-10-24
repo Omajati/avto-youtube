@@ -180,7 +180,7 @@ _PRODUCT = ("premium commercial product photography, the product as the hero, st
             "advertising look, ultra detailed, no people, no hands, no text, no letters, no watermark")
 
 _AD = {"image_style": _PRODUCT, "ad_mode": True, "voice_mode": "narrator", "format": "short", "short_seconds": 35,
-       "make_short": False, "anim_mode": "all", "anim_short": True, "anim_count": 12, "fx_mode": "light", "subs_video": True,
+       "make_short": False, "anim_mode": "off", "anim_short": True, "anim_count": 12, "fx_mode": "light", "subs_video": True,
        "subs_short": True, "subs_smart": True, "graphics": False, "cta_short": "off", "music_mode": "generate", "same_place": True,
        "one_take": True}
 PRESETS["product_ad_ru"] = dict(_AD, name="Реклама товара (СНГ)", icon="📦", language="ru",
