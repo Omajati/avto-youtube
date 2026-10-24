@@ -751,10 +751,13 @@ def add_library(pid: str, entries: list) -> int:
     return n
 
 
-def remove_library(pid: str, eid: str = "", sources: set = None) -> list:
-    """Removes an entry (or every entry with one of these sources) and returns what was removed."""
+def remove_library(pid: str, eid: str = "", sources: set = None, ids: set = None) -> list:
+    """Removes an entry (or every entry with one of these ids or sources) and returns what was removed."""
     lib = {**_raw_library(pid), **library(pid)}
-    gone = [x for x in lib["items"] if (eid and x.get("id") == eid) or (sources and x.get("source") in sources)]
+    ids = set(ids or ()) | ({eid} if eid else set())
+    if sources:
+        from .producer import norm_source
+    gone = [x for x in lib["items"] if x.get("id") in ids or (sources and norm_source(x.get("source", "")) in sources)]
     lib["items"] = [x for x in lib["items"] if x not in gone]
     _save_library(pid, lib)
     return gone

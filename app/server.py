@@ -1439,6 +1439,17 @@ def library_get(pid: str):
     return projects.library(pid)
 
 
+@app.post("/api/projects/{pid}/library/remove")
+def library_remove_many(pid: str, data: dict = Body(...)):
+    """Several entries at once, with one rebuild of the rules."""
+    ids = {str(x) for x in data.get("ids") or []}
+    if not ids:
+        raise UserError("Отметьте разборы, которые убрать.")
+    gone = projects.remove_library(pid, ids=ids)
+    note = _forget(pid, gone)
+    return {**projects.library(pid), "note": f"Убрано разборов: {len(gone)}. {note}".strip(), "niche": projects.get(pid).get("niche", "")}
+
+
 @app.delete("/api/projects/{pid}/library/{eid}")
 def library_remove(pid: str, eid: str):
     note = _forget(pid, projects.remove_library(pid, eid))

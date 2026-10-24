@@ -746,8 +746,18 @@ def forget_playbook(settings: dict, niche: str, playbook_ru: str, items: list, r
     return llm.call_json(settings, "You are a YouTube producer. Answer only with JSON.", user, SCHEMA_FORGET, {}, 16000)
 
 
+def norm_source(url: str) -> str:
+    """One spelling for a link: no scheme, www, query or channel tab, so @Name and @Name/videos match."""
+    u = (url or "").strip().lower()
+    tag = "#patterns" if u.endswith("#patterns") else ""
+    u = re.sub(r"#.*$", "", re.sub(r"\?(?!v=).*$", "", u))
+    u = re.sub(r"^https?://", "", u).replace("www.", "").replace("m.youtube.com", "youtube.com")
+    u = re.sub(r"/(videos|shorts|streams|featured|about)/?$", "", u).rstrip("/")
+    return u + tag
+
+
 def library_sources(aid: str) -> set:
-    """Every library source an analysis can have saved: its link, its patterns entry and each video."""
+    """Every library source an analysis can have saved (normalized): its link, its patterns entry and each video."""
     m = get(aid)
     src = {m.get("source", ""), m.get("source", "") + "#patterns"} | {x.get("source", "") for x in m.get("items") or []}
-    return {x for x in src if x and x != "#patterns"}
+    return {norm_source(x) for x in src if x and x != "#patterns"}

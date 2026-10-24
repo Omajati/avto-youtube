@@ -2799,7 +2799,10 @@ async function viewLibrary() {
   </div>
   ${topics.length ? `<div class="card"><h2>Темы из разборов</h2><p class="muted small">Идеи, которые продюсер предложил по мотивам удачных роликов. Можно брать как свою тему на странице нового ролика.</p>${prList(topics)}</div>` : ""}
   <div class="card"><h2>Разборы (${lib.items.length})</h2>
-    ${items.length ? items.map(x => `<details style="margin-bottom:8px"><summary><b>${x.type === "patterns" ? "🔍 " : x.type === "channel" ? "📺 " : x.kind === "short" ? "📱 " : "🎬 "}${esc(x.title || "Без названия")}</b> <span class="muted small">${esc([x.channel, prViews(x.views)].filter(Boolean).join(" · "))}</span></summary>
+    ${items.length ? `<div class="row" style="gap:8px;margin-bottom:8px;flex-wrap:wrap"><button class="sm" id="lb-all">☑ Отметить все</button>
+      ${[...new Set(items.map(x => x.channel || (x.title || "").replace(/^(Канал|Закономерности:)\s*/, "")).filter(Boolean))].length > 1 ? [...new Set(items.map(x => x.channel || (x.title || "").replace(/^(Канал|Закономерности:)\s*/, "")).filter(Boolean))].map(ch => `<button class="sm" data-lbch="${esc(ch)}">☑ Все «${esc(ch)}»</button>`).join("") : ""}
+      <span class="grow"></span><button class="danger sm" id="lb-rm" disabled>Убрать отмеченные</button></div>` : ""}
+    ${items.length ? items.map(x => `<details style="margin-bottom:8px"><summary><input type="checkbox" data-lbsel="${x.id}" data-ch="${esc(x.channel || (x.title || "").replace(/^(Канал|Закономерности:)\s*/, ""))}" style="width:auto;margin-right:6px" onclick="event.stopPropagation()"><b>${x.type === "patterns" ? "🔍 " : x.type === "channel" ? "📺 " : x.kind === "short" ? "📱 " : "🎬 "}${esc(x.title || "Без названия")}</b> <span class="muted small">${esc([x.channel, prViews(x.views)].filter(Boolean).join(" · "))}</span></summary>
       ${x.source ? `<div class="small"><a href="${esc(x.source)}" target="_blank">${esc(x.source)}</a></div>` : ""}
       ${prSection("О чём", nl(x.summary_ru))}${prSection(x.type === "patterns" ? "Закономерность" : x.type === "channel" ? "Формула хитов" : "Почему сработал", nl(x.why_ru))}
       ${prSection("Хук", nl(x.hook_ru))}${prSection(x.type === "patterns" ? "Что повторять" : "Сильные стороны", prList(x.strengths_ru))}${prSection("Чего не делать", prList(x.avoid_ru))}
@@ -2825,6 +2828,19 @@ async function viewLibrary() {
     const b = $("#lb-build"); b.disabled = true; b.textContent = "⏳ Изучаю все разборы ниши…";
     try { await api(`/api/projects/${pid}/library/build`, { method: "POST" }); toast("Правила и описание ниши обновлены"); viewLibrary(); }
     catch (e) { toast(e.message, true); b.disabled = false; b.textContent = "✨ Обновить правила и описание ниши"; }
+  };
+  const sels = () => [...main.querySelectorAll("[data-lbsel]")];
+  const upd = () => { const n = sels().filter(c => c.checked).length, b = $("#lb-rm"); if (b) { b.disabled = !n; b.textContent = n ? `Убрать отмеченные (${n})` : "Убрать отмеченные"; } };
+  sels().forEach(c => c.onchange = upd);
+  if ($("#lb-all")) $("#lb-all").onclick = () => { const on = !sels().every(c => c.checked); sels().forEach(c => c.checked = on); upd(); };
+  main.querySelectorAll("[data-lbch]").forEach(b => b.onclick = () => { sels().forEach(c => { if (c.dataset.ch === b.dataset.lbch) c.checked = true; }); upd(); });
+  if ($("#lb-rm")) $("#lb-rm").onclick = async () => {
+    const ids = sels().filter(c => c.checked).map(c => c.dataset.lbsel);
+    if (!ids.length || !confirm(`Убрать из хранилища разборов: ${ids.length}? Сценарист перестанет на них опираться, а правила и описание ниши пересоберутся без их выводов (описание можно будет вернуть кнопкой «↩»).`)) return;
+    const b = $("#lb-rm"); b.disabled = true; b.textContent = "⏳ Убираю и пересобираю правила…";
+    const r = await api(`/api/projects/${pid}/library/remove`, { json: { ids } }).catch(e => { toast(e.message, true); return null; });
+    if (r && r.note) toast(r.note);
+    viewLibrary();
   };
   main.querySelectorAll("[data-lbdel]").forEach(b => b.onclick = async () => {
     if (!confirm("Убрать этот разбор из хранилища? Сценарист перестанет на него опираться, а правила и описание ниши пересоберутся без его выводов (описание можно будет вернуть кнопкой «↩»).")) return;
