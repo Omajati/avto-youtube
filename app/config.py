@@ -81,6 +81,7 @@ DEFAULTS = {
     "scene_gap": 0.3,
     "paragraph_gap": 0.6,
     "render_parallel": 3,
+    "jobs_parallel": 3,  # videos made at the same time up to the assembly; the assembly itself goes one at a time
     "loudness_lufs": -14,
     # Subtitles burned into the picture (can be switched per video too)
     "subtitles_long": False,

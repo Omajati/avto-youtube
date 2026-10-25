@@ -1,6 +1,6 @@
 {
- "version": 120,
- "label": "облёт товара в рекламе",
- "notes": "Облёт товара через Kling в рекламе одним дублем",
+ "version": 121,
+ "label": "3 ролика одновременно",
+ "notes": "3 ролика одновременно, монтаж по одному",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

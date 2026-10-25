@@ -1,4 +1,4 @@
-"""Background worker: takes jobs from the queue one by one."""
+"""Background workers: several videos are made at once (setting jobs_parallel); the assembly goes one at a time."""
 import shutil
 import subprocess
 import threading
@@ -10,7 +10,8 @@ from .net import Cancelled, UserError
 
 _wake = threading.Event()
 _lock = threading.Lock()
-_current = None   # id of the job the worker is making right now
+_running = set()  # ids of the jobs the workers are making right now
+MAX_WORKERS = 5
 _pending = {}     # job id -> stage to redo once the current run has stopped
 
 
@@ -22,7 +23,7 @@ def reset_when_stopped(jid: str, stage: str) -> bool:
     """If the job is being made right now, remember to redo it from `stage` as soon as the run stops.
     Deleting its files earlier would let the old run write stale results or crash. Returns False if it isn't running."""
     with _lock:
-        if _current != jid:
+        if jid not in _running:
             return False
         _pending[jid] = stage
     db.update(jid, status="paused")
@@ -39,17 +40,34 @@ def _keep_awake():
     return None
 
 
-def loop():
+def _limit() -> int:
+    from .config import load_settings
+    try:
+        return max(1, min(MAX_WORKERS, int(load_settings().get("jobs_parallel", 3))))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _claim(slot: int):
+    """The next job nobody is making yet, or None. Slot k works only while fewer than the limit run."""
+    with _lock:
+        if slot >= _limit() or len(_running) >= _limit():
+            return None
+        job = next((j for j in db.next_jobs(20) if j["id"] not in _running), None)
+        if job:
+            _running.add(job["id"])
+        return job
+
+
+def loop(slot: int = 0):
     while True:
-        job = db.next_job()
+        job = _claim(slot)
         if not job:
             _wake.wait(5)
-            _wake.clear()
+            if slot == 0:
+                _wake.clear()
             continue
-        global _current
         jid = job["id"]
-        with _lock:
-            _current = jid
         db.update(jid, status="running", error="")
         awake = _keep_awake()
         c_log = pipeline.job_dir(jid) / "log.txt"
@@ -75,8 +93,9 @@ def loop():
             if awake:
                 awake.terminate()
             with _lock:
-                _current = None
+                _running.discard(jid)
                 stage = _pending.pop(jid, None)
+            _wake.set()  # a free place: another worker can take the next video
             if stage and db.get(jid):
                 try:
                     pipeline.reset_from(jid, stage)
@@ -94,5 +113,5 @@ def _append(path, msg):
 
 
 def start():
-    t = threading.Thread(target=loop, daemon=True)
-    t.start()
+    for slot in range(MAX_WORKERS):
+        threading.Thread(target=loop, args=(slot,), daemon=True).start()

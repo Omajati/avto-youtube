@@ -79,6 +79,16 @@ def delete(jid: str):
         c.execute("DELETE FROM jobs WHERE id=?", (jid,))
 
 
+def next_jobs(limit: int = 20) -> list:
+    """Jobs that should be worked on, in queue order ('running' first: interrupted ones resume)."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM jobs WHERE status IN ('running','queued') "
+            "ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, position ASC LIMIT ?", (limit,)
+        ).fetchall()
+        return [_row(r) for r in rows]
+
+
 def next_job():
     """Oldest job that should be worked on. 'running' means it was interrupted (Mac turned off)."""
     with _conn() as c:

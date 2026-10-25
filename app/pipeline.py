@@ -3073,6 +3073,13 @@ STAGE_FUNCS = {
 }
 
 
+# Several videos are made at once, but the assembly (ffmpeg) loads the whole Mac: one video at a time.
+RENDER_GATE = threading.Semaphore(1)
+# A topic is picked one video at a time, so videos of one project started together never get the same topic.
+IDEA_GATE = threading.Lock()
+GATED = {"video": RENDER_GATE, "short_video": RENDER_GATE, "idea": IDEA_GATE}
+
+
 def run_job(job: dict):
     """Runs all unfinished stages. Returns the final status."""
     c = Ctx(job)
@@ -3082,7 +3089,17 @@ def run_job(job: dict):
         c.check()
         c.stage = sid
         c.progress(0)
-        STAGE_FUNCS[sid](c)
+        gate = GATED.get(sid)
+        if gate and not gate.acquire(blocking=False):
+            c.log("Жду, пока соберётся другой ролик: монтаж идёт по одному…" if gate is RENDER_GATE
+                  else "Жду, пока другой ролик выберет тему, чтобы темы не повторились…")
+            while not gate.acquire(timeout=2):
+                c.check()
+        try:
+            STAGE_FUNCS[sid](c)
+        finally:
+            if gate:
+                gate.release()
         c.log(f"✓ {STAGE_NAMES[sid]}")
     c.stage = "done"
     db.update(c.id, progress=100, stage="done")
