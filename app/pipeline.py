@@ -90,6 +90,32 @@ class StopForReview(Exception):
     pass
 
 
+PACE_FILE = JOBS_DIR.parent / "voice_pace.json"
+_pace_lock = threading.Lock()
+
+
+def measured_wpm(key: str):
+    """How fast this voice really speaks (words per minute, pauses included), from its last videos, or None.
+    The script length is set by it, so a 10-minute video comes out about 10 minutes long."""
+    try:
+        got = (json.loads(PACE_FILE.read_text("utf-8")) or {}).get(key) or []
+    except (OSError, ValueError):
+        return None
+    return round(statistics.median(got)) if got else None
+
+
+def record_wpm(key: str, wpm: float):
+    if not 80 <= wpm <= 260:
+        return
+    with _pace_lock:
+        try:
+            data = json.loads(PACE_FILE.read_text("utf-8")) if PACE_FILE.exists() else {}
+        except (OSError, ValueError):
+            data = {}
+        data[key] = (data.get(key) or [])[-7:] + [round(wpm, 1)]
+        PACE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=1), "utf-8")
+
+
 def job_dir(jid: str) -> Path:
     return JOBS_DIR / jid
 
@@ -591,7 +617,7 @@ class Ctx:
         if self.opts.get("voice_id"):  # a translated version: the owner chose its voice separately
             self.settings["elevenlabs_voice_id"] = self.opts["voice_id"]
             self.settings["elevenlabs_voice_name"] = self.opts.get("voice_name", "")
-        self.wpm = WPM.get(self.lang, WORDS_PER_MIN)
+        self.wpm = measured_wpm(self.pace_key()) or WPM.get(self.lang, WORDS_PER_MIN)
         self.demo = bool(self.opts.get("demo"))
         self.usage = read_json(self.dir / "usage.json", {}) or {}
         self.short_format = self.opts.get("format") == "short"
@@ -801,6 +827,11 @@ class Ctx:
             parts.append(f"OWNER'S PLAN FOR THIS EPISODE (may be in Russian): {plan}")
         parts.append(SERIES_RULES.format(num=self.episode, recap=recap).strip())
         return "\n\n".join(parts)
+
+    def pace_key(self) -> str:
+        """The voice's pace depends on the language, the voice and its speed setting."""
+        return ":".join(str(x) for x in (self.lang, self.settings.get("elevenlabs_voice_id") or "",
+                                          self.settings.get("voice_speed") or ""))
 
     def history_block(self) -> str:
         """Ideas of this project's earlier videos, so new ones do not repeat them."""
@@ -1072,6 +1103,9 @@ def _idea_block(c: Ctx) -> str:
 def _ask_ideas(c: Ctx, n: int, avoid: list = None) -> dict:
     extra = (AD_IDEAS_EXTRA if c.project.get("ad_mode") else SHORT_IDEAS_EXTRA) if c.short_format else ""
     extra += f"\n\nGive exactly {n} ideas, no more and no fewer."
+    if not c.short_format:
+        extra += (f" This video will be about {max(1, round(c.minutes))} minutes long: a title that names its length "
+                  "uses exactly that number of minutes, never another one.")
     if own_topic(c) and avoid:  # the owner pressed "more topics" himself
         extra += ("\n\nThe owner gave a topic: variety only inside that topic, never leave it for another subject. "
                   "The owner's topic itself is already in the list, so give new close variations of it.")
@@ -1766,7 +1800,7 @@ def _picture_ok(c: Ctx, path: Path, scene: dict, vertical: bool) -> dict:
     chars = [ch for ch in c.characters if {ch.get("name", "").lower(), ch.get("name_en", "").lower()}
              & {n.lower() for n in scene.get("characters") or []}]
     who = "\n".join(f"- {c.char_name(ch)}: {ch.get('appearance', '')}" for ch in chars) or "- (no recurring characters)"
-    r = llm.call_json(_check_settings(c.settings), "You check pictures for an animated video. Answer only with JSON.",
+    r = _pic_check_call(c, "You check pictures for an animated video. Answer only with JSON.",
                       "Look at the picture as an ordinary viewer scrolling past it for 3 seconds. Fail it (ok=false) "
                       "ONLY for a serious problem that viewer would notice and find wrong: a missing or extra person, a "
                       "double of a character, a person in an impossible place (nobody at the wheel of a moving car, the "
@@ -1781,6 +1815,24 @@ def _picture_ok(c: Ctx, path: Path, scene: dict, vertical: bool) -> dict:
                       f"FORMAT: {'vertical 9:16' if vertical else 'horizontal 16:9'}",
                       SCHEMA_PIC_CHECK, c.usage, 3000, images=[buf.getvalue()])
     return r
+
+
+_NO_HAIKU = set()  # Haiku turned out unavailable on this key: not tried again until restart
+
+
+def _pic_check_call(c: Ctx, system: str, user: str, schema: dict, usage: dict, max_tokens: int, images=None):
+    """The picture checker runs once per picture (hundreds on a long video): on Claude it uses the cheap Haiku,
+    about 20 times cheaper than Sonnet; if Haiku is not available on the key, the usual checker model."""
+    s = _check_settings(c.settings)
+    if s.get("llm_provider", "anthropic") == "anthropic" and not _NO_HAIKU:
+        try:
+            return llm.call_json(dict(s, anthropic_model="claude-haiku-5-5"), system, user, schema, usage,
+                                 max_tokens, images=images)
+        except UserError as e:
+            if "не найдена" not in str(e) and "нет доступа" not in str(e):
+                raise
+            _NO_HAIKU.add(1)
+    return llm.call_json(s, system, user, schema, usage, max_tokens, images=images)
 
 
 def _check_pictures(c: Ctx, items: list, refs: dict, places: dict, item_refs: dict):
@@ -2082,6 +2134,9 @@ def st_voice(c: Ctx):
         result.update(short_durations=sd, short_total=sum(sd))
     c.log(f"Озвучка готова: {result['total'] / 60:.1f} мин")
     write_json(c.out("voice"), result)
+    words = sum(word_count(sc.get("text", "")) for sc in scenes)
+    if not c.demo and not c.mute and words >= 150 and result["total"] > 30:
+        record_wpm(c.pace_key(), words / (result["total"] / 60))
 
 
 # -------- images
@@ -3098,6 +3153,8 @@ def st_video(c: Ctx):
     c.log(f"Видео готово: {r['duration'] / 60:.1f} мин" if not c.vertical else f"Шортс готов: {r['duration']:.0f} сек")
     write_json(c.out("video"), r)
     _respeed_after_build(c, "video")
+    if not c.vertical:
+        _fix_title_minutes(c, r.get("duration", 0))
     if not c.vertical and not c.demo and r.get("duration", 0) >= 90 and not (c.dir / "chapters.json").exists():
         c.log("Делаю тайм-коды для описания…")
         try:
@@ -3107,6 +3164,32 @@ def st_video(c: Ctx):
             c.log(f"Тайм-коды сделать не получилось: {e}")
     if not c.vertical:
         make_package(c.id)
+
+
+MINUTES_RE = re.compile(r"\b(\d{1,3})(\s*-?\s*)(minutes?|mins?|минут[ауы]?|мин|minutos?|minuten|minuti)\b", re.I)
+
+
+def _fix_title_minutes(c: Ctx, seconds: float):
+    """Titles like "The Entire History of X in 8 Minutes" are invented before the video exists: the number is set to
+    the real length, so the title never promises 8 minutes for an 18-minute video."""
+    if seconds < 60:
+        return
+    real = max(1, round(seconds / 60))
+    ex = c.data("extras") or {}
+    changed = []
+    for k in ("youtube_title", "youtube_title_ru"):
+        t = ex.get(k) or ""
+        m = MINUTES_RE.search(t)
+        if m and int(m.group(1)) != real:
+            ex[k] = MINUTES_RE.sub(lambda x: f"{real}{x.group(2)}{x.group(3)}", t, count=1)
+            changed.append(ex[k])
+    if not changed:
+        return
+    write_json(c.out("extras"), ex)
+    job = db.get(c.id) or {}
+    if MINUTES_RE.search(job.get("title") or ""):
+        db.update(c.id, title=MINUTES_RE.sub(lambda x: f"{real}{x.group(2)}{x.group(3)}", job["title"], count=1))
+    c.log(f"Число минут в названии поправлено под настоящую длину ролика: {changed[0]}")
 
 
 def st_short_video(c: Ctx):
