@@ -1,6 +1,6 @@
 {
- "version": 122,
- "label": "сохранение локаций для сериалов",
- "notes": "Сохранение локаций проекта для сериалов",
+ "version": 123,
+ "label": "музыка для готовых роликов",
+ "notes": "Автоподбор музыки для готового ролика без музыки",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

@@ -635,6 +635,8 @@ def job_music(jid: str, data: dict = Body(...)):
         track = ""
     if not track:
         opts.pop("music_picked", None)  # automatic again: pick anew
+        if opts.get("music_mode") == "off" and not data.get("compose"):
+            opts["music_mode"] = "library"  # the video was made without music: "automatic" means from the library now
     if data.get("volume") not in (None, ""):
         try:
             opts["music_volume"] = min(0.6, max(0.0, float(data["volume"])))
