@@ -52,6 +52,54 @@ def tracks() -> list:
     return sorted(f for f in MUSIC_DIR.iterdir() if f.suffix.lower() in AUDIO)
 
 
+def _loudness(path: Path, extra: str = "") -> float:
+    """Integrated loudness (LUFS) of a minute from the middle of the track; extra: a filter applied first."""
+    import subprocess
+    from .media import ffmpeg
+    af = (extra + "," if extra else "") + "ebur128"
+    p = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", "-ss", "30", "-t", "60", "-i", str(path), "-af", af,
+                        "-f", "null", "-"], capture_output=True, text=True, timeout=120)
+    found = re.findall(r"I:\s+(-?[\d.]+) LUFS", p.stderr)
+    if not found:
+        p = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", "-t", "60", "-i", str(path), "-af", af, "-f", "null",
+                            "-"], capture_output=True, text=True, timeout=120)  # a track shorter than 30 seconds
+        found = re.findall(r"I:\s+(-?[\d.]+) LUFS", p.stderr)
+    return float(found[-1]) if found else -30.0
+
+
+import threading
+_energy_lock = threading.Lock()  # several videos are made at once: measure and save the library one at a time
+
+
+def energies() -> dict:
+    with _energy_lock:
+        return _energies()
+
+
+def _energies() -> dict:
+    """file name -> energy 1 (calm) .. 5 (driving), measured once per track from loudness and brightness
+    (a lot of high frequencies = drums, hats, distorted guitars) and ranked across the library."""
+    data = styles()
+    files = tracks()
+    changed = False
+    for f in files:
+        m = data.setdefault(f.name, {})
+        if m.get("energy_mtime") == int(f.stat().st_mtime) and "energy_raw" in m:
+            continue
+        try:
+            full = _loudness(f)
+            bright = _loudness(f, "highpass=f=3000")
+            m["energy_raw"] = round(full + 0.6 * (bright - full), 2)
+        except Exception:  # noqa: BLE001 - an unreadable file simply counts as medium
+            m["energy_raw"] = -20.0
+        m["energy_mtime"] = int(f.stat().st_mtime)
+        changed = True
+    if changed:
+        _save_styles(data)
+    raw = sorted((data[f.name]["energy_raw"], f.name) for f in files)
+    return {name: 1 + min(4, int(5 * i / max(1, len(raw)))) for i, (_, name) in enumerate(raw)}
+
+
 def _words(text: str) -> set:
     return {w for w in re.findall(r"[a-zа-яё]{4,}", (text or "").lower())}
 

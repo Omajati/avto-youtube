@@ -28,6 +28,7 @@ FIELDS = {
     "fr_voice_id": "", "fr_voice_name": "", "fr_channel_id": "", "tr_lang": "",  # the same for other languages
     "seo_ru": "",  # the owner's permanent tags and search phrases for every video of the project
     "short_examples": "",  # texts of Shorts the owner loves: a style reference for the writer
+    "music_smart": True,  # long videos: the music follows the script (calm, tense, climax), several tracks with crossfades
     "keep_places": False,  # a series: places drawn once are saved in the project and reused by the next videos
     "same_place": True,  # one reference picture per location so every scene there shows the same place
     "characters": [],  # ids from the shared character library used by default

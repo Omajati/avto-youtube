@@ -1,6 +1,6 @@
 {
- "version": 123,
- "label": "музыка для готовых роликов",
- "notes": "Автоподбор музыки для готового ролика без музыки",
+ "version": 124,
+ "label": "музыка по сценарию",
+ "notes": "Музыка по сценарию: части по настроению, переходы, паузы перед поворотами",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

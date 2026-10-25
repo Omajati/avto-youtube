@@ -644,7 +644,7 @@ def job_music(jid: str, data: dict = Body(...)):
             raise UserError("Громкость должна быть числом.")
     db.update(jid, options=opts)
     d = pipeline.job_dir(jid)
-    for rel in ("video.json", "short_video.json", "output/video.mp4", "output/short.mp4"):
+    for rel in ("video.json", "short_video.json", "output/video.mp4", "output/short.mp4", "music_plan_*.json"):
         pipeline._remove(d, rel)
     if j["status"] in ("done", "error", "paused"):
         db.update(jid, status="queued", error="")

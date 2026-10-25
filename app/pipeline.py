@@ -2780,7 +2780,7 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
                 c.log("Добавил анимацию «Подписаться» и «Нравится» во второй половине шортса.")
         except UserError as e:
             c.log(f"Анимацию «Подписаться» добавить не получилось: {e}")
-    music = _music_for(c, total)
+    music = _music_bed(c, prefix, scenes, durations, total, clips_dir, width, height) or _music_for(c, total)
     out.parent.mkdir(exist_ok=True)
     smart = opts.get("subs_smart", False)
     cap = captions.build(c.dir, prefix, scenes, durations, width, height, smart=smart, blocked=blocked)
@@ -2849,6 +2849,106 @@ def _music_prompt(c: Ctx, wish: str, extras: dict) -> str:
         return (r.get("prompt") or "").strip() or wish
     except UserError:
         return f"Instrumental background music, no vocals. Style: {wish}"
+
+
+SCHEMA_MUSIC = {"type": "object", "properties": {
+    "parts": {"type": "array", "items": {"type": "object", "properties": {
+        "from_scene": {"type": "integer"}, "mood_ru": {"type": "string"}, "energy": {"type": "integer"},
+        "track": {"type": "string"}}, "required": ["from_scene", "mood_ru", "energy", "track"]}},
+    "breaths": {"type": "array", "items": {"type": "integer"}}},
+    "required": ["parts", "breaths"]}
+XFADE = 2.0   # seconds of crossfade between two tracks
+BREATH = 0.8  # seconds the music takes to fade out before a dramatic beat and back in after it
+
+
+def _music_bed(c: Ctx, prefix: str, scenes: list, durations: list, total: float, clips_dir: Path,
+               width: int, height: int):
+    """Long videos: a music bed that follows the script. A music editor splits the video into parts by mood and
+    picks a library track of the right energy for each; the parts crossfade, and before a few big turns the music
+    holds its breath. Returns a wav of the video's length, or None to use one track as before."""
+    opts = (db.get(c.id) or {}).get("options") or c.opts
+    if (c.demo or height > width or c.project.get("music_smart") is False or opts.get("music_track")
+            or (opts.get("music_mode") or "library") != "library" or len(scenes) < 6 or total < 90):
+        return None
+    files = musiclib.tracks()
+    if len(files) < 2:
+        return None
+    plan_file = c.dir / f"music_plan_{prefix}.json"
+    plan = read_json(plan_file)
+    names = {f.name for f in files}
+    if not plan or any(p["track"] not in names for p in plan.get("parts", [])):
+        c.log("Музыка по сценарию: слушаю треки из «Музыки» и размечаю ролик по настроению…")
+        energy = musiclib.energies()
+        meta = musiclib.styles()
+        lib = "\n".join(f"- {f.name} | energy {energy.get(f.name, 3)}/5"
+                        + (f" | {meta[f.name]['style_ru']}" if meta.get(f.name, {}).get("style_ru") else "")
+                        for f in files[:80])
+        t, rows = 0.0, []
+        for i, (sc, d) in enumerate(zip(scenes, durations)):
+            rows.append(f"{i}. [{_clock(t)}] {sc.get('text', '')[:220]}")
+            t += d
+        wish = (opts.get("music_style") or c.project.get("music_style") or "").strip()
+        try:
+            plan = llm.call_json(
+                _check_settings(c.settings), "You are the music editor of a YouTube video. Answer only with JSON.",
+                "Split the video into 2-5 musical parts by the mood of the story (for example: a calm or mysterious "
+                "opening, rising tension, the climax, the resolution) and pick one track from the library for each "
+                "part: its energy must match the part (1 calm ... 5 driving), and its name or style the mood. A part "
+                "lasts at least 40 seconds; neighbouring parts use different tracks; the first part starts at scene "
+                "0. breaths: 0-3 scene numbers right before a big reveal or turn where the music should fall silent "
+                "for that one scene, so the words land; leave it empty if no moment deserves it. mood_ru: the mood "
+                "of the part in Russian, 1-3 words."
+                + (f"\nThe owner's wish for the music: {wish}" if wish else "")
+                + f"\n\nLIBRARY (file | energy | style):\n{lib}\n\nSCENES ([time] narration):\n" + "\n".join(rows),
+                SCHEMA_MUSIC, c.usage, 4000)
+        except UserError as e:
+            c.log(f"Музыку по сценарию разметить не получилось ({e}), ставлю один трек.")
+            return None
+        parts = sorted((p for p in plan.get("parts", []) if p.get("track") in names
+                        and 0 <= int(p.get("from_scene", -1)) < len(scenes)), key=lambda p: p["from_scene"])
+        if not parts:
+            return None
+        parts[0]["from_scene"] = 0
+        merged = [parts[0]]
+        for p in parts[1:]:  # the same track again or a part that starts on the same scene: one part
+            if p["from_scene"] > merged[-1]["from_scene"] and p["track"] != merged[-1]["track"]:
+                merged.append(p)
+        plan = {"parts": merged, "breaths": sorted({int(b) for b in plan.get("breaths", [])
+                                                     if 0 < int(b) < len(scenes) - 1})[:3]}
+        write_json(plan_file, plan)
+    starts = [sum(durations[:i]) for i in range(len(scenes))] + [total]
+    parts = plan["parts"]
+    spans = [(starts[p["from_scene"]], starts[parts[k + 1]["from_scene"]] if k + 1 < len(parts) else total + 1)
+             for k, p in enumerate(parts)]
+    out = clips_dir / f"music_bed_{prefix}.wav"
+    args, chains = [], []
+    for k, (p, (a, b)) in enumerate(zip(parts, spans)):
+        length = b - a + (XFADE if k + 1 < len(parts) else 0)
+        args += ["-stream_loop", -1, "-i", musiclib.MUSIC_DIR / p["track"]]
+        gain = 0.8 + 0.1 * max(1, min(5, int(p.get("energy", 3))))  # a driving part sits a bit louder
+        chains.append(f"[{k}:a]atrim=0:{length:.3f},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:"
+                      f"channel_layouts=stereo,volume={gain:.2f}[p{k}]")
+    fc = ";".join(chains)
+    last = "p0"
+    for k in range(1, len(parts)):
+        fc += f";[{last}][p{k}]acrossfade=d={XFADE}:c1=tri:c2=tri[x{k}]"
+        last = f"x{k}"
+    # silent for the last 3 seconds before the turn, back softly as it is told
+    holes = [(max(starts[i], starts[i + 1] - 3.0), starts[i + 1] + 0.3) for i in plan.get("breaths", [])]
+    if holes:  # the music fades out over BREATH seconds before the beat and back in after it
+        g = "*".join(f"(1-clip(min((t-{a - BREATH:.2f})/{BREATH}\\,({b + BREATH:.2f}-t)/{BREATH})\\,0\\,1))"
+                     for a, b in holes)
+        fc += f";[{last}]volume='{g}':eval=frame[bed]"
+        last = "bed"
+    try:
+        media.run([*args, "-filter_complex", fc, "-map", f"[{last}]", "-t", f"{total + 1:.3f}", out],
+                  "Музыка по сценарию")
+    except UserError as e:
+        c.log(f"Музыку по сценарию собрать не получилось ({e}), ставлю один трек.")
+        return None
+    desc = ", ".join(f"{_clock(a)} {p['mood_ru']} ({Path(p['track']).stem})" for p, (a, _) in zip(parts, spans))
+    c.log(f"Музыка по сценарию: {desc}" + (f"; музыка замолкает перед поворотами: {len(holes)}" if holes else ""))
+    return out
 
 
 def _music_for(c: Ctx, total: float):

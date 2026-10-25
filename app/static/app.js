@@ -927,6 +927,7 @@ async function viewProject(id) {
       <div id="pj-anim-est" class="muted small" style="margin-top:4px"></div>
       <label class="f">Музыка по умолчанию <span class="hint">В «Новом ролике» можно поменять для каждого ролика</span></label>${sel("music_mode", Object.entries(META.music_modes))}
       <label class="f">Стиль музыки <span class="hint">своими словами, можно по-русски. Его слушаются и подбор из раздела «Музыка», и сочинение новой. Пусто — стиль под каждый сценарий</span></label><input type="text" data-q="music_style" value="${esc(p.music_style || "")}" placeholder="например: тихий тревожный эмбиент, без барабанов">
+      <label class="check"><input type="checkbox" data-q="music_smart" ${p.music_smart !== false ? "checked" : ""}> Музыка по сценарию <span class="muted small">(в длинных роликах: нейросеть делит ролик на части по настроению, под каждую ставит трек из «Музыки» нужной энергии, с плавными переходами и паузами перед поворотами; бесплатно)</span></label>
       <label class="f">Эффекты</label>${sel("fx_mode", Object.entries(META.fx_modes))}
       <label class="f">Призыв на шортсах <span class="hint">анимированные кнопки «Подписаться» и «Нравится» в стиле YouTube во второй половине каждого шортса</span></label>${sel("cta_short", Object.entries(META.cta_modes))}
       <label class="f">Язык кнопок призыва</label>${sel("cta_lang", Object.entries(META.cta_langs))}
