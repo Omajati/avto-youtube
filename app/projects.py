@@ -28,6 +28,7 @@ FIELDS = {
     "fr_voice_id": "", "fr_voice_name": "", "fr_channel_id": "", "tr_lang": "",  # the same for other languages
     "seo_ru": "",  # the owner's permanent tags and search phrases for every video of the project
     "short_examples": "",  # texts of Shorts the owner loves: a style reference for the writer
+    "keep_places": False,  # a series: places drawn once are saved in the project and reused by the next videos
     "same_place": True,  # one reference picture per location so every scene there shows the same place
     "characters": [],  # ids from the shared character library used by default
     "items": [],  # ids from the shared library of items and products shown in the pictures by default
@@ -568,6 +569,50 @@ def refs_dir(cid: str):
 def list_refs(cid: str) -> list:
     d = refs_dir(cid)
     return sorted(d.glob("*.png"), key=lambda f: f.stat().st_mtime) if d.exists() else []
+
+
+# ---------------------------------------------------------------- saved places of a series
+def places_dir(pid: str):
+    return PROJ_DIR / f"{pid}_places"
+
+
+def list_places(pid: str) -> list:
+    """[{name, visual, h: file name of the horizontal picture, v: of the vertical one}] in the order saved."""
+    f = places_dir(pid) / "places.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
+    except (OSError, ValueError):
+        return []
+
+
+def save_place(pid: str, name: str, visual: str, picture, vertical: bool):
+    """Keeps a drawn place for the next videos of this project (the picture is copied)."""
+    import shutil
+    d = places_dir(pid)
+    d.mkdir(parents=True, exist_ok=True)
+    places = list_places(pid)
+    key = name.strip().lower()
+    p = next((x for x in places if x["name"].strip().lower() == key), None)
+    if not p:
+        p = {"name": name.strip(), "visual": visual, "id": uuid.uuid4().hex[:8]}
+        places.append(p)
+    side = "v" if vertical else "h"
+    p[side] = f"{p['id']}_{side}.png"
+    shutil.copy(picture, d / p[side])
+    (d / "places.json").write_text(json.dumps(places, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def place_picture(pid: str, name: str, vertical: bool):
+    """The saved picture of a place by its name, or None."""
+    key = name.strip().lower()
+    p = next((x for x in list_places(pid) if x["name"].strip().lower() == key), None)
+    f = places_dir(pid) / p.get("v" if vertical else "h", "") if p else None
+    return f if f and f.is_file() and f.name else None
+
+
+def clear_places(pid: str):
+    import shutil
+    shutil.rmtree(places_dir(pid), ignore_errors=True)
 
 
 def ref_path(cid: str, name: str):

@@ -774,6 +774,17 @@ def project_golden(pid: str):
     return {"items": items, "suggest": suggest}
 
 
+@app.get("/api/projects/{pid}/places")
+def project_places(pid: str):
+    return {"items": [{"name": x["name"], "h": bool(x.get("h")), "v": bool(x.get("v"))} for x in projects.list_places(pid)]}
+
+
+@app.delete("/api/projects/{pid}/places")
+def project_places_clear(pid: str):
+    projects.clear_places(pid)
+    return {"ok": True}
+
+
 @app.delete("/api/projects/{pid}/golden/{gid}")
 def project_golden_delete(pid: str, gid: str):
     projects.remove_golden(pid, gid)
@@ -958,6 +969,7 @@ def project_save(pid: str, data: dict = Body(...)):
 @app.delete("/api/projects/{pid}")
 def project_delete(pid: str):
     projects.remove(pid)
+    projects.clear_places(pid)
     return {"ok": True}
 
 

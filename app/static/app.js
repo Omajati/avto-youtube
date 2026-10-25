@@ -941,6 +941,8 @@ async function viewProject(id) {
       <label class="check"><input type="checkbox" data-q="graphics" ${p.graphics !== false ? "checked" : ""}> Анимации данных на видео <span class="muted small">(счётчики, деньги, проценты, таймеры, сравнения, галочки, стрелки, ключевые слова в момент, когда голос их называет; бесплатно, один короткий запрос к ИИ на ролик)</span></label>
       <label class="check"><input type="checkbox" data-q="made_for_kids" ${p.made_for_kids ? "checked" : ""}> Ролики для детей <span class="muted small">(сказочный добрый тон; на YouTube ставится отметка «для детей», по закону это обязательно для детского контента)</span></label>
       <label class="check"><input type="checkbox" data-q="same_place" ${p.same_place !== false ? "checked" : ""}> Каждое место выглядит одинаково во всех своих кадрах <span class="muted small">(сначала рисуется каждое место действия, и все сцены там рисуются по этому образцу; нужен ключ fal.ai; дороже: каждая сцена рисуется по образцу, ~$0.04 с Nano Banana или ~$0.02 с FLUX.2 Dev Edit (выбор в Настройках → Картинки) вместо ~$0.003 у Flux Schnell; в экономном режиме крупные планы и детали без персонажей рисуются без образца)</span></label>
+      <label class="check" style="margin-left:24px"><input type="checkbox" data-q="keep_places" ${p.keep_places ? "checked" : ""}> Сохранять локации <span class="muted small">(для сериалов: место, нарисованное в одной серии, сохраняется в проекте, и следующие серии берут его готовым, бесплатно и в том же виде)</span></label>
+      <div id="pj-places" class="muted small" style="margin-left:52px"></div>
       <label class="check"><input type="checkbox" data-q="fiction" ${p.fiction ? "checked" : ""}> Выдуманные истории <span class="muted small">(мультики, сказки, притчи: сюжеты придумываются, а не берутся из реальных событий)</span></label>
       <label class="check"><input type="checkbox" data-q="voice_off" ${p.voice_off ? "checked" : ""}> Без озвучки <span class="muted small">(ролик идёт только под музыку: без голоса и без текста на экране)</span></label>
       <label class="check"><input type="checkbox" data-q="ad_mode" ${p.ad_mode ? "checked" : ""}> Рекламный ролик товара <span class="muted small">(без людей: товар в каждом кадре, макро, наезды и облёт камеры; товар выбирается в «Предметах в ролике»)</span></label>
@@ -1036,6 +1038,16 @@ async function viewProject(id) {
     } catch (e) { box.textContent = e.message; }
   };
   loadGolden();
+  const loadPlaces = async () => {
+    const box = $("#pj-places"); if (!box) return;
+    try {
+      const r = await api(`/api/projects/${id}/places`);
+      box.innerHTML = r.items.length ? `Сохранено мест: ${r.items.length} (${r.items.map(x => esc(x.name)).join(", ")}) <button class="sm" id="pj-places-clear">Забыть сохранённые места</button>` : "";
+      const b = $("#pj-places-clear");
+      if (b) b.onclick = async () => { if (!confirm("Забыть все сохранённые места проекта? Следующие серии нарисуют их заново.")) return; await api(`/api/projects/${id}/places`, { method: "DELETE" }); loadPlaces(); };
+    } catch (e) { box.textContent = ""; }
+  };
+  loadPlaces();
   const langSel = main.querySelector('[data-q="language"]'), fmtSel = main.querySelector('[data-q="format"]');
   const fillVoices = async () => {
     const vsel = $("#pj-voice"); const cur = vsel.value;

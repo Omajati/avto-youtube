@@ -1204,8 +1204,22 @@ def st_outline(c: Ctx):
         r = _demo("outline")
     else:
         c.log("Строю структуру: хук, повороты, удерживающие крючки…")
-        r = c.ask("02_outline.txt", SCHEMA_OUTLINE, 32000, idea=text)
+        r = c.ask("02_outline.txt", SCHEMA_OUTLINE, 32000, idea=text, extra=_saved_places_block(c))
     write_json(c.out("outline"), r)
+
+
+def _saved_places_block(c: Ctx) -> str:
+    """A series keeps its places: the writer reuses their exact names, so the saved pictures are found again."""
+    if not (c.project.get("keep_places") and c.project.get("id")):
+        return ""
+    from . import projects
+    saved = projects.list_places(c.project["id"])
+    if not saved:
+        return ""
+    return ("\n\nSAVED PLACES OF THIS SERIES (already drawn in earlier episodes). When the story happens in one of "
+            "them, list it in locations with EXACTLY this name and visual, character for character; invent a new "
+            "place only when the story really goes somewhere else:\n"
+            + "\n".join(f"- {x['name']}: {x.get('visual', '')}" for x in saved))
 
 
 def _outline_text(c: Ctx) -> str:
@@ -2134,8 +2148,15 @@ def _location_plates(c: Ctx, scenes_by_kind: list) -> dict:
                 need[(key, vertical)] = locs[key]
     plates = {}
     names = sorted(locs)
+    keep = bool(c.project.get("keep_places") and c.project.get("id"))
+    if keep:
+        from . import projects
     for (key, vertical), loc in need.items():
         out = c.dir / "images" / f"loc_{names.index(key):02d}{'_v' if vertical else ''}.png"
+        saved = projects.place_picture(c.project["id"], loc["name"], vertical) if keep and not out.exists() else None
+        if saved:
+            shutil.copy(saved, out)
+            c.log(f"Место «{loc['name']}» беру из сохранённых мест проекта, бесплатно.")
         if not out.exists():
             c.check()
             c.log(f"Рисую место действия: {loc['name']}…")
@@ -2148,6 +2169,12 @@ def _location_plates(c: Ctx, scenes_by_kind: list) -> dict:
                     raise
                 c.log(f"Место «{loc['name']}» нарисовать не получилось ({e}). Сцены там будут без образца места.")
                 continue
+            if keep:
+                try:
+                    projects.save_place(c.project["id"], loc["name"], loc.get("visual", ""), out, vertical)
+                    c.log(f"Место «{loc['name']}» сохранено в проекте для следующих серий.")
+                except OSError as e:
+                    c.log(f"Место «{loc['name']}» сохранить в проекте не получилось: {e}")
         plates[(key, vertical)] = out
     return plates
 
