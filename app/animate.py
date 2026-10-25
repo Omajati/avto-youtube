@@ -84,6 +84,21 @@ def take_motion(move: str, to_end: bool) -> str:
                               to_end=" from the first frame to the last frame" if to_end else "")
 
 
+ORBIT_MOTION = (
+    "Smooth cinematic motion-control orbit: the camera arcs slowly about 30 degrees around the product toward its "
+    "{side} side, keeping the product centered, with a gentle push-in. The product itself is a rigid solid object: it "
+    "stands perfectly still, it does not rotate, bend, melt, morph or change shape; every part, proportion, colour and "
+    "detail stays exactly as in the first frame. The same set and background. Studio light glints slide across the "
+    "surface. No new objects, no people, no hands, no text."
+)
+ORBIT_NEGATIVE = ("morphing, deformation, warping, melting, product changing shape, product rotating by itself, extra "
+                  "parts, duplicated product, blur, low quality, text, watermark, hands")
+
+
+def orbit_motion(side: str) -> str:
+    return ORBIT_MOTION.format(side=side)
+
+
 def model(settings) -> dict:
     return VIDEO_MODELS.get(settings.get("video_model"), VIDEO_MODELS["kling25"])
 
@@ -139,7 +154,8 @@ def _data_uri(img: Path) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def generate(settings, img: Path, prompt: str, need: float, vertical: bool, check=None, motion=None, tail=None) -> bytes:
+def generate(settings, img: Path, prompt: str, need: float, vertical: bool, check=None, motion=None, tail=None,
+             negative: str = None) -> bytes:
     """Returns mp4 bytes. tail: the picture the clip must end on (Kling 2.5 Turbo Pro is used for it)."""
     key = settings.get("fal_key")
     if not key:
@@ -160,7 +176,9 @@ def generate(settings, img: Path, prompt: str, need: float, vertical: bool, chec
         # motion prompt already asks for a slow camera move.
     else:
         body = {"prompt": full, "duration": "5" if clip_seconds(settings, need) <= 5 else "10",
-                "negative_prompt": "blur, distort, low quality, text, watermark, morphing faces"}
+                "negative_prompt": negative or "blur, distort, low quality, text, watermark, morphing faces"}
+        if negative:
+            body["cfg_scale"] = 0.7  # follow the prompt closely: the product must stay rigid
         if mid == "kling26":
             body.update(start_image_url=image, generate_audio=False)
         else:

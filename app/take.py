@@ -25,6 +25,15 @@ NAMES = {"wide": "общий план", "push": "наезд на товар", "d
          "detail2": "макро второй детали", "base": "низ товара и подиум", "hero": "отъезд на товар целиком"}
 
 
+def orbit_scenes(n: int, mode: str) -> list:
+    """Scenes made as a Kling orbit: one in the middle (the product seen whole after the push-in), or all."""
+    if mode == "all":
+        return list(range(n))
+    if mode == "one":
+        return [1 if n >= 2 else 0]
+    return []
+
+
 def path_for(n: int) -> list:
     if n in PATHS:
         return PATHS[n]
@@ -99,6 +108,12 @@ def prepare(master: Path, out: Path, long_side: int = 3840) -> Path:
         im = im.filter(ImageFilter.UnsharpMask(radius=2, percent=60, threshold=2))
     im.save(out, quality=95)
     return out
+
+
+def crop(big: Image.Image, rect: tuple, w: int, h: int) -> Image.Image:
+    cx, cy, hh = rect
+    ww = hh * w / h
+    return big.transform((w, h), Image.EXTENT, (cx - ww / 2, cy - hh / 2, cx + ww / 2, cy + hh / 2), Image.BICUBIC)
 
 
 def render_scene(big: Image.Image, a: tuple, b: tuple, frames: int, out: Path, w: int, h: int, fps: int,

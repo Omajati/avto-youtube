@@ -1,6 +1,6 @@
 {
- "version": 119,
- "label": "реклама одним дублем без искажений",
- "notes": "Исправлена ошибка ffmpeg в режиме одним дублем",
+ "version": 120,
+ "label": "облёт товара в рекламе",
+ "notes": "Облёт товара через Kling в рекламе одним дублем",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

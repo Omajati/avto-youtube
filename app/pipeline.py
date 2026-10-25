@@ -2290,6 +2290,74 @@ def _take_boxes(c: Ctx, master: Path) -> dict:
         return {"product": [0.3, 0.25, 0.7, 0.8], "detail": [], "detail2": [], "detail_ru": "", "detail2_ru": ""}
 
 
+def _take_orbits(c: Ctx, scenes: list, result: dict):
+    """One take: chosen scenes become a Kling orbit around the product, starting from that scene's framing.
+    The rest stays a camera move over the one picture. A failed orbit simply falls back to that move."""
+    from PIL import Image
+    master = c.dir / "images" / "scene_000.png"
+    tk = read_json(c.dir / "take.json")
+    if not tk or len(tk.get("path") or []) != len(scenes):
+        _take_frames(c, scenes, master)
+        tk = read_json(c.dir / "take.json")
+    mode = c.project.get("take_orbit") or "one"
+    sel = take.orbit_scenes(len(scenes), mode)
+    result.update(scene=[], short=[], one_take=True, orbits=[])
+    if not sel:
+        c.log("Одним дублем без облёта: камера поедет по одному кадру, товар не исказится, Kling не нужен.")
+        write_json(c.out("animate"), result)
+        return
+    aset = {**c.settings, "video_model": "kling25"}
+    adir = c.dir / "anim"
+    adir.mkdir(exist_ok=True)
+    w, h = (1080, 1920) if c.vertical else (1920, 1080)
+    big_path = c.dir / "images" / "take_big.jpg"
+    if not big_path.exists():
+        take.prepare(master, big_path)
+    big = Image.open(big_path).convert("RGB")
+    fr = take.framings(big.width, big.height, w / h, tk["product"], tk.get("detail") or None, tk.get("detail2") or None)
+    todo = [i for i in sel if not (adir / f"scene_{i:03d}.mp4").exists()]
+    est = sum(animate.cost(aset, TAKE_CLIP) for _ in todo)
+    c.log(f"Одним дублем: облёт товара в {len(sel)} сц. через Kling 2.5 Turbo Pro (новых {len(todo)}, примерно "
+          f"${est:.2f}). Остальное: камера по кадру, без искажений.")
+    done = [len(sel) - len(todo)]
+
+    def work(i):
+        c.check()
+        a = tk["path"][i][0]
+        start = c.dir / "images" / f"orbit_{i:03d}.png"
+        # the orbit starts on the product seen whole: a macro start would leave Kling nothing to keep rigid
+        take.crop(big, fr["push" if a.rstrip("~") in ("wide", "detail", "detail2", "base") and mode != "all" else a],
+                  w, h).save(start)
+        out = adir / f"scene_{i:03d}.mp4"
+        try:
+            data = animate.generate(aset, start, scenes[i].get("prompt") or "", TAKE_CLIP, c.vertical, c.check,
+                                    motion=animate.orbit_motion("left" if i % 2 == 0 else "right"),
+                                    negative=animate.ORBIT_NEGATIVE)
+            tmp = out.with_suffix(".part")
+            tmp.write_bytes(data)
+            tmp.replace(out)
+            c.add_usage("anim_cost", animate.cost(aset, TAKE_CLIP))
+            balance.record("fal", animate.cost(aset, TAKE_CLIP))
+        except UserError as e:
+            if "ключ" in str(e) or "денег" in str(e) or "лимит" in str(e):
+                raise
+            result["failed"].append(f"scene_{i:03d}")
+            c.log(f"Облёт в сцене {i + 1} не получился ({e}). Там будет камера по кадру.")
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        for f in as_completed([ex.submit(work, i) for i in todo]):
+            f.result()
+            done[0] += 1
+            c.progress(done[0] / len(sel))
+            c.save_usage()
+    result["orbits"] = [i for i in sel if (adir / f"scene_{i:03d}.mp4").exists()]
+    sc_data = c.data("scenes")
+    for i in result["orbits"]:
+        sc_data["scenes"][i]["move"] = "облёт вокруг товара (Kling)"
+    write_json(c.out("scenes"), sc_data)
+    write_json(c.out("animate"), result)
+
+
 def _take_frames(c: Ctx, scenes: list, master: Path):
     """Plans the camera path over the one picture and saves a still of each scene's opening framing."""
     from PIL import Image
@@ -2531,8 +2599,7 @@ def st_animate(c: Ctx):
     ssel = anim_short_pick(short["scenes"], mode, count) if short and anim_short else []
     result = {"mode": mode, "model": c.settings.get("video_model"), "scene": sel, "short": ssel, "failed": []}
     if c.one_take and not c.demo:
-        c.log("Одним дублем: оживлять нечего, камера поедет по одному кадру, товар не исказится. Kling не нужен.")
-        write_json(c.out("animate"), dict(result, scene=[], short=[], one_take=True))
+        _take_orbits(c, scenes, result)
         return
     if not sel and not ssel:
         c.log("Анимация выключена: в видео будут картинки с плавным движением камеры.")
@@ -2621,6 +2688,7 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
         big = Image.open(big_path).convert("RGB")
         fr = take.framings(big.width, big.height, width / height, tk["product"], tk.get("detail"), tk.get("detail2"))
         path = tk["path"]
+        orbits = set((read_json(c.out("animate"), {}) or {}).get("orbits", []))
         fx = [(i, "none", "whoosh" if i and path[i][0] != path[i - 1][1] else "none") for i in range(len(scenes))]
         c.log("Одним дублем: камера едет по кадру с товаром (наезды, макро, отъезд), товар не перерисовывается.")
     else:
@@ -2629,6 +2697,11 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     def work(i):
         c.check()
         a, b = bounds[i]
+        orbit = c.dir / "anim" / f"{prefix}_{i:03d}.mp4"
+        if tk and i in orbits and orbit.exists():
+            media.render_anim_clip(orbit, clips[i], b - a, width, height, fps,
+                                   fade_in=(i == 0), fade_out=(i == len(scenes) - 1), effect="none")
+            return
         if tk:
             take.render_scene(big, fr[path[i][0]], fr[path[i][1]], b - a, clips[i], width, height, fps,
                               fade_in=(i == 0), fade_out=(i == len(scenes) - 1), glint=(i == len(scenes) - 1))

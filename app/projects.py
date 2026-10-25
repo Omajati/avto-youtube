@@ -19,6 +19,7 @@ FIELDS = {
     "anim_mode": "off", "anim_short": False, "anim_count": 3, "anim_pause": False, "images_pause": False, "subs_video": False, "subs_short": True, "graphics": True, "subs_smart": True, "cta_short": "both", "cta_lang": "auto", "fx_mode": "light",
     "platform": "youtube",  # youtube / instagram: Instagram niches live in their own block
     "made_for_kids": False, "fiction": False, "ad_mode": False, "voice_off": False,
+    "take_orbit": "one",  # one take: off / one / all scenes made as a Kling orbit around the product
     "one_take": False,  # product commercial on one set: every shot repeats the first one's set, clips fly frame to frame  # ad_mode: a product commercial without people
     # Series: episodes remember what happened before
     "series": False, "series_bible": "", "season_plan": "",
@@ -284,6 +285,8 @@ def _clean(data: dict) -> dict:
             out[k] = ""
     if out["fx_mode"] not in ("off", "light", "strong"):
         out["fx_mode"] = "light"
+    if out["take_orbit"] not in ("off", "one", "all"):
+        out["take_orbit"] = "one"
     if out["platform"] not in ("youtube", "instagram"):
         out["platform"] = "youtube"
     if out["format"] not in ("long", "short"):
