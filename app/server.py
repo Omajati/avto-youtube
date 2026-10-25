@@ -459,6 +459,47 @@ def _fix_prompt(prompt: str, fix_ru: str) -> str:
     return (r.get("prompt") or "").strip() or prompt
 
 
+@app.post("/api/jobs/{jid}/thumb_prompt")
+def job_thumb_prompt(jid: str, data: dict = Body(...)):
+    """The owner's own thumbnail: his idea in Russian (turned into a stop-scroll prompt) or the prompt itself, and
+    optionally one of this video's pictures as the example. Only the thumbnail picture is drawn again."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
+    d = pipeline.job_dir(jid)
+    ex = pipeline.read_json(d / "extras.json")
+    if not ex:
+        raise UserError("Превью появится после шага «Перевод и описание для YouTube».")
+    prompt = (data.get("prompt") or "").strip() or ex.get("thumbnail_prompt", "")
+    idea = (data.get("idea_ru") or "").strip()
+    ref = Path(str(data.get("ref") or "")).name
+    if ref and not re.fullmatch(r"(scene|short)_\d{3}\.png", ref) or ref and not (d / "images" / ref).is_file():
+        raise UserError("Такой картинки в ролике нет.")
+    if idea:
+        script = (ex.get("script_ru") or "")[:6000]
+        r = llm.call_json(load_settings(), "You write prompts for YouTube thumbnails. Answer only with JSON.",
+                          "Write an English image prompt (40-70 words) for this video's thumbnail from the owner's idea "
+                          "(Russian). Start with the main subject and the extreme emotion on the face in close-up, then "
+                          "the shocking or absurd detail, then the setting; empty space on one side for the headline; no "
+                          "text or letters in the image; no art style words." + pipeline.THUMB_RULE
+                          + (" The owner picked an example frame of this video: the prompt keeps its characters and "
+                             "setting but in a new, far more dramatic close-up composition." if ref else "")
+                          + f"\n\nTITLE: {ex.get('youtube_title_ru') or ex.get('youtube_title', '')}\nCURRENT PROMPT: "
+                          f"{prompt}\nTHE OWNER'S IDEA (Russian): {idea}\nSCRIPT (Russian, for facts):\n{script}",
+                          {"type": "object", "properties": {"prompt": {"type": "string"}}}, {}, 3000)
+        prompt = (r.get("prompt") or "").strip() or prompt
+    ex["thumbnail_prompt"] = prompt
+    ex["thumbnail_ref"] = ref
+    if idea:
+        ex["thumbnail_idea_ru"] = idea
+    pipeline.write_json(d / "extras.json", ex)
+    pipeline.regenerate_image(jid, "thumbnail", 0, None)
+    if j["status"] in ("done", "error", "paused", "review"):
+        db.update(jid, status="queued", error="")
+        worker.wake()
+    return {"ok": True, "prompt": prompt}
+
+
 @app.post("/api/jobs/{jid}/image")
 def job_image(jid: str, data: dict = Body(...)):
     j = _job_or_404(jid)

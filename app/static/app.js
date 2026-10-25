@@ -1592,6 +1592,24 @@ function renderStages(d) {
     } catch (e) { toast(e.message, true); anBtn.disabled = false; }
     lastStagesKey = "";
   };
+  const thDraw = el.querySelector("#th-draw");
+  if (thDraw) {
+    let ref = (d.stages.extras || {}).thumbnail_ref || "";
+    thDraw.querySelectorAll("[data-thref]").forEach(x => x.onclick = () => {
+      ref = x.dataset.thref;
+      thDraw.querySelectorAll("img.thref").forEach(i => { i.style.outline = i.dataset.thref === ref ? "3px solid var(--accent, #e33)" : "none"; });
+      thDraw.querySelector("button.thref").classList.toggle("primary", !ref);
+    });
+    const go = thDraw.querySelector("#th-draw-go");
+    go.onclick = async () => {
+      const idea = thDraw.querySelector("#th-idea").value.trim(), pr = thDraw.querySelector("#th-prompt").value.trim();
+      const changed = pr && pr !== ((d.stages.extras || {}).thumbnail_prompt || "");
+      go.disabled = true; toast(idea ? "Делаю кликбейтный промт и рисую обложку…" : "Рисую обложку…");
+      await api(`/api/jobs/${j.id}/thumb_prompt`, { json: { idea_ru: idea, prompt: changed ? pr : "", ref } })
+        .then(() => toast("Обложка рисуется, через минуту появится здесь")).catch(e => { toast(e.message, true); go.disabled = false; });
+      lastStagesKey = "";
+    };
+  }
   const thBtn = el.querySelector("#th-apply");
   if (thBtn) thBtn.onclick = async () => {
     thBtn.disabled = true;
@@ -1801,6 +1819,20 @@ const RENDER = {
         </div>
         <p class="muted small">Надпись меняется бесплатно и сразу. «Перерисовать картинку» заново рисует саму картинку (стоит как одна картинка); можно написать, что исправить. «Своя картинка» ставит вашу картинку под надпись.${d.files.thumbnail_src ? "" : " <b>Картинки для превью сейчас нет:</b> нарисуйте её заново или загрузите свою."}</p>
       </div>
+    </div>
+    <div class="card" style="margin-top:12px;padding:14px" id="th-draw">
+      <h3 style="margin-top:0">🎨 Своя обложка</h3>
+      <label class="f">Идея обложки своими словами <span class="hint">по-русски: что на ней должно быть. Программа сама сделает из этого кликбейтный промт: крупное лицо с сильной эмоцией, шок, интрига</span></label>
+      <textarea id="th-idea" rows="2" placeholder="например: Бальмис в ужасе держит ребёнка на палубе, за спиной шторм">${esc(r.thumbnail_idea_ru || "")}</textarea>
+      <details style="margin-top:6px"><summary class="muted small">Промт для нейросети (английский, можно править вручную)</summary>
+        <textarea id="th-prompt" rows="4" style="margin-top:6px">${esc(r.thumbnail_prompt || "")}</textarea></details>
+      <label class="f">Образец <span class="hint">необязательно: выберите картинку ролика, обложка возьмёт с неё персонажей, стиль и место, но построит новый, более драматичный кадр</span></label>
+      <div class="thref-grid" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px">
+        <button class="sm thref ${r.thumbnail_ref ? "" : "primary"}" data-thref="" style="flex:0 0 auto">Без образца</button>
+        ${(d.images || []).filter(n => /^(scene|short)_\d{3}\.png$/.test(n)).map(n => `<img class="thref" data-thref="${n}" title="${n}" src="/files/${d.job.id}/images/${n}?v=${d.job.updated}" loading="lazy" style="flex:0 0 auto;height:${d.format === "short" ? 96 : 60}px;border-radius:6px;cursor:pointer;outline:${r.thumbnail_ref === n ? "3px solid var(--accent, #e33)" : "none"}">`).join("")}
+      </div>
+      <div class="row" style="margin-top:8px"><button class="primary" id="th-draw-go" ${d.job.status === "running" ? "disabled" : ""}>🎨 Нарисовать обложку</button>
+        <span class="muted small">стоит как одна картинка, надпись сверху сохранится</span></div>
     </div>
     <h3>Для загрузки на YouTube</h3>
     <div class="kv">

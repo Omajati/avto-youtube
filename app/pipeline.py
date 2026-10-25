@@ -1911,6 +1911,14 @@ def merge_tags(tags: list, owner: str) -> list:
     return out
 
 
+THUMB_RULE = (
+    "\n\nTHUMBNAIL IS A MUST-CLICK (the owner's strict rule): thumbnail_prompt and thumbnail_text make a stop-scroll, "
+    "clickbait cover on the edge: one huge face with an extreme emotion (shock, terror, fury, disbelief) or a shocking, "
+    "absurd or forbidden-looking moment from the script, a strong curiosity gap, maximum contrast and saturated "
+    "colours, readable at phone size in a split second. Provocative and intriguing, but no nudity, gore or real "
+    "celebrities, and nothing that is not in the video.")
+
+
 def st_extras(c: Ctx):
     script = c.data("review")["final_script"]
     if c.demo:
@@ -1918,7 +1926,7 @@ def st_extras(c: Ctx):
     else:
         c.log("Готовлю название, описание и теги" + ("…" if c.lang == "ru" else ", перевожу сценарий на русский…"))
         seo = (c.project.get("seo_ru") or "").strip()
-        r = c.ask("06_extras.txt", SCHEMA_EXTRAS, 32000, script=script, extra=(
+        r = c.ask("06_extras.txt", SCHEMA_EXTRAS, 32000, script=script, extra=THUMB_RULE + (
             "\n\nTHE OWNER'S PERMANENT SEARCH PHRASES FOR THIS CHANNEL (use the ones that fit in the description and "
             f"hashtags; all of them go into the tags):\n{seo}" if seo else ""))
         r["tags"] = merge_tags(r.get("tags") or [], seo)
@@ -2190,7 +2198,7 @@ def _wrong_shape(path: Path, vertical: bool = True) -> bool:
 
 
 def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallback: Path = None, refs: list = None,
-                place: Path = None, items: list = None):
+                place: Path = None, items: list = None, example: bool = False):
     if out.exists():
         return
     if c.demo:
@@ -2202,7 +2210,8 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
     if refs or place or items:
         try:
             price = images.reference_price(c.settings, refs, place, items)
-            raw = images.generate_with_reference(c.settings, full, refs or [], vertical, place=place, items=items)
+            raw = images.generate_with_reference(c.settings, full, refs or [], vertical, place=place, items=items,
+                                                 example=example)
             media.to_png(raw, out)
             media.trim_borders(out)
             if _wrong_shape(out, vertical):
@@ -2213,7 +2222,7 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
                 balance.record("fal", price)
                 raw = images.generate_with_reference(c.settings, ("Tall vertical 9:16 portrait composition. " if vertical
                                                                   else "Wide horizontal 16:9 landscape composition. ") + full,
-                                                     refs or [], vertical, place=place, items=items)
+                                                     refs or [], vertical, place=place, items=items, example=example)
                 media.to_png(raw, out)
                 media.trim_borders(out)
             c.add_usage("images", 1)
@@ -2436,7 +2445,7 @@ def st_images(c: Ctx):
     item_refs = {img / f"scene_{i:03d}.png": _item_refs_for(c, sc) for i, sc in enumerate(scenes)}
     if short:
         item_refs.update({img / f"short_{i:03d}.png": _item_refs_for(c, sc) for i, sc in enumerate(short["scenes"])})
-    places = {}
+    places, examples = {}, set()
     if _same_place(c):
         kinds = [(scenes, c.vertical)] + ([(short["scenes"], True)] if short else [])
         plates = _location_plates(c, kinds)
@@ -2462,6 +2471,10 @@ def st_images(c: Ctx):
         jobs.append((extras["thumbnail_prompt"], img / "thumbnail_src.png", c.vertical, 999))
         refs[img / "thumbnail_src.png"] = _thumb_refs(c, extras["thumbnail_prompt"])
         item_refs[img / "thumbnail_src.png"] = _thumb_items(c, extras["thumbnail_prompt"])
+        example = img / Path(extras.get("thumbnail_ref") or "_").name
+        if extras.get("thumbnail_ref") and example.is_file():  # the owner picked a picture of this video as the example
+            places[img / "thumbnail_src.png"] = example
+            examples.add(img / "thumbnail_src.png")
     todo = [j for j in jobs if not j[1].exists()]
     c.log(f"Генерирую картинки: {len(todo)} из {len(jobs)} (сервис: "
           f"{images.PROVIDERS.get(c.settings['image_provider'], {}).get('name', '')})…")
@@ -2473,7 +2486,7 @@ def st_images(c: Ctx):
         prompt, out, vertical, idx = j
         try:
             _make_image(c, prompt, out, vertical, idx, refs=refs.get(out), place=places.get(out),
-                        items=item_refs.get(out))
+                        items=item_refs.get(out), example=out in examples)
         except UserError as e:
             if "ключ" in str(e) or "денег" in str(e) or "лимит" in str(e):
                 raise

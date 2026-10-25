@@ -1,6 +1,6 @@
 {
- "version": 124,
- "label": "музыка по сценарию",
- "notes": "Музыка по сценарию: части по настроению, переходы, паузы перед поворотами",
+ "version": 125,
+ "label": "своя кликбейтная обложка",
+ "notes": "Своя обложка: идея, промт, образец из картинок ролика; кликбейт обязателен",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

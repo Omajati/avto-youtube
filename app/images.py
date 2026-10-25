@@ -248,7 +248,7 @@ def _sheet(paths: list):
 
 
 def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = False, square: bool = False,
-                            place=None, items: list = None, keep_view: bool = False) -> bytes:
+                            place=None, items: list = None, keep_view: bool = False, example: bool = False) -> bytes:
     """A new picture where the characters look like their portraits and the items like their photos
     (fal.ai, image editing model). Order of the pictures: the place, one sheet per character, one per item.
     keep_view: the place picture is an enlarged crop to redraw sharp with exactly its framing."""
@@ -288,6 +288,11 @@ def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = 
         parts.append(f"{which(n, 1)} the frame to recreate, an enlarged crop of a bigger photo: keep exactly its framing, "
                      "camera position, composition, the position and size of every object, the background and the light. "
                      "Only make it crisp and detailed, as if shot this close with a macro lens; add no new objects.")
+        n += 1
+    elif place and example:
+        parts.append(f"{which(n, 1)} an EXAMPLE frame from this video: keep its characters (same faces and looks), "
+                     "its art style, colours and setting, but never copy its composition: build the new, far more "
+                     "dramatic close-up composition described above.")
         n += 1
     elif place:
         parts.append(f"{which(n, 1)} the PLACE where this happens: keep exactly the same location, layout, colours, "
