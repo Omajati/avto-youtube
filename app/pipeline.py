@@ -2765,6 +2765,7 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     done = [len(scenes) - len(todo)]
     strength = float(c.settings["motion_strength"])
     anim = set((read_json(c.out("animate"), {}) or {}).get(prefix, []))
+    anim |= {int(k.split(":")[1]) for k in read_json(c.dir / "own_clips.json", []) or [] if k.startswith(prefix + ":")}
     fx = effects.plan(scenes, fx_mode(db.get(c.id) or c.opts), height > width)
     if c.one_take:  # one smooth camera move: no punches or shakes between the shots
         fx = [(i, "none", sfx if sfx == "whoosh" else "none") for i, _e, sfx in fx]
@@ -3446,6 +3447,9 @@ def _drop_scene_outputs(d: Path, kind: str, index: int):
     prefix = "short" if kind == "short" else "scene"
     (d / "anim" / f"{prefix}_{index:03d}.mp4").unlink(missing_ok=True)
     (d / "animate.json").unlink(missing_ok=True)
+    own = read_json(d / "own_clips.json", []) or []
+    if f"{kind}:{index}" in own:
+        write_json(d / "own_clips.json", [x for x in own if x != f"{kind}:{index}"])
     (d / ("clips_short" if kind == "short" else "clips") / f"{prefix}_{index:03d}.mp4").unlink(missing_ok=True)
     (d / "images.json").unlink(missing_ok=True)
     (d / ("short_video.json" if kind == "short" else "video.json")).unlink(missing_ok=True)
@@ -3531,6 +3535,44 @@ def own_image(jid: str, kind: str, index: int, raw: bytes):
     key = f"{kind}:{index}"
     if key not in own:
         write_json(d / "own_images.json", own + [key])
+
+
+def own_clip(jid: str, kind: str, index: int, raw: bytes, suffix: str = ".mp4"):
+    """The owner's own animated clip for a scene (e.g. its picture animated in another service): it replaces the
+    animation of that scene, nothing is paid. The clip is fitted to the scene length when the video is assembled."""
+    d = job_dir(jid)
+    if kind == "short":
+        scenes = (read_json(d / "short_script.json") or {}).get("scenes") or []
+    else:
+        scenes = (read_json(d / "scenes.json") or {}).get("scenes") or []
+    if not 0 <= index < len(scenes):
+        raise UserError(f"Сцены {index + 1} нет: в этом ролике {len(scenes)} сцен.")
+    prefix = "short" if kind == "short" else "scene"
+    adir = d / "anim"
+    adir.mkdir(exist_ok=True)
+    ext = suffix if re.fullmatch(r"\.[a-z0-9]{2,5}", suffix) else ".mp4"
+    src = adir / f"upload_{prefix}_{index:03d}{ext}"
+    src.write_bytes(raw)
+    out = adir / f"{prefix}_{index:03d}.mp4"
+    tmp = adir / f"{prefix}_{index:03d}.part.mp4"
+    try:
+        media.video_duration(src)
+        # Any format and size in, one plain H.264 clip out (no sound: the voice and music are laid on top).
+        media.run(["-i", src, "-an", "-vf", "fps=30,scale=1920:1920:force_original_aspect_ratio=decrease,"
+                   "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p", "-c:v", "libx264", "-preset", "veryfast",
+                   "-crf", 18, tmp], "Ваш клип")
+    except UserError:
+        tmp.unlink(missing_ok=True)
+        raise UserError("Это не видео или формат не поддерживается. Подойдут MP4, MOV или WEBM.")
+    finally:
+        src.unlink(missing_ok=True)
+    tmp.replace(out)
+    (d / ("clips_short" if kind == "short" else "clips") / f"{prefix}_{index:03d}.mp4").unlink(missing_ok=True)
+    (d / ("short_video.json" if kind == "short" else "video.json")).unlink(missing_ok=True)
+    (d / "output" / ("short.mp4" if kind == "short" else "video.mp4")).unlink(missing_ok=True)
+    own = read_json(d / "own_clips.json", []) or []
+    if f"{kind}:{index}" not in own:
+        write_json(d / "own_clips.json", own + [f"{kind}:{index}"])
 
 
 def regenerate_image(jid: str, kind: str, index: int, prompt: str = None):

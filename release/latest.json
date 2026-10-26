@@ -1,6 +1,6 @@
 {
- "version": 127,
- "label": "понятная ошибка блокировки ElevenLabs",
- "notes": "понятная ошибка, когда ElevenLabs блокирует страну; битые файлы озвучки переозвучиваются",
+ "version": 128,
+ "label": "свои анимированные клипы",
+ "notes": "свои анимированные клипы для сцен",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

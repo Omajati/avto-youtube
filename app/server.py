@@ -340,6 +340,7 @@ def job_detail(jid: str):
         "log": log,
         "images": imgs,
         "own_images": pipeline.read_json(d / "own_images.json", []) or [],
+        "own_clips": pipeline.read_json(d / "own_clips.json", []) or [],
         "images_waiting": pipeline.needs_images_choice(j),
         "improve": pipeline.read_json(d / "improve.json"),
         "chapters": pipeline.chapters_text(jid),
@@ -527,6 +528,19 @@ async def job_own_image(jid: str, request: Request, kind: str = "scene", index: 
     if len(raw) > 40 * 1024 * 1024:
         raise UserError("Картинка больше 40 МБ.")
     pipeline.own_image(jid, kind if kind in ("short", "thumbnail") else "scene", int(index), raw)
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{jid}/own-clip")
+async def job_own_clip(jid: str, request: Request, kind: str = "scene", index: int = 0, ext: str = "mp4"):
+    """The owner's own animated clip for a scene, made elsewhere from the scene picture."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
+    raw = await request.body()
+    if len(raw) > 300 * 1024 * 1024:
+        raise UserError("Клип больше 300 МБ.")
+    pipeline.own_clip(jid, "short" if kind == "short" else "scene", int(index), raw, "." + ext.lower()[:5])
     return {"ok": True}
 
 

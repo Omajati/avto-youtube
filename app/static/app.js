@@ -1215,9 +1215,9 @@ function renderHead(d) {
   const ideaWait = j.status === "review" && j.options.idea_pause && !j.options.idea_picked;
   const animWait = d.anim && d.anim.waiting;
   const imgWait = d.images_waiting;
-  const ownPending = !imgWait && (d.own_images || []).length && ["done", "error", "paused"].includes(j.status) && !d.stages.video;
+  const ownPending = !imgWait && ((d.own_images || []).length || (d.own_clips || []).length) && ["done", "error", "paused"].includes(j.status) && !d.stages.video;
   if (imgWait) act.push(`<button class="primary" data-own-go="1">▶ Продолжить: дорисовать недостающие и смонтировать</button>`);
-  if (ownPending) act.push(`<button class="primary" data-own-go="1">🎬 Собрать видео с моими картинками</button>`);
+  if (ownPending) act.push(`<button class="primary" data-own-go="1">🎬 Собрать видео с моими ${(d.own_clips || []).length && !(d.own_images || []).length ? "клипами" : "картинками"}</button>`);
   if (j.status === "review" && !ideaWait && !animWait && !imgWait) act.push(`<button class="primary" data-act="approve">✓ Сценарий хороший, продолжить</button>`);
   if (j.options.project_id && d.stages.review && j.status !== "running") act.push(`<button data-gold="video" title="Сценарист будет изучать этот текст перед новыми роликами проекта">⭐ ${d.format === "short" ? "Шортс" : "Сценарий"} в копилку удачных</button>`);
   if (j.options.project_id && d.format !== "short" && d.stages.short_script && j.status !== "running") act.push(`<button data-gold="short">⭐ Шортс в копилку</button>`);
@@ -1439,6 +1439,32 @@ function renderStages(d) {
       try { await ownUp("scene", idx, f); ok++; } catch (e) { toast(`${f.name}: ${e.message}`, true); }
     }
     toast(`Загружено картинок: ${ok} из ${files.length}`);
+    lastStagesKey = "";
+  };
+  const clipUp = async (kind, idx, file) => {
+    const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
+    const r = await fetch(`/api/jobs/${j.id}/own-clip?kind=${kind}&index=${idx}&ext=${encodeURIComponent(ext)}`, { method: "POST", body: file });
+    if (!r.ok) { let m = "Не удалось загрузить клип"; try { m = (await r.json()).detail || m; } catch (e) {} throw new Error(m); }
+  };
+  el.querySelectorAll("[data-clip]").forEach(inp => inp.onchange = async () => {
+    const [kind, idx] = inp.dataset.clip.split(":");
+    if (!inp.files[0]) return;
+    toast("Загружаю клип…");
+    try { await clipUp(kind, +idx, inp.files[0]); toast(`Ваш клип поставлен в сцену ${+idx + 1}. Нажмите «Собрать видео», когда загрузите всё`); } catch (e) { toast(e.message, true); }
+    lastStagesKey = "";
+  });
+  const clipBulk = el.querySelector("#clip-bulk");
+  if (clipBulk) clipBulk.onchange = async () => {
+    const files = [...clipBulk.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    let ok = 0, next = 0;
+    toast(`Загружаю клипы: ${files.length}…`);
+    for (const f of files) {
+      const m = f.name.match(/\d+/);
+      const idx = m ? +m[0] - 1 : next;
+      next = idx + 1;
+      try { await clipUp("scene", idx, f); ok++; } catch (e) { toast(`${f.name}: ${e.message}`, true); }
+    }
+    toast(`Загружено клипов: ${ok} из ${files.length}`);
     lastStagesKey = "";
   };
   el.querySelectorAll("[data-regen]").forEach(b => b.onclick = async () => {
@@ -1875,7 +1901,9 @@ const RENDER = {
     const a = d.anim;
     const busy = d.job.status === "running";
     const dis = busy ? "disabled" : "";
-    const names = r ? [...r.scene.map(i => `scene_${String(i).padStart(3, "0")}.mp4`), ...r.short.map(i => `short_${String(i).padStart(3, "0")}.mp4`)].filter(n => a.files.includes(n)) : [];
+    const ownClips = new Set(d.own_clips || []);
+    const ownNames = [...ownClips].map(k => { const [kind, i] = k.split(":"); return `${kind}_${String(+i).padStart(3, "0")}.mp4`; });
+    const names = [...new Set([...(r ? [...r.scene.map(i => `scene_${String(i).padStart(3, "0")}.mp4`), ...r.short.map(i => `short_${String(i).padStart(3, "0")}.mp4`)] : []), ...ownNames])].filter(n => a.files.includes(n));
     const scenes = d.images.filter(n => /^scene_\d+\.png$/.test(n));
     const chosen = new Set(r ? r.scene : a.waiting ? a.suggest : (a.mode === "custom" ? a.scenes : []));
     const clip = (META.video_models.find(m => m.id === META.video_model) || META.video_models[0] || {}).clip;
@@ -1892,6 +1920,14 @@ const RENDER = {
         <div class="row" style="margin-bottom:6px"><button class="sm ghost" type="button" id="an-none" ${dis}>Снять все</button><span class="muted small" id="an-picked"></span></div>
         <div class="imgs an-grid">${scenes.map(n => { const i = +n.slice(6, 9); return `<label class="an-cell"><img loading="lazy" src="/files/${d.job.id}/images/${n}?v=${d.job.updated}"><span><input type="checkbox" class="an-pick" value="${i}" ${chosen.has(i) ? "checked" : ""} ${dis}> Сцена ${i + 1}${a.files.includes(`scene_${String(i).padStart(3, "0")}.mp4`) ? " ✨" : ""}</span></label>`; }).join("")}</div>
         <p class="muted small">✨ — уже оживлена, бесплатно.</p></details>`;
+    }
+    if (scenes.length) {
+      h += `<details class="an-own-box" ${ownClips.size ? "open" : ""}><summary>📤 Свои анимированные кадры${ownClips.size ? ` (загружено: ${ownClips.size})` : ""}</summary>
+        <p class="muted small">Скачайте картинку сцены (кнопка «⬇ Картинка»), оживите её где угодно (Google Flow, Kling, Runway…) и загрузите готовый клип кнопкой «📤 Клип». Он встанет в эту сцену вместо картинки, программа ничего за него не платит. Клип подгоняется под длину сцены: короткий чуть замедлится и задержится на последнем кадре. Звук из клипа не берётся.</p>
+        <div class="row" style="margin-bottom:6px"><label class="btn sm" style="cursor:pointer">📤 Загрузить клипы пачкой<input type="file" accept="video/*" multiple id="clip-bulk" style="display:none" ${dis}></label>
+          <span class="muted small">Номер сцены берётся из имени файла (1.mp4, scene_12.mov); без номера по порядку.</span></div>
+        <div class="imgs an-grid">${scenes.map(n => { const i = +n.slice(6, 9); const has = ownClips.has(`scene:${i}`); return `<div class="an-cell"><img loading="lazy" src="/files/${d.job.id}/images/${n}?v=${d.job.updated}"><span>Сцена ${i + 1}${has ? " 🎞 ваш клип" : ""}</span>
+          <span class="row" style="gap:4px"><a class="btn sm" href="/files/${d.job.id}/images/${n}" download="scene_${i + 1}.png">⬇ Картинка</a><label class="btn sm" style="cursor:pointer">📤 Клип<input type="file" accept="video/*" data-clip="scene:${i}" style="display:none" ${dis}></label></span></div>`; }).join("")}</div></details>`;
     }
     if (r && r.mode !== "off" || names.length) {
       h += `<p>Оживлено сцен: <b>${names.length}</b>${r && r.failed.length ? `, не получилось: ${r.failed.length} (там будет обычная картинка)` : ""}.</p>
