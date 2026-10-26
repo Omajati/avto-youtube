@@ -1,6 +1,6 @@
 {
- "version": 126,
- "label": "длительность и цена текста",
- "notes": "длительность по реальному темпу голоса, минуты в названии, дешёвый контролёр картинок",
+ "version": 127,
+ "label": "понятная ошибка блокировки ElevenLabs",
+ "notes": "понятная ошибка, когда ElevenLabs блокирует страну; битые файлы озвучки переозвучиваются",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

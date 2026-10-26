@@ -182,6 +182,15 @@ def _unit(v, default: float) -> float:
         return default
 
 
+BLOCKED = ("ElevenLabs не пустил: он блокирует доступ из России и с некоторых серверов VPN. "
+           "Включите VPN или смените его сервер на другую страну и запустите шаг ещё раз.")
+
+
+def is_audio(head: bytes) -> bool:
+    """An mp3 starts with an ID3 tag or an MPEG frame; a blocked request brings back an HTML page instead."""
+    return head[:3] == b"ID3" or (len(head) > 1 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0)
+
+
 def synthesize(settings, text: str, out_path: Path, previous_text: str = "", next_text: str = "",
                language: str = "") -> int:
     """Writes an mp3 file. Returns the number of characters billed."""
@@ -216,11 +225,13 @@ def synthesize(settings, text: str, out_path: Path, previous_text: str = "", nex
         # The timestamps endpoint also returns when each character is spoken: used for subtitles.
         r = net.request("ElevenLabs", "POST", f"{BASE}/text-to-speech/{voice}/with-timestamps",
                         params=params, headers=headers, json=body, timeout=300)
+        if b"Access restricted" in r.content[:4000]:
+            raise UserError(BLOCKED)
         d = r.json()
         audio = base64.b64decode(d.get("audio_base64") or "")
         alignment = d.get("alignment") or d.get("normalized_alignment")
     except (UserError, ValueError) as e:
-        if "ключ" in str(e) or "денег" in str(e) or "лимит" in str(e) or "кредит" in str(e):
+        if any(w in str(e) for w in ("ключ", "денег", "лимит", "кредит", "VPN")):
             raise
     if not audio or len(audio) < 500:
         r = net.request("ElevenLabs", "POST", f"{BASE}/text-to-speech/{voice}", params=params,
@@ -230,6 +241,9 @@ def synthesize(settings, text: str, out_path: Path, previous_text: str = "", nex
         out_path.with_suffix(".json").unlink(missing_ok=True)
     if not audio or len(audio) < 500:
         raise UserError("ElevenLabs вернул пустой звук. Попробуйте ещё раз.")
+    if not is_audio(audio[:16]):
+        raise UserError(BLOCKED if b"Access restricted" in audio else
+                        "ElevenLabs вернул вместо звука веб-страницу. Проверьте VPN и запустите шаг ещё раз.")
     tmp = out_path.with_suffix(".part")
     tmp.write_bytes(audio)
     tmp.replace(out_path)

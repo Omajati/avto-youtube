@@ -2080,7 +2080,7 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
             return i
         if c.demo:
             media.demo_audio(mp3, max(1.5, word_count(sc["text"]) / 2.5), i)
-        elif mp3.exists():
+        elif mp3.exists() and tts.is_audio(mp3.read_bytes()[:16]):
             pass  # only the speech tempo changed: the voice already said this, no new ElevenLabs characters
         else:
             who = sc.get("speaker", "")
