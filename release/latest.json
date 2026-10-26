@@ -1,6 +1,6 @@
 {
- "version": 128,
- "label": "свои анимированные клипы",
- "notes": "свои анимированные клипы для сцен",
+ "version": 129,
+ "label": "картинки только свои",
+ "notes": "картинки делаются вручную и загружаются пачкой, программа их не рисует",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

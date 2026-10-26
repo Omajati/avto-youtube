@@ -1216,7 +1216,7 @@ function renderHead(d) {
   const animWait = d.anim && d.anim.waiting;
   const imgWait = d.images_waiting;
   const ownPending = !imgWait && ((d.own_images || []).length || (d.own_clips || []).length) && ["done", "error", "paused"].includes(j.status) && !d.stages.video;
-  if (imgWait) act.push(`<button class="primary" data-own-go="1">▶ Продолжить: дорисовать недостающие и смонтировать</button>`);
+  if (imgWait) act.push(`<button class="primary" data-own-go="1">${d.images_manual ? "🎬 Собрать видео с моими картинками" : "▶ Продолжить: дорисовать недостающие и смонтировать"}</button>`);
   if (ownPending) act.push(`<button class="primary" data-own-go="1">🎬 Собрать видео с моими ${(d.own_clips || []).length && !(d.own_images || []).length ? "клипами" : "картинками"}</button>`);
   if (j.status === "review" && !ideaWait && !animWait && !imgWait) act.push(`<button class="primary" data-act="approve">✓ Сценарий хороший, продолжить</button>`);
   if (j.options.project_id && d.stages.review && j.status !== "running") act.push(`<button data-gold="video" title="Сценарист будет изучать этот текст перед новыми роликами проекта">⭐ ${d.format === "short" ? "Шортс" : "Сценарий"} в копилку удачных</button>`);
@@ -1236,7 +1236,8 @@ function renderHead(d) {
     </div>
     ${j.status !== "done" ? `<div class="bar"><div style="width:${j.progress}%"></div></div>` : ""}
     ${j.status === "error" ? `<div class="banner bad">${nl(j.error)}</div>` : ""}
-    ${d.images_waiting ? `<div class="banner info">⏸ Сценарий и озвучка готовы. Откройте шаг «Сцены и описания картинок»: кнопка «📋 Описания картинок для другого сервиса» даст готовые описания для каждой сцены. Загрузите свои картинки по одной кнопкой «📤 Своя» или все сразу, потом нажмите «Продолжить». Сцены без вашей картинки программа нарисует сама. Загружено ваших: ${(d.own_images || []).length}.</div>` : ""}
+    ${d.images_waiting && d.images_manual ? `<div class="banner info">⏸ Сценарий, сцены и озвучка готовы. Картинки программа не рисует. Откройте шаг «Сцены и описания картинок»: кнопка «📋 Описания картинок для другого сервиса» даст описание для каждой сцены. Сделайте картинки и загрузите их пачкой (номер сцены в имени файла: 1.png, 2.png…), потом нажмите «Собрать видео с моими картинками». Загружено: ${(d.own_images || []).length}.</div>` : ""}
+    ${d.images_waiting && !d.images_manual ? `<div class="banner info">⏸ Сценарий и озвучка готовы. Откройте шаг «Сцены и описания картинок»: кнопка «📋 Описания картинок для другого сервиса» даст готовые описания для каждой сцены. Загрузите свои картинки по одной кнопкой «📤 Своя» или все сразу, потом нажмите «Продолжить». Сцены без вашей картинки программа нарисует сама. Загружено ваших: ${(d.own_images || []).length}.</div>` : ""}
     ${j.options.translate_from ? `<div class="banner info">🌐 Версия ролика ${LANG_IN[j.options.language] || ""} (из ролика <a href="#/job/${esc(j.options.translate_from)}">${esc(j.options.translate_from)}</a>): те же картинки и анимация${(j.options.flipped || []).length ? ", кадры отражены и камера движется по-другому" : ""}, новый текст, голос, субтитры, описание и обложка.</div>` : ""}
     ${ideaWait ? `<div class="banner info">${(j.topic || "").trim() && !j.options.episode ? "Ваша тема оформлена: название, хук и суть. Откройте шаг «Выбор темы», проверьте и нажмите «Взять эту тему». Если не то, нажмите «Переделать с этого шага»." : "Темы готовы, программа ждёт вашего выбора. Откройте шаг «Выбор темы», отметьте понравившуюся тему и нажмите «Взять эту тему»."} Сценарий ещё не писался, деньги почти не потрачены.</div>` : ""}
     ${animWait ? `<div class="banner info">🎬 Картинки и озвучка готовы, программа ждёт вашего выбора анимации. Откройте шаг «Анимация сцен» ниже: программа уже отметила сцены, которые оживила бы сама. Добавьте или снимите любые галочки и нажмите «Оживить выбранные и продолжить». Перед оплатой покажется цена.</div>` : ""}
@@ -1245,7 +1246,7 @@ function renderHead(d) {
   </div>`;
   $("#jhead").querySelectorAll("[data-own-go]").forEach(b => b.onclick = async () => {
     b.disabled = true;
-    await api(`/api/jobs/${j.id}/own-images-done`, { method: "POST" }).then(() => toast("Продолжаю: дорисую недостающие картинки и смонтирую видео")).catch(e => { toast(e.message, true); b.disabled = false; });
+    await api(`/api/jobs/${j.id}/own-images-done`, { method: "POST" }).then(() => toast(d.images_manual ? "Собираю видео с вашими картинками" : "Продолжаю: дорисую недостающие картинки и смонтирую видео")).catch(e => { toast(e.message, true); b.disabled = false; });
     lastStagesKey = "";
   });
   $("#jhead").querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
@@ -1428,19 +1429,18 @@ function renderStages(d) {
     wrap.querySelectorAll("[data-cp]").forEach(b => b.onclick = () => copy(b.dataset.cp, b));
     wrap.querySelector("[data-cpall]").onclick = e => { copy(all); e.target.textContent = "✓ Скопировано все"; };
   };
-  const bulk = el.querySelector("#own-bulk");
-  if (bulk) bulk.onchange = async () => {
+  el.querySelectorAll("#own-bulk, #own-bulk-short").forEach(bulk => bulk.onchange = async () => {
     const files = [...bulk.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     let ok = 0, next = 0;
     for (const f of files) {
       const m = f.name.match(/\d+/);
       const idx = m ? +m[0] - 1 : next;
       next = idx + 1;
-      try { await ownUp("scene", idx, f); ok++; } catch (e) { toast(`${f.name}: ${e.message}`, true); }
+      try { await ownUp(bulk.dataset.kind, idx, f); ok++; } catch (e) { toast(`${f.name}: ${e.message}`, true); }
     }
     toast(`Загружено картинок: ${ok} из ${files.length}`);
     lastStagesKey = "";
-  };
+  });
   const clipUp = async (kind, idx, file) => {
     const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
     const r = await fetch(`/api/jobs/${j.id}/own-clip?kind=${kind}&index=${idx}&ext=${encodeURIComponent(ext)}`, { method: "POST", body: file });
@@ -1807,14 +1807,14 @@ const RENDER = {
     const durs = d.stages.voice?.durations;
     const own = new Set(d.own_images || []);
     const busy = d.job.status === "running";
-    return `<p class="muted">${r.scenes.length} сцен, по одной картинке на каждую. «Перерисовать» нарисует картинку заново, «📤 Своя» поставит вашу картинку (она обрежется под кадр).</p>
+    return `<p class="muted">${r.scenes.length} сцен, по одной картинке на каждую. ${d.images_manual ? "Картинки вы делаете сами в другом сервисе: «📋 Описания картинок» даст описание для каждой сцены, загрузите готовые картинки пачкой или по одной кнопкой «📤 Своя» (картинка обрежется под кадр)." : "«Перерисовать» нарисует картинку заново, «📤 Своя» поставит вашу картинку (она обрежется под кадр)."}</p>
     <div class="row" style="margin-bottom:8px"><button class="sm" id="own-prompts">📋 Описания картинок для другого сервиса</button>
       <label class="btn sm" style="cursor:pointer">📤 Загрузить свои картинки пачкой<input type="file" accept="image/*" multiple id="own-bulk" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label>
       <span class="muted small">Номер сцены берётся из имени файла (1.png, scene_12.jpg, 03.webp); без номера по порядку.</span></div>
     <table><tr><th>#</th><th>Картинка</th><th>Текст сцены и что на картинке</th><th></th></tr>
     ${r.scenes.map((s, i) => `<tr><td>${i + 1}${durs ? `<div class="muted small">${durs[i].toFixed(1)}с</div>` : ""}</td><td>${img(d, `scene_${String(i).padStart(3, "0")}.png`, d.format === "short" ? "vsc" : "sc")}</td>
       <td><div>${esc(s.prompt_ru)}</div>${s.location || s.shot ? `<div class="muted small">${s.location ? `📍 ${esc(s.location)}` : ""}${s.shot ? ` 🎥 ${esc(({ wide: "общий план", medium: "средний план", pov: "от первого лица", closeup: "крупный план", ots: "из-за плеча", detail: "деталь крупно", low: "снизу", high: "сверху", profile: "в профиль" })[s.shot] || s.shot)}` : ""}</div>` : ""}<div class="en">${esc(s.text)}</div>${fxTag(s)}</td>
-      <td><button class="sm" data-regen="scene:${i}">Перерисовать</button><label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="scene:${i}" style="display:none" ${busy ? "disabled" : ""}></label>${own.has(`scene:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
+      <td>${d.images_manual ? "" : `<button class="sm" data-regen="scene:${i}">Перерисовать</button>`}<label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="scene:${i}" style="display:none" ${busy ? "disabled" : ""}></label>${own.has(`scene:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
   },
   extras(r, d) {
     if (!r) return "";
@@ -1877,7 +1877,7 @@ const RENDER = {
       <div>Почему этот момент</div><div>${esc(r.why_ru)}</div></div>
       <h3>Текст на русском</h3><pre class="text">${esc(r.script_ru)}</pre>
       <details><summary>Текст ${LANG_IN[d.job.options.language || "en"] || ""}</summary><pre class="text">${esc(r.script)}</pre></details>
-      <h3>Сцены шортса</h3><table>${r.scenes.map((s, i) => `<tr><td>${i + 1}</td><td>${img(d, `short_${String(i).padStart(3, "0")}.png`, "vsc")}</td><td>${esc(s.prompt_ru)}<div class="en">${esc(s.text)}</div></td><td><button class="sm" data-regen="short:${i}">Перерисовать</button><label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="short:${i}" style="display:none"></label>${(d.own_images || []).includes(`short:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
+      <h3>Сцены шортса</h3><div class="row" style="margin-bottom:8px"><label class="btn sm" style="cursor:pointer">📤 Загрузить картинки шортса пачкой<input type="file" accept="image/*" multiple id="own-bulk-short" data-kind="short" style="display:none" ${d.job.status === "running" ? "disabled" : ""}></label><span class="muted small">Номер сцены шортса берётся из имени файла.</span></div><table>${r.scenes.map((s, i) => `<tr><td>${i + 1}</td><td>${img(d, `short_${String(i).padStart(3, "0")}.png`, "vsc")}</td><td>${esc(s.prompt_ru)}<div class="en">${esc(s.text)}</div></td><td>${d.images_manual ? "" : `<button class="sm" data-regen="short:${i}">Перерисовать</button>`}<label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="short:${i}" style="display:none"></label>${(d.own_images || []).includes(`short:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
   },
   approval(r, d) {
     if (r) return `<p class="muted">Сценарий одобрен${d.job.options.review_pause ? " вами" : " автоматически (пауза для проверки не была включена)"}.</p>`;
@@ -2173,6 +2173,7 @@ async function viewSettings(id) {
     ${field("openai_image_quality", "Качество для OpenAI", s, { type: "select", options: [["low", "Низкое (дёшево)"], ["medium", "Среднее"], ["high", "Высокое (дорого)"]] })}
     ${field("image_style", "Стиль всех картинок", s, { type: "textarea", hint: "Добавляется к каждой картинке, чтобы весь ролик был в одном стиле. По-английски. Можно взять готовый стиль кнопкой ниже." })}
     <div class="row" style="margin-top:6px">${Object.entries(STYLE_PRESETS).map(([k, v]) => `<button class="sm" data-style="${k}" title="${esc(v.desc)}">${esc(v.name)}</button>`).join("")}</div>
+    ${field("images_manual", "Кто делает картинки", s, { type: "select", options: [["true", "Я сам в другом сервисе: программа останавливается после озвучки и ждёт мои картинки, сама ничего не рисует"], ["false", "Программа рисует сама через сервис выше"]] })}
     ${field("auto_check", "Автоконтроль логики и картинок", s, { type: "select", options: [["true", "Включён: ИИ проверяет описания всех сцен и каждую готовую картинку, явные ошибки перерисовывает сам (~$0.05–0.15 на шортс, ~$0.3–0.7 на длинный)"], ["false", "Выключен: дешевле, ошибки придётся ловить самому"]] })}
     ${field("ref_model", "Модель для картинок по образцу (персонажи, предметы, одинаковые места)", s, { type: "select", options: [["nano", "Nano Banana: лучше всего держит лица и места, ~$0.04 за картинку"], ["flux2", "Экономно: FLUX.2 Dev Edit, когда образцов 1–2 (место ~$0.025, место и персонаж ~$0.036), иначе Nano Banana; крупные планы и детали без персонажей без образца"]] })}
     ${field("char_reference", "Персонажи на картинках по портрету", s, { type: "select", options: [["true", "Да, как на портрете (fal.ai, ~$0.04 за картинку с персонажем)"], ["false", "Нет, только по текстовому описанию (дешевле, но похожесть хуже)"]] })}

@@ -2341,10 +2341,17 @@ def make_package(jid: str, text: str = None, side: str = None, font: str = None,
         export(jid)
 
 
+def images_manual(job: dict = None, settings: dict = None) -> bool:
+    """The owner draws every picture himself in another service and uploads them: the program draws nothing."""
+    opts = (job or {}).get("options") or {}
+    return bool((settings or load_settings()).get("images_manual", True)) and not opts.get("demo")
+
+
 def needs_images_choice(job: dict) -> bool:
     """The owner asked to stop before pictures to upload his own, and has not pressed «Continue» yet."""
     opts = job.get("options", {})
-    return (job.get("status") == "review" and bool(opts.get("images_pause")) and not opts.get("images_picked")
+    return (job.get("status") == "review" and bool(opts.get("images_pause") or images_manual(job))
+            and not opts.get("images_picked")
             and bool(job.get("id")) and (job_dir(job["id"]) / "voice.json").exists())
 
 
@@ -2485,12 +2492,15 @@ def _take_frames(c: Ctx, scenes: list, master: Path):
 
 def st_images(c: Ctx):
     job = db.get(c.id) or {"options": c.opts}
-    if job["options"].get("images_pause") and not job["options"].get("images_picked"):
-        raise StopForReview("⏸ Сценарий, сцены и озвучка готовы. Загрузите свои картинки в шаге «Сцены и описания "
-                            "картинок» и нажмите «Продолжить»: недостающие программа дорисует сама.")
     img = c.dir / "images"
     img.mkdir(exist_ok=True)
     scenes = c.data("scenes")["scenes"]
+    manual = images_manual(job, c.settings) and not c.demo
+    if manual:
+        return _images_manual(c, job, scenes)
+    if job["options"].get("images_pause") and not job["options"].get("images_picked"):
+        raise StopForReview("⏸ Сценарий, сцены и озвучка готовы. Загрузите свои картинки в шаге «Сцены и описания "
+                            "картинок» и нажмите «Продолжить»: недостающие программа дорисует сама.")
     jobs = [(sc["prompt"], img / f"scene_{i:03d}.png", c.vertical, i) for i, sc in enumerate(scenes)]
     refs = {img / f"scene_{i:03d}.png": _refs_for(c, sc) for i, sc in enumerate(scenes)}
     short = c.data("short_script") if c.stage_enabled("short_script") else None
@@ -2585,6 +2595,51 @@ def st_images(c: Ctx):
     make_package(c.id)
     c.save_usage()
     write_json(c.out("images"), {"count": len(jobs), "replaced": len(failed)})
+
+
+def _images_manual(c: Ctx, job: dict, scenes: list):
+    """Pictures made by the owner elsewhere: the program waits for them and draws nothing (no money spent)."""
+    img = c.dir / "images"
+    short = c.data("short_script") if c.stage_enabled("short_script") else None
+    need = [img / "scene_000.png"] if c.one_take else [img / f"scene_{i:03d}.png" for i in range(len(scenes))]
+    if short:
+        need += [img / f"short_{i:03d}.png" for i in range(len(short["scenes"]))]
+    missing = [p for p in need if not p.exists()]
+    if missing and not job["options"].get("images_picked"):
+        raise StopForReview("⏸ Сценарий, сцены и озвучка готовы, картинки программа не рисует. Откройте шаг «Сцены и "
+                            "описания картинок»: «📋 Описания картинок для другого сервиса» даст описания по сценам. "
+                            "Загрузите готовые картинки пачкой (номер сцены в имени файла) и нажмите «Собрать видео».")
+    if missing:
+        def nums(prefix):
+            return ", ".join(str(int(p.stem[-3:]) + 1) for p in missing if p.name.startswith(prefix))
+        parts = [f"сцены {nums('scene')}" if nums("scene") else "", f"шортс, сцены {nums('short')}" if nums("short") else ""]
+        raise UserError(f"Не хватает ваших картинок ({len(missing)} шт.): {'; '.join(x for x in parts if x)}. "
+                        "Загрузите их в шаге «Сцены и описания картинок» и нажмите «Собрать видео».")
+    if c.one_take and scenes:
+        _take_frames(c, scenes, img / "scene_000.png")
+    thumb_src = img / "thumbnail_src.png"
+    extras = c.data("extras") or {}
+    if extras.get("thumbnail_prompt") and not thumb_src.exists() and extras.get("thumbnail_draw"):
+        # The owner pressed «draw my thumbnail»: the one picture the program still draws, on request only.
+        example = img / Path(extras.get("thumbnail_ref") or "_").name
+        has_example = bool(extras.get("thumbnail_ref")) and example.is_file()
+        try:
+            c.log("Рисую превью по вашему описанию…")
+            _make_image(c, extras["thumbnail_prompt"], thumb_src, c.vertical, 999,
+                        refs=_thumb_refs(c, extras["thumbnail_prompt"]), items=_thumb_items(c, extras["thumbnail_prompt"]),
+                        place=example if has_example else None, example=has_example)
+        except UserError as e:
+            if "ключ" in str(e) or "денег" in str(e) or "лимит" in str(e):
+                raise
+            c.log(f"Превью нарисовать не получилось: {e}")
+    if extras.get("thumbnail_prompt") and not thumb_src.exists():
+        shutil.copy(img / "scene_000.png", thumb_src)
+        c.log("Под превью поставил картинку первой сцены. Свою картинку для превью можно загрузить в шаге "
+              "«Перевод и описание для YouTube».")
+    c.log(f"Ваши картинки на месте ({len(need)} шт.), программа ничего не рисовала.")
+    make_package(c.id)
+    c.save_usage()
+    write_json(c.out("images"), {"count": len(need), "replaced": 0, "manual": True})
 
 
 # -------- video
@@ -3417,8 +3472,11 @@ def reset_from(jid: str, stage: str, keep_pictures: bool = False):
     d = job_dir(jid)
     idx = STAGE_IDS.index(stage)
     if stage in RESET_PLAN:
+        # Pictures made by hand are not redrawn: a redo of the pictures step keeps them and their animations.
+        keep = {"images", "anim"} if stage == "images" and images_manual(db.get(jid)) else set()
         for pattern in RESET_PLAN[stage]:
-            _remove(d, pattern)
+            if pattern not in keep:
+                _remove(d, pattern)
     else:
         # New text means new voice, images and clips. The pictures are kept aside first: a scene whose text did not
         # change gets its old picture (and animation) back instead of a paid new one.

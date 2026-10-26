@@ -100,6 +100,7 @@ DEFAULTS = {
     "ig_login": "",  # "instagram" when connected through «API setup with Instagram login» (no Facebook page)
     "ig_auto": False, "ig_ai_label": True,
     "char_reference": True,
+    "images_manual": True,  # pictures are drawn by the owner elsewhere and uploaded; the program draws none
     "auto_check": True,  # the logic checker (scene descriptions) and the picture checker (each finished picture)
     "ref_model": "nano",
     "sfx_volume": 0.5,

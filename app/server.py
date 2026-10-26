@@ -342,6 +342,7 @@ def job_detail(jid: str):
         "own_images": pipeline.read_json(d / "own_images.json", []) or [],
         "own_clips": pipeline.read_json(d / "own_clips.json", []) or [],
         "images_waiting": pipeline.needs_images_choice(j),
+        "images_manual": pipeline.images_manual(j),
         "improve": pipeline.read_json(d / "improve.json"),
         "chapters": pipeline.chapters_text(jid),
         "files": {
@@ -491,6 +492,7 @@ def job_thumb_prompt(jid: str, data: dict = Body(...)):
         prompt = (r.get("prompt") or "").strip() or prompt
     ex["thumbnail_prompt"] = prompt
     ex["thumbnail_ref"] = ref
+    ex["thumbnail_draw"] = True  # asked by the owner: drawn even when the scene pictures are made by hand
     if idea:
         ex["thumbnail_idea_ru"] = idea
     pipeline.write_json(d / "extras.json", ex)
