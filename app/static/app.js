@@ -1429,8 +1429,8 @@ function renderStages(d) {
     wrap.querySelectorAll("[data-cp]").forEach(b => b.onclick = () => copy(b.dataset.cp, b));
     wrap.querySelector("[data-cpall]").onclick = e => { copy(all); e.target.textContent = "✓ Скопировано все"; };
   };
-  el.querySelectorAll("#own-bulk, #own-bulk-short").forEach(bulk => bulk.onchange = async () => {
-    const files = [...bulk.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  el.querySelectorAll("#own-bulk, #own-bulk-short, #own-bulk-dir, #own-bulk-short-dir").forEach(bulk => bulk.onchange = async () => {
+    const files = [...bulk.files].filter(f => /^image\//.test(f.type) || /\.(png|jpe?g|webp|heic|avif)$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     let ok = 0, next = 0;
     for (const f of files) {
       const m = f.name.match(/\d+/);
@@ -1464,9 +1464,8 @@ function renderStages(d) {
     toast("Видео загружено: режу его по склейкам и свожу с озвучкой");
     lastStagesKey = "";
   };
-  const clipBulk = el.querySelector("#clip-bulk");
-  if (clipBulk) clipBulk.onchange = async () => {
-    const files = [...clipBulk.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  el.querySelectorAll("#clip-bulk, #clip-bulk-dir").forEach(clipBulk => clipBulk.onchange = async () => {
+    const files = [...clipBulk.files].filter(f => /^video\//.test(f.type) || /\.(mp4|mov|webm|m4v)$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     let ok = 0, next = 0;
     toast(`Загружаю клипы: ${files.length}…`);
     for (const f of files) {
@@ -1477,7 +1476,7 @@ function renderStages(d) {
     }
     toast(`Загружено клипов: ${ok} из ${files.length}`);
     lastStagesKey = "";
-  };
+  });
   el.querySelectorAll("[data-regen]").forEach(b => b.onclick = async () => {
     const [kind, idx] = b.dataset.regen.split(":");
     const current = kind === "thumbnail" ? d.stages.extras.thumbnail_prompt
@@ -1822,7 +1821,7 @@ const RENDER = {
     const own = new Set(d.own_images || []);
     return vidBox + `<p class="muted">${r.scenes.length} сцен, по одной картинке на каждую. ${d.images_manual ? "Картинки вы делаете сами в другом сервисе: «📋 Описания картинок» даст описание для каждой сцены, загрузите готовые картинки пачкой или по одной кнопкой «📤 Своя» (картинка обрежется под кадр)." : "«Перерисовать» нарисует картинку заново, «📤 Своя» поставит вашу картинку (она обрежется под кадр)."}</p>
     <div class="row" style="margin-bottom:8px"><button class="sm" id="own-prompts">📋 Описания картинок для другого сервиса</button>
-      <label class="btn sm" style="cursor:pointer">📤 Загрузить свои картинки пачкой<input type="file" accept="image/*" multiple id="own-bulk" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label>
+      <label class="btn sm" style="cursor:pointer">📤 Загрузить свои картинки пачкой<input type="file" accept="image/*" multiple id="own-bulk" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label><label class="btn sm" style="cursor:pointer">📁 Папкой<input type="file" accept="image/*" multiple webkitdirectory id="own-bulk-dir" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label>
       <span class="muted small">Номер сцены берётся из имени файла (1.png, scene_12.jpg, 03.webp); без номера по порядку.</span></div>
     <table><tr><th>#</th><th>Картинка</th><th>Текст сцены и что на картинке</th><th></th></tr>
     ${r.scenes.map((s, i) => `<tr><td>${i + 1}${durs ? `<div class="muted small">${durs[i].toFixed(1)}с</div>` : ""}</td><td>${img(d, `scene_${String(i).padStart(3, "0")}.png`, d.format === "short" ? "vsc" : "sc")}</td>
@@ -1890,7 +1889,7 @@ const RENDER = {
       <div>Почему этот момент</div><div>${esc(r.why_ru)}</div></div>
       <h3>Текст на русском</h3><pre class="text">${esc(r.script_ru)}</pre>
       <details><summary>Текст ${LANG_IN[d.job.options.language || "en"] || ""}</summary><pre class="text">${esc(r.script)}</pre></details>
-      <h3>Сцены шортса</h3><div class="row" style="margin-bottom:8px"><label class="btn sm" style="cursor:pointer">📤 Загрузить картинки шортса пачкой<input type="file" accept="image/*" multiple id="own-bulk-short" data-kind="short" style="display:none" ${d.job.status === "running" ? "disabled" : ""}></label><span class="muted small">Номер сцены шортса берётся из имени файла.</span></div><table>${r.scenes.map((s, i) => `<tr><td>${i + 1}</td><td>${img(d, `short_${String(i).padStart(3, "0")}.png`, "vsc")}</td><td>${esc(s.prompt_ru)}<div class="en">${esc(s.text)}</div></td><td>${d.images_manual ? "" : `<button class="sm" data-regen="short:${i}">Перерисовать</button>`}<label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="short:${i}" style="display:none"></label>${(d.own_images || []).includes(`short:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
+      <h3>Сцены шортса</h3><div class="row" style="margin-bottom:8px"><label class="btn sm" style="cursor:pointer">📤 Загрузить картинки шортса пачкой<input type="file" accept="image/*" multiple id="own-bulk-short" data-kind="short" style="display:none" ${d.job.status === "running" ? "disabled" : ""}></label><label class="btn sm" style="cursor:pointer">📁 Папкой<input type="file" accept="image/*" multiple webkitdirectory id="own-bulk-short-dir" data-kind="short" style="display:none" ${d.job.status === "running" ? "disabled" : ""}></label><span class="muted small">Номер сцены шортса берётся из имени файла.</span></div><table>${r.scenes.map((s, i) => `<tr><td>${i + 1}</td><td>${img(d, `short_${String(i).padStart(3, "0")}.png`, "vsc")}</td><td>${esc(s.prompt_ru)}<div class="en">${esc(s.text)}</div></td><td>${d.images_manual ? "" : `<button class="sm" data-regen="short:${i}">Перерисовать</button>`}<label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="short:${i}" style="display:none"></label>${(d.own_images || []).includes(`short:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
   },
   approval(r, d) {
     if (r) return `<p class="muted">Сценарий одобрен${d.job.options.review_pause ? " вами" : " автоматически (пауза для проверки не была включена)"}.</p>`;
@@ -1937,7 +1936,7 @@ const RENDER = {
     if (scenes.length) {
       h += `<details class="an-own-box" ${ownClips.size ? "open" : ""}><summary>📤 Свои анимированные кадры${ownClips.size ? ` (загружено: ${ownClips.size})` : ""}</summary>
         <p class="muted small">Скачайте картинку сцены (кнопка «⬇ Картинка»), оживите её где угодно (Google Flow, Kling, Runway…) и загрузите готовый клип кнопкой «📤 Клип». Он встанет в эту сцену вместо картинки, программа ничего за него не платит. Клип подгоняется под длину сцены: короткий чуть замедлится и задержится на последнем кадре. Звук из клипа не берётся.</p>
-        <div class="row" style="margin-bottom:6px"><label class="btn sm" style="cursor:pointer">📤 Загрузить клипы пачкой<input type="file" accept="video/*" multiple id="clip-bulk" style="display:none" ${dis}></label>
+        <div class="row" style="margin-bottom:6px"><label class="btn sm" style="cursor:pointer">📤 Загрузить клипы пачкой<input type="file" accept="video/*" multiple id="clip-bulk" style="display:none" ${dis}></label><label class="btn sm" style="cursor:pointer">📁 Папкой<input type="file" accept="video/*" multiple webkitdirectory id="clip-bulk-dir" style="display:none" ${dis}></label>
           <span class="muted small">Номер сцены берётся из имени файла (1.mp4, scene_12.mov); без номера по порядку.</span></div>
         <div class="imgs an-grid">${scenes.map(n => { const i = +n.slice(6, 9); const has = ownClips.has(`scene:${i}`); return `<div class="an-cell"><img loading="lazy" src="/files/${d.job.id}/images/${n}?v=${d.job.updated}"><span>Сцена ${i + 1}${has ? " 🎞 ваш клип" : ""}</span>
           <span class="row" style="gap:4px"><a class="btn sm" href="/files/${d.job.id}/images/${n}" download="scene_${i + 1}.png">⬇ Картинка</a><label class="btn sm" style="cursor:pointer">📤 Клип<input type="file" accept="video/*" data-clip="scene:${i}" style="display:none" ${dis}></label></span></div>`; }).join("")}</div></details>`;
