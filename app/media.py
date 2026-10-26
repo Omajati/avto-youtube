@@ -291,3 +291,15 @@ def demo_audio(out: Path, seconds: float, idx: int):
     freq = 220 + (idx % 5) * 55
     run(["-f", "lavfi", "-i", f"sine=frequency={freq}:duration={seconds:.2f}", "-af", "volume=0.25",
          "-ar", 44100, "-ac", 1, "-c:a", "libmp3lame", "-b:a", "128k", out], "Демо-звук")
+
+
+def scene_cuts(path: Path, threshold: float = 0.3, min_gap: float = 0.8) -> list:
+    """Times (seconds) of the hard cuts in a finished video: where one shot ends and the next begins."""
+    p = subprocess.run([ffmpeg(), "-hide_banner", "-i", str(path), "-an", "-vf",
+                        f"select='gt(scene,{threshold})',showinfo", "-f", "null", "-"], capture_output=True, text=True)
+    cuts = []
+    for m in re.finditer(r"pts_time:([\d.]+)", p.stderr):
+        t = float(m.group(1))
+        if t >= min_gap and (not cuts or t - cuts[-1] >= min_gap):
+            cuts.append(t)
+    return cuts

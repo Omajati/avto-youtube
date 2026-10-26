@@ -1453,6 +1453,17 @@ function renderStages(d) {
     try { await clipUp(kind, +idx, inp.files[0]); toast(`Ваш клип поставлен в сцену ${+idx + 1}. Нажмите «Собрать видео», когда загрузите всё`); } catch (e) { toast(e.message, true); }
     lastStagesKey = "";
   });
+  const ownVid = el.querySelector("#own-video");
+  if (ownVid) ownVid.onchange = async () => {
+    const f = ownVid.files[0];
+    if (!f) return;
+    toast("Загружаю видео…");
+    const ext = (f.name.split(".").pop() || "mp4").toLowerCase();
+    const r = await fetch(`/api/jobs/${j.id}/own-video?ext=${encodeURIComponent(ext)}`, { method: "POST", body: f });
+    if (!r.ok) { let m = "Не удалось загрузить видео"; try { const x = await r.json(); m = x.error || x.detail || m; } catch (e) {} return toast(m, true); }
+    toast("Видео загружено: режу его по склейкам и свожу с озвучкой");
+    lastStagesKey = "";
+  };
   const clipBulk = el.querySelector("#clip-bulk");
   if (clipBulk) clipBulk.onchange = async () => {
     const files = [...clipBulk.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -1803,11 +1814,13 @@ const RENDER = {
       </details>` : ""}`;
   },
   scenes(r, d) {
-    if (!r) return "";
+    const busy = d.job.status === "running";
+    r = r || {};
+    const vidBox = d.job.options.montage ? `<div class="row" style="margin-bottom:8px"><label class="btn sm" style="cursor:pointer">🎞 ${r.own_video ? "Заменить" : "Загрузить"} готовое видео целиком<input type="file" accept="video/*" id="own-video" style="display:none" ${busy ? "disabled title=\"Поставьте ролик на паузу\"" : ""}></label><span class="muted small">${r.own_video ? "Сцены сделаны из склеек вашего видео." : "Все сцены одним файлом: программа разрежет его по склейкам и подгонит под озвучку, картинки не понадобятся."}</span></div>` : "";
+    if (!r.scenes) return vidBox ? vidBox + (busy ? `<p class="muted small">Чтобы загрузить видео сейчас, поставьте ролик на паузу.</p>` : "") : "";
     const durs = d.stages.voice?.durations;
     const own = new Set(d.own_images || []);
-    const busy = d.job.status === "running";
-    return `<p class="muted">${r.scenes.length} сцен, по одной картинке на каждую. ${d.images_manual ? "Картинки вы делаете сами в другом сервисе: «📋 Описания картинок» даст описание для каждой сцены, загрузите готовые картинки пачкой или по одной кнопкой «📤 Своя» (картинка обрежется под кадр)." : "«Перерисовать» нарисует картинку заново, «📤 Своя» поставит вашу картинку (она обрежется под кадр)."}</p>
+    return vidBox + `<p class="muted">${r.scenes.length} сцен, по одной картинке на каждую. ${d.images_manual ? "Картинки вы делаете сами в другом сервисе: «📋 Описания картинок» даст описание для каждой сцены, загрузите готовые картинки пачкой или по одной кнопкой «📤 Своя» (картинка обрежется под кадр)." : "«Перерисовать» нарисует картинку заново, «📤 Своя» поставит вашу картинку (она обрежется под кадр)."}</p>
     <div class="row" style="margin-bottom:8px"><button class="sm" id="own-prompts">📋 Описания картинок для другого сервиса</button>
       <label class="btn sm" style="cursor:pointer">📤 Загрузить свои картинки пачкой<input type="file" accept="image/*" multiple id="own-bulk" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label>
       <span class="muted small">Номер сцены берётся из имени файла (1.png, scene_12.jpg, 03.webp); без номера по порядку.</span></div>
@@ -3170,7 +3183,9 @@ async function viewMontage() {
       <div class="muted small" id="mt-wc"></div>
     </div>
     <div class="card"><h2>Картинки</h2>
-      <label class="check"><input type="radio" name="mt-img" value="own" checked> Свои картинки и видео: после озвучки пауза, загружаете картинки (шаг «Сцены») и клипы (шаг «Анимация») пачкой, номер сцены в имени файла${s.images_manual !== false ? "" : ", недостающие дорисует ИИ"}</label>
+      <label class="check"><input type="radio" name="mt-img" value="video" checked> Одно готовое видео целиком <span class="hint">все сцены склеены; программа найдёт склейки, разрежет видео по ним, каждому кадру даст его слова из озвучки и подгонит по времени, картинки не нужны</span></label>
+      <div id="mt-own-video" style="margin:6px 0 10px"><input type="file" id="mt-videofile" accept="video/*"><div class="muted small">Можно загрузить и позже, на странице ролика в шаге «Сцены».</div></div>
+      <label class="check"><input type="radio" name="mt-img" value="own"> Свои картинки и видео: после озвучки пауза, загружаете картинки (шаг «Сцены») и клипы (шаг «Анимация») пачкой, номер сцены в имени файла${s.images_manual !== false ? "" : ", недостающие дорисует ИИ"}</label>
       <label class="check"><input type="radio" name="mt-img" value="ai"> Все картинки рисует ИИ по тексту (в стиле проекта)</label>
     </div>
     <div class="card"><h2>Голос</h2>
@@ -3208,6 +3223,7 @@ async function viewMontage() {
     <div class="row"><button class="primary" id="mt-go">🎬 Начать монтаж</button><span class="muted small">Текст не проверяется и не переписывается.</span></div>`;
     const vsrc = () => main.querySelector('input[name="mt-vsrc"]:checked').value;
     main.querySelectorAll('input[name="mt-vsrc"]').forEach(r => r.onchange = () => { $("#mt-own-voice").style.display = vsrc() === "own" ? "" : "none"; $("#mt-ai-voice").style.display = vsrc() === "own" ? "none" : ""; });
+    main.querySelectorAll('input[name="mt-img"]').forEach(r => r.onchange = () => { $("#mt-own-video").style.display = main.querySelector('input[name="mt-img"]:checked').value === "video" ? "" : "none"; });
     $("#mt-music").onchange = () => { $("#mt-own-music").style.display = $("#mt-music").value === "own" ? "" : "none"; };
     $("#mt-music").onchange();
     const ta = $("#mt-text"), wc = $("#mt-wc");
@@ -3216,12 +3232,13 @@ async function viewMontage() {
     $("#mt-proj").onchange = e => { cur = e.target.value; lsSet("ay_montage_proj", cur); const t = ta.value, ti = $("#mt-title").value; draw(); $("#mt-text").value = t; $("#mt-title").value = ti; $("#mt-text").oninput(); };
     $("#mt-go").onclick = async () => {
       const ownVoice = vsrc() === "own", vf = $("#mt-voicefile").files[0], mf = $("#mt-musicfile").files[0];
+      const imgMode = main.querySelector('input[name="mt-img"]:checked').value, vidf = $("#mt-videofile").files[0];
       if (ownVoice && !vf) return toast("Выберите файл своей озвучки", true);
       if (!ownVoice && (ta.value.match(/[\p{L}\p{N}]+/gu) || []).length < 3) return toast("Вставьте текст сценария", true);
       if ($("#mt-music").value === "own" && !mf) return toast("Выберите файл своей музыки", true);
       const v = $("#mt-voice"), vo = v.selectedOptions[0];
       const body = { montage_script: ta.value, topic: $("#mt-title").value, project_id: cur, format: $("#mt-fmt").value, language: $("#mt-lang").value,
-        images_pause: main.querySelector('input[name="mt-img"]:checked').value === "own", review_pause: false, idea_pause: false,
+        images_pause: imgMode !== "ai", review_pause: false, idea_pause: false,
         voice_id: v.value || undefined, voice_name: v.value ? (vo.dataset.name || vo.textContent) : undefined,
         voice_stability: $("#mt-voice_stability").value, voice_similarity: $("#mt-voice_similarity").value, voice_style: $("#mt-voice_style").value, voice_speed: $("#mt-voice_speed").value,
         music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, graphics: $("#mt-gfx").checked, subs_smart: $("#mt-smart").checked, speed_video: +$("#mt-speed").value,
@@ -3236,6 +3253,7 @@ async function viewMontage() {
         return d;
       };
       try {
+        if (imgMode === "video" && vidf) body.own_video_upload = (await send(`/api/uploads?name=${encodeURIComponent(vidf.name)}`, vidf, "видео")).id;
         if (ownVoice) { body.own_voice_upload = (await send(`/api/uploads?name=${encodeURIComponent(vf.name)}`, vf, "озвучку")).id; delete body.voice_id; }
         if (body.music_mode === "own") { await send(`/api/music/upload?name=${encodeURIComponent(mf.name)}`, mf, "музыку"); body.music_track = mf.name; body.music_mode = "library"; }
         const jobs = await api("/api/jobs", { json: body }); draftClear(); toast("Монтаж начат"); location.hash = `#/job/${jobs[0].id}`;

@@ -220,6 +220,7 @@ def create_job(data: dict = Body(...)):
         "music_mode": data.get("music_mode") if data.get("music_mode") in musiclib.MODES else proj.get("music_mode") or "library",
     }
     voice_up = _upload_path(data.get("own_voice_upload"))
+    video_up = _upload_path(data.get("own_video_upload"))
     if voice_up:
         data["montage_script"] = data.get("montage_script") or " "  # no text: it is transcribed from the recording
     if data.get("music_track") and (MUSIC_DIR / Path(str(data["music_track"])).name).is_file():
@@ -290,6 +291,9 @@ def create_job(data: dict = Body(...)):
             if voice_up:
                 pipeline.job_dir(j["id"]).mkdir(parents=True, exist_ok=True)
                 shutil.copy(voice_up, pipeline.job_dir(j["id"]) / f"own_voice{voice_up.suffix}")
+            if video_up:
+                pipeline.job_dir(j["id"]).mkdir(parents=True, exist_ok=True)
+                shutil.copy(video_up, pipeline.job_dir(j["id"]) / f"own_video{video_up.suffix}")
             try:
                 pipeline.prepare_montage(j["id"], topic, data["montage_script"])
             except UserError:
@@ -320,10 +324,10 @@ async def upload_file(request: Request, name: str):
     """The owner's recording for the montage page, kept until the video is created."""
     ext = Path(name).suffix.lower()
     if ext not in AUDIO_EXT:
-        raise UserError("Озвучка: подходят mp3, wav, m4a, aac, ogg, flac (или видео mp4/mov, из него возьмётся звук).")
+        raise UserError("Подходят звук mp3, wav, m4a, aac, ogg, flac или видео mp4, mov, webm.")
     raw = await request.body()
-    if len(raw) > 500 * 1024 * 1024:
-        raise UserError("Файл озвучки больше 500 МБ.")
+    if len(raw) > 2048 * 1024 * 1024:
+        raise UserError("Файл больше 2 ГБ.")
     UPLOADS.mkdir(parents=True, exist_ok=True)
     for old in UPLOADS.glob("*"):  # older uploads that never became a video
         if old.stat().st_mtime < time.time() - 2 * 86400:
@@ -583,6 +587,21 @@ async def job_own_clip(jid: str, request: Request, kind: str = "scene", index: i
     if len(raw) > 300 * 1024 * 1024:
         raise UserError("Клип больше 300 МБ.")
     pipeline.own_clip(jid, "short" if kind == "short" else "scene", int(index), raw, "." + ext.lower()[:5])
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{jid}/own-video")
+async def job_own_video(jid: str, request: Request, ext: str = "mp4"):
+    """The owner's finished video of all scenes glued together: its shots become the scenes, fitted to the voice."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока шаг доделается, или поставьте ролик на паузу.")
+    raw = await request.body()
+    if len(raw) > 2048 * 1024 * 1024:
+        raise UserError("Видео больше 2 ГБ.")
+    pipeline.own_video(jid, raw, "." + ext.lower()[:5])
+    db.update(jid, status="queued", error="", stage="scenes")
+    worker.wake()
     return {"ok": True}
 
 

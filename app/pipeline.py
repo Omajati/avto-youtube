@@ -1930,6 +1930,8 @@ def st_scenes(c: Ctx):
     if own_voice_file(c.dir) and (c.data("review") or {}).get("transcribe"):
         _transcribe_own_voice(c)
     script = c.data("review")["final_script"]
+    if own_video_file(c.dir):
+        return _scenes_from_video(c, script)
     if c.opts.get("montage"):
         _montage_world(c, script)
     chunks = split_chunks(c.strip_host_labels(script), c.scene_words("short_words_per_scene" if c.short_format else "words_per_scene"),
@@ -2113,10 +2115,93 @@ def own_voice_file(d: Path):
     return next(iter(sorted(d.glob("own_voice.*"))), None)
 
 
+def own_video_file(d: Path):
+    """The owner's finished video of all scenes glued together (the montage page), or None."""
+    return next(iter(sorted(d.glob("own_video.*"))), None)
+
+
+def split_by_time(text: str, fractions: list) -> list:
+    """Cuts the text into len(fractions) + 1 parts that end near the given fractions of it (the cuts of the owner's
+    video), preferring the end of a sentence, then a comma, so each shot gets the words said while it is on screen."""
+    words = text.split()
+    w = len(words)
+    n = min(len(fractions) + 1, w)
+    fractions = fractions[:n - 1]
+    span = max(3, round(w / n * 0.4))
+    ends, prev = [], 0
+    for k, f in enumerate(fractions):
+        ideal = min(max(round(f * w), prev + 1), w - (n - 1 - k))
+        best = None
+        for marks in (r"[.!?…][\"”’')\]»]*$", r"[,;:—–]$"):
+            ok = [j for j in range(max(prev + 1, ideal - span), min(w - (n - 1 - k), ideal + span) + 1)
+                  if re.search(marks, words[j - 1])]
+            if ok:
+                best = min(ok, key=lambda j: abs(j - ideal))
+                break
+        prev = best or ideal
+        ends.append(prev)
+    ends.append(w)
+    out, a = [], 0
+    for b in ends:
+        out.append(" ".join(words[a:b]))
+        a = b
+    return out
+
+
+def _scenes_from_video(c: Ctx, script: str):
+    """The owner's finished video: its shots become the scenes, each gets the words said while it is on screen.
+    No picture descriptions are written and nothing is drawn: the shots are cut out and fitted to the voice."""
+    vid = own_video_file(c.dir)
+    length = media.video_duration(vid)
+    cuts = media.scene_cuts(vid)
+    bounds = [0.0] + cuts + [length]
+    texts = split_by_time(c.strip_host_labels(script), [t / length for t in cuts])
+    bounds = bounds[:len(texts)] + [length]
+    c.log(f"В вашем видео {len(bounds) - 1} кадров (склеек: {len(bounds) - 2}): каждый кадр станет сценой со своими "
+          "словами, под озвучку он подгонится сам.")
+    adir, img = c.dir / "anim", c.dir / "images"
+    adir.mkdir(exist_ok=True)
+    img.mkdir(exist_ok=True)
+    scenes = []
+    for i, t in enumerate(texts):
+        c.check()
+        a, b = bounds[i], bounds[i + 1]
+        out = adir / f"scene_{i:03d}.mp4"
+        media.run(["-ss", f"{a:.3f}", "-i", vid, "-t", f"{b - a:.3f}", "-an", "-c:v", "libx264", "-preset", "veryfast",
+                   "-crf", 18, "-pix_fmt", "yuv420p", out.with_suffix(".tmp.mp4")], "Нарезка вашего видео")
+        out.with_suffix(".tmp.mp4").replace(out)
+        media.run(["-ss", f"{min(0.1, (b - a) / 2):.3f}", "-i", out, "-frames:v", 1, img / f"scene_{i:03d}.tmp.png"], "Кадр")
+        (img / f"scene_{i:03d}.tmp.png").replace(img / f"scene_{i:03d}.png")
+        scenes.append({"text": t, "prompt": "", "prompt_ru": f"Кадр {i + 1} вашего видео ({a:.1f}–{b:.1f} с)",
+                       "paragraph_end": False, "motion": media.MOTIONS[0], "characters": [], "items": []})
+        c.progress((i + 1) / len(texts))
+    write_json(c.dir / "own_clips.json", [f"scene:{i}" for i in range(len(scenes))])
+    write_json(c.out("scenes"), {"scenes": scenes, "own_video": True})
+
+
+def own_video(jid: str, raw: bytes, ext: str):
+    """The owner's finished video uploaded to an existing montage: the scenes are made again from its shots;
+    the text, the description and the owner's recording stay (re-cutting the recording is free)."""
+    d = job_dir(jid)
+    ext = ext if re.fullmatch(r"\.[a-z0-9]{2,5}", ext) else ".mp4"
+    for old in d.glob("own_video.*"):
+        old.unlink()
+    (d / f"own_video{ext}").write_bytes(raw)
+    try:
+        media.video_duration(d / f"own_video{ext}")
+    except UserError:
+        (d / f"own_video{ext}").unlink(missing_ok=True)
+        raise UserError("Это не видео или формат не поддерживается. Подойдут MP4, MOV или WEBM.")
+    for rel in ("scenes.json", "voice.json", "images.json", "animate.json", "video.json", "graphics_*.json", "audio",
+                "images", "anim", "clips", "output/video.mp4", "narration.wav", "own_clips.json", "own_images.json",
+                "chapters.json"):
+        _remove(d, rel)
+
+
 def _own_voice_words(c: Ctx, text: str) -> list:
     """[(word, start, end)] of the owner's recording, saved once so a repeated step pays nothing."""
     cache = c.dir / "own_voice_words.json"
-    key = hashlib.md5(text.encode("utf-8")).hexdigest()
+    key = hashlib.md5(" ".join(text.split()).encode("utf-8")).hexdigest()
     got = read_json(cache) or {}
     if got.get("key") == key and got.get("words"):
         return [tuple(w) for w in got["words"]]
@@ -2133,7 +2218,8 @@ def _transcribe_own_voice(c: Ctx):
     """No text was given with the owner's recording: it is transcribed and becomes the script."""
     c.log("Текста нет: расшифровываю вашу озвучку (ElevenLabs)…")
     text, words = tts.transcribe(c.settings, own_voice_file(c.dir), c.lang)
-    write_json(c.dir / "own_voice_words.json", {"key": hashlib.md5(text.encode("utf-8")).hexdigest(), "words": words})
+    write_json(c.dir / "own_voice_words.json", {"key": hashlib.md5(" ".join(text.split()).encode("utf-8")).hexdigest(),
+                                                "words": words})
     checks = script_checks(text, word_count(text), WPM.get(c.lang, WORDS_PER_MIN))
     write_json(c.out("script"), {"script": text, "checks": checks})
     rv = c.data("review") or {}
@@ -2957,6 +3043,8 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     else:
         tk = None
 
+    whole_video = own_video_file(c.dir) is not None and prefix == "scene"
+
     def work(i):
         c.check()
         a, b = bounds[i]
@@ -2973,7 +3061,7 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
         if i in anim and src.exists():
             media.render_anim_clip(src, clips[i], b - a, width, height, fps,
                                    fade_in=(i == 0), fade_out=(i == len(scenes) - 1), effect=fx[i][1],
-                                   fit=c.one_take and i < len(scenes) - 1)
+                                   fit=(c.one_take and i < len(scenes) - 1) or whole_video)
             return
         media.render_clip(c.dir / "images" / f"{prefix}_{i:03d}.png", clips[i], b - a, width, height, fps,
                           scenes[i]["motion"], strength, fade_in=(i == 0), fade_out=(i == len(scenes) - 1),

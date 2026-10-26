@@ -1,6 +1,6 @@
 {
- "version": 130,
- "label": "монтаж из своих файлов",
- "notes": "монтаж из своих файлов: своя озвучка, музыка, картинки и клипы",
+ "version": 131,
+ "label": "монтаж из готового видео и озвучки",
+ "notes": "монтаж из одного готового видео и своей озвучки",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
