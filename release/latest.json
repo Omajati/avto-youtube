@@ -1,6 +1,6 @@
 {
- "version": 129,
- "label": "картинки только свои",
- "notes": "картинки делаются вручную и загружаются пачкой, программа их не рисует",
+ "version": 130,
+ "label": "монтаж из своих файлов",
+ "notes": "монтаж из своих файлов: своя озвучка, музыка, картинки и клипы",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

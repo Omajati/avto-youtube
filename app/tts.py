@@ -250,3 +250,42 @@ def synthesize(settings, text: str, out_path: Path, previous_text: str = "", nex
     if alignment and alignment.get("characters"):
         out_path.with_suffix(".json").write_text(json.dumps(alignment), encoding="utf-8")
     return len(text)
+
+
+def _words(items) -> list:
+    """[(word, start, end)] with real words only (no spaces, no sound tags like "(laughter)")."""
+    out = []
+    for w in items or []:
+        t = (w.get("text") or "").strip()
+        if not t or w.get("type") in ("spacing", "audio_event") or not any(ch.isalnum() for ch in t):
+            continue
+        out.append((t, float(w.get("start") or 0), float(w.get("end") or w.get("start") or 0)))
+    return out
+
+
+def align(settings, audio: Path, text: str) -> list:
+    """When each word of the owner's own narration is spoken: his text matched to his recording (ElevenLabs)."""
+    r = net.request("ElevenLabs", "POST", f"{BASE}/forced-alignment", headers={"xi-api-key": _key(settings)},
+                    files={"file": (audio.name, audio.read_bytes())}, data={"text": text}, timeout=900, tries=3)
+    if b"Access restricted" in r.content[:4000]:
+        raise UserError(BLOCKED)
+    words = _words(r.json().get("words"))
+    if not words:
+        raise UserError("ElevenLabs не смог сопоставить ваш текст с озвучкой. Проверьте, что текст тот же, что звучит.")
+    return words
+
+
+def transcribe(settings, audio: Path, language: str = "") -> tuple:
+    """The owner's own narration turned into text with the time of every word: (text, [(word, start, end)])."""
+    data = {"model_id": "scribe_v2", "timestamps_granularity": "word", "tag_audio_events": "false"}
+    if language:
+        data["language_code"] = language
+    r = net.request("ElevenLabs", "POST", f"{BASE}/speech-to-text", headers={"xi-api-key": _key(settings)},
+                    files={"file": (audio.name, audio.read_bytes())}, data=data, timeout=900, tries=3)
+    if b"Access restricted" in r.content[:4000]:
+        raise UserError(BLOCKED)
+    d = r.json()
+    words = _words(d.get("words"))
+    if not words:
+        raise UserError("В вашей озвучке не нашлось речи. Проверьте файл.")
+    return (d.get("text") or " ".join(w[0] for w in words)).strip(), words

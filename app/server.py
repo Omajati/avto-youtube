@@ -3,6 +3,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
@@ -218,6 +219,11 @@ def create_job(data: dict = Body(...)):
         "short_seconds": _short_seconds(data.get("short_seconds") or proj.get("short_seconds")),
         "music_mode": data.get("music_mode") if data.get("music_mode") in musiclib.MODES else proj.get("music_mode") or "library",
     }
+    voice_up = _upload_path(data.get("own_voice_upload"))
+    if voice_up:
+        data["montage_script"] = data.get("montage_script") or " "  # no text: it is transcribed from the recording
+    if data.get("music_track") and (MUSIC_DIR / Path(str(data["music_track"])).name).is_file():
+        opts["music_track"] = Path(str(data["music_track"])).name  # the owner's own track, uploaded on the montage page
     if data.get("montage_script"):  # the montage page: one video from the owner's own text, voice chosen there
         opts["make_short"] = False
         for k in projects.VOICE_NUM:
@@ -281,6 +287,9 @@ def create_job(data: dict = Body(...)):
             pipeline.write_json(jd / "items.json", snap)
     if data.get("montage_script"):
         for j in created:
+            if voice_up:
+                pipeline.job_dir(j["id"]).mkdir(parents=True, exist_ok=True)
+                shutil.copy(voice_up, pipeline.job_dir(j["id"]) / f"own_voice{voice_up.suffix}")
             try:
                 pipeline.prepare_montage(j["id"], topic, data["montage_script"])
             except UserError:
@@ -292,6 +301,37 @@ def create_job(data: dict = Body(...)):
     created = [db.get(j["id"]) for j in created]
     worker.wake()
     return created
+
+
+UPLOADS = DATA_DIR / "uploads"
+AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".webm", ".mp4", ".mov")
+
+
+def _upload_path(uid):
+    """A file the montage page uploaded before creating the video (see /api/uploads), or None."""
+    if not uid or not re.fullmatch(r"[0-9a-f]{32}\.[a-z0-9]{2,5}", str(uid)):
+        return None
+    p = UPLOADS / str(uid)
+    return p if p.is_file() else None
+
+
+@app.post("/api/uploads")
+async def upload_file(request: Request, name: str):
+    """The owner's recording for the montage page, kept until the video is created."""
+    ext = Path(name).suffix.lower()
+    if ext not in AUDIO_EXT:
+        raise UserError("Озвучка: подходят mp3, wav, m4a, aac, ogg, flac (или видео mp4/mov, из него возьмётся звук).")
+    raw = await request.body()
+    if len(raw) > 500 * 1024 * 1024:
+        raise UserError("Файл озвучки больше 500 МБ.")
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    for old in UPLOADS.glob("*"):  # older uploads that never became a video
+        if old.stat().st_mtime < time.time() - 2 * 86400:
+            old.unlink(missing_ok=True)
+    import uuid
+    uid = uuid.uuid4().hex + ext
+    (UPLOADS / uid).write_bytes(raw)
+    return {"id": uid}
 
 
 def _job_channel(data: dict, proj: dict) -> str:

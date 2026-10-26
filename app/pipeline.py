@@ -1,5 +1,6 @@
 """The video pipeline. Every stage saves its result to the job folder, so a job can stop
 at any moment (Mac turned off, error, pause) and continue from where it was."""
+import hashlib
 import json
 import re
 import shutil
@@ -1926,6 +1927,8 @@ def _montage_world(c: Ctx, script: str):
 def st_scenes(c: Ctx):
     if c.opts.get("translate_from"):
         return _translate_scenes(c)
+    if own_voice_file(c.dir) and (c.data("review") or {}).get("transcribe"):
+        _transcribe_own_voice(c)
     script = c.data("review")["final_script"]
     if c.opts.get("montage"):
         _montage_world(c, script)
@@ -2105,8 +2108,108 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
     c.save_usage()
 
 
+def own_voice_file(d: Path):
+    """The owner's own recorded narration of this video (the montage page), or None."""
+    return next(iter(sorted(d.glob("own_voice.*"))), None)
+
+
+def _own_voice_words(c: Ctx, text: str) -> list:
+    """[(word, start, end)] of the owner's recording, saved once so a repeated step pays nothing."""
+    cache = c.dir / "own_voice_words.json"
+    key = hashlib.md5(text.encode("utf-8")).hexdigest()
+    got = read_json(cache) or {}
+    if got.get("key") == key and got.get("words"):
+        return [tuple(w) for w in got["words"]]
+    c.log("Сопоставляю ваш текст с вашей озвучкой (ElevenLabs), чтобы знать время каждого слова…")
+    words = tts.align(c.settings, own_voice_file(c.dir), text)
+    write_json(cache, {"key": key, "words": words})
+    return words
+
+
+OWN_VOICE_TITLE = "Ролик с моей озвучкой"
+
+
+def _transcribe_own_voice(c: Ctx):
+    """No text was given with the owner's recording: it is transcribed and becomes the script."""
+    c.log("Текста нет: расшифровываю вашу озвучку (ElevenLabs)…")
+    text, words = tts.transcribe(c.settings, own_voice_file(c.dir), c.lang)
+    write_json(c.dir / "own_voice_words.json", {"key": hashlib.md5(text.encode("utf-8")).hexdigest(), "words": words})
+    checks = script_checks(text, word_count(text), WPM.get(c.lang, WORDS_PER_MIN))
+    write_json(c.out("script"), {"script": text, "checks": checks})
+    rv = c.data("review") or {}
+    rv.update(final_script=text, checks=checks, transcribe=False)
+    write_json(c.out("review"), rv)
+    (c.dir / "script_final.txt").write_text(text, "utf-8")
+    if (db.get(c.id) or {}).get("title") == OWN_VOICE_TITLE:  # no title was given: the first words of the speech
+        first = " ".join(text.split()[:8]).rstrip(",.;:")
+        db.update(c.id, title=first)
+    c.log(f"Озвучка расшифрована: {word_count(text)} слов.")
+
+
+def _own_voice(c: Ctx, scenes: list):
+    """The owner's own recording instead of ElevenLabs: cut into scenes at the words where they start and end,
+    with the time of each word saved for the subtitles. Nothing is voiced, its pauses stay as recorded."""
+    audio = c.dir / "audio"
+    audio.mkdir(exist_ok=True)
+    full = c.dir / "voice_own_full.wav"
+    if not full.exists():
+        media.to_wav(own_voice_file(c.dir), full)
+    length = media.wav_duration(full)
+    words = _own_voice_words(c, " ".join(sc["text"] for sc in scenes))
+    counts = [len([t for t in sc["text"].split() if any(ch.isalnum() for ch in t)]) for sc in scenes]
+    n, w = sum(counts) or 1, len(words)
+    # Word index where each scene starts; scaled if the recording has a few words more or less than the text.
+    starts, acc = [], 0
+    for k in counts:
+        starts.append(min(w - 1, round(acc * w / n)))
+        acc += k
+    starts.append(w)
+    cuts = [0.0]
+    for i in range(1, len(scenes)):
+        a, b = starts[i] - 1, starts[i]
+        cuts.append((words[a][2] + words[b][1]) / 2 if 0 <= a < b < w else cuts[-1])
+    cuts.append(length)
+    for i in range(1, len(cuts)):  # every scene lasts at least a moment, so no clip is empty
+        cuts[i] = min(max(cuts[i], cuts[i - 1] + 0.4), length) if i < len(cuts) - 1 else max(cuts[i], cuts[i - 1] + 0.4)
+    import wave
+    with wave.open(str(full), "rb") as src:
+        rate, width, ch = src.getframerate(), src.getsampwidth(), src.getnchannels()
+        frames = src.readframes(src.getnframes())
+    step = width * ch
+    durations = []
+    for i in range(len(scenes)):
+        a, b = round(cuts[i] * rate), round(cuts[i + 1] * rate)
+        seg = frames[a * step:b * step]
+        seg += b"\x00" * ((b - a) * step - len(seg))  # the last scene may be stretched a little past the end
+        with wave.open(str(audio / f"scene_{i:03d}.wav"), "wb") as dst:
+            dst.setnchannels(ch)
+            dst.setsampwidth(width)
+            dst.setframerate(rate)
+            dst.writeframes(seg)
+        durations.append((b - a) / rate)
+        # The time of each word inside this scene, in the form the subtitles read (letter by letter).
+        chars, st, en = [], [], []
+        for t, ws, we in words[starts[i]:starts[i + 1]]:
+            ws, we = ws - cuts[i], max(we, ws) - cuts[i]
+            for k, letter in enumerate(t):
+                chars.append(letter)
+                st.append(round(ws + (we - ws) * k / len(t), 3))
+                en.append(round(ws + (we - ws) * (k + 1) / len(t), 3))
+            chars.append(" ")
+            st.append(round(we, 3))
+            en.append(round(we, 3))
+        write_json(audio / f"scene_{i:03d}.json", {"characters": chars, "character_start_times_seconds": st,
+                                                   "character_end_times_seconds": en})
+    media.concat_wavs([(audio / f"scene_{i:03d}.wav", 0.0) for i in range(len(scenes))], c.dir / "narration.wav")
+    result = {"durations": durations, "total": sum(durations), "own_voice": True}
+    c.log(f"Ваша озвучка разрезана на {len(scenes)} сцен: {result['total'] / 60:.1f} мин")
+    write_json(c.out("voice"), result)
+
+
 def st_voice(c: Ctx):
     scenes = c.data("scenes")["scenes"]
+    if own_voice_file(c.dir):
+        return _own_voice(c, scenes)
     short = c.data("short_script") if c.stage_enabled("short_script") else None
     total = len(scenes) + (len(short["scenes"]) if short else 0)
     c.log(f"Без озвучки: {len(scenes)} сцен под музыку, без текста на экране…" if c.mute else
@@ -2604,6 +2707,15 @@ def _images_manual(c: Ctx, job: dict, scenes: list):
     need = [img / "scene_000.png"] if c.one_take else [img / f"scene_{i:03d}.png" for i in range(len(scenes))]
     if short:
         need += [img / f"short_{i:03d}.png" for i in range(len(short["scenes"]))]
+    clips = set(read_json(c.dir / "own_clips.json", []) or [])
+    for p in need:
+        clip = c.dir / "anim" / p.with_suffix(".mp4").name
+        if not p.exists() and f"{p.stem.split('_')[0]}:{int(p.stem[-3:])}" in clips and clip.exists():
+            try:  # the owner's clip stands in for the picture: its first frame shows in the scene list
+                media.run(["-i", clip, "-frames:v", 1, p.with_suffix(".tmp.png")], "Кадр из клипа")
+                p.with_suffix(".tmp.png").replace(p)
+            except UserError:
+                pass
     missing = [p for p in need if not p.exists()]
     if missing and not job["options"].get("images_picked"):
         raise StopForReview("⏸ Сценарий, сцены и озвучка готовы, картинки программа не рисует. Откройте шаг «Сцены и "
@@ -3521,7 +3633,11 @@ def prepare_montage(jid: str, title: str, script: str):
     job = db.get(jid) or {}
     opts = job.get("options") or {}
     text = re.sub(r"\n{3,}", "\n\n", script.replace("\r", "")).strip()
-    if word_count(text) < 3:
+    transcribe = own_voice_file(d) is not None and word_count(text) < 3
+    if transcribe:
+        text = "Текст появится после расшифровки вашей озвучки."
+        title = (title or "").strip() or OWN_VOICE_TITLE
+    elif word_count(text) < 3:
         raise UserError("Вставьте текст сценария.")
     title = (title or "").strip() or re.sub(r"^[^:\n]{1,40}:\s*", "", text.split("\n")[0])[:70]
     lang = opts.get("language") or "ru"
@@ -3532,7 +3648,7 @@ def prepare_montage(jid: str, title: str, script: str):
     write_json(d / "outline.json", {"title": title, "locations": [], "characters": [], "sections": []})
     write_json(d / "script.json", {"script": text, "checks": checks})
     write_json(d / "review.json", {"rounds": [], "final_script": text, "final_overall": 0, "passed": True,
-                                   "checks": checks, "edited_by_owner": True, "montage": True})
+                                   "checks": checks, "edited_by_owner": True, "montage": True, "transcribe": transcribe})
     (d / "script_final.txt").write_text(text, "utf-8")
     write_json(d / "approval.json", {"approved_at": time.time(), "montage": True})
     db.update(jid, title=title, options=dict(opts, title_ru=title, montage=True))
