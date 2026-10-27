@@ -1487,6 +1487,13 @@ function renderStages(d) {
     await api(`/api/jobs/${j.id}/image`, { json: { kind, index: +idx, prompt: current, fix_ru: fix } }).then(() => toast("Картинка будет перерисована")).catch(e => toast(e.message, true));
     lastStagesKey = "";
   });
+  el.querySelectorAll(".subs-pos").forEach(sel => sel.onchange = async () => {
+    sel.disabled = true;
+    await api(`/api/jobs/${j.id}/subtitles`, { json: { kind: sel.dataset.kind, pos: sel.value } })
+      .then(() => toast("Высота субтитров изменена, видео пересобирается (это бесплатно)"))
+      .catch(e => { toast(e.message, true); sel.disabled = false; });
+    lastStagesKey = "";
+  });
   el.querySelectorAll("[data-subs]").forEach(b => b.onclick = async () => {
     const [kind, on] = b.dataset.subs.split(":");
     b.disabled = true;
@@ -2070,6 +2077,7 @@ function subsRow(d, kind, fileKey, fileName) {
   return `<div class="row" style="margin-top:10px">
     <span>Субтитры на видео: <b>${on ? "включены" : "выключены"}</b></span>
     <button class="sm" data-subs="${kind}:${on ? 0 : 1}" ${busy ? "disabled title=\"Подождите, пока ролик доделается\"" : ""}>${on ? "Выключить субтитры" : "Включить субтитры"}</button>
+    ${on ? `<span>Высота:</span><select class="subs-pos" data-kind="${kind}" style="max-width:240px" ${busy ? "disabled" : ""}>${Object.entries(META.subs_positions || {}).map(([k, n]) => `<option value="${k}" ${k === d.subs_pos ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>` : ""}
     ${d.files[fileKey] ? `<a class="small" href="/files/${d.job.id}/output/${fileName}" download>⬇ Файл субтитров .srt</a>` : ""}
   </div>`;
 }
@@ -2232,6 +2240,7 @@ async function viewSettings(id) {
       ${field("cta_short", "Призыв на шортсах", s, { type: "select", options: Object.entries(META.cta_modes), hint: "Анимированные кнопки «Подписаться» и «Нравится» в стиле YouTube во второй половине шортса. Для роликов без проекта; у проекта своя настройка в его карточке" })}
       ${field("cta_lang", "Язык кнопок призыва", s, { type: "select", options: Object.entries(META.cta_langs), hint: "Для роликов без проекта" })}
       ${field("subtitles_short", "Субтитры на шортсе", s, { type: "select", options: [["true", "Включены (рекомендую: шортсы часто смотрят без звука)"], ["false", "Выключены"]], hint: "Для роликов без проекта. У проекта своя настройка в его карточке" })}
+      ${field("subs_pos", "Высота субтитров", s, { type: "select", options: Object.entries(META.subs_positions || {}), hint: "можно поменять и у готового ролика, на его странице" })}
     </div></div>
   </div>
   <div class="card" id="ytcard"><h2>5. YouTube: автоматическая загрузка</h2>

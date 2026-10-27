@@ -10,7 +10,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, animate, cta, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, thumb, tts, updater, uploader, worker, youtube
+from . import analytics, animate, captions, cta, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, thumb, tts, updater, uploader, worker, youtube
 from .config import (DATA_DIR, DEFAULTS, MUSIC_DIR, PROMPTS_DEFAULT_DIR, PROMPTS_DIR, load_settings,
                      public_settings, save_settings)
 from .net import UserError
@@ -99,7 +99,7 @@ def meta():
                           "clip": round(animate.clip_seconds({"video_model": k}, 5) * v["price"], 2)}
                          for k, v in animate.VIDEO_MODELS.items()],
         "anim_modes": animate.MODES, "video_model": load_settings().get("video_model", "kling25"),
-        "fx_modes": effects.MODES, "cta_modes": cta.MODES, "cta_langs": cta.LANGS, "thumb_fonts": {k: v[0] for k, v in thumb.STYLE_FONTS.items()}, "thumb_looks": thumb.LOOKS, "effect_ru": effects.EFFECT_RU, "sfx_ru": effects.SFX_RU,
+        "fx_modes": effects.MODES, "subs_positions": captions.POSITIONS, "cta_modes": cta.MODES, "cta_langs": cta.LANGS, "thumb_fonts": {k: v[0] for k, v in thumb.STYLE_FONTS.items()}, "thumb_looks": thumb.LOOKS, "effect_ru": effects.EFFECT_RU, "sfx_ru": effects.SFX_RU,
         "image_styles": projects.IMAGE_STYLES,
         "default_niches": {**{k: v.get("niche", "") for k, v in projects.PRESETS.items()}, "": DEFAULTS["niche"]},
         "presets": {k: {"name": v["name"], "icon": v["icon"], "language": v["language"]} for k, v in projects.PRESETS.items()},
@@ -398,6 +398,7 @@ def job_detail(jid: str):
         "images": imgs,
         "own_images": pipeline.read_json(d / "own_images.json", []) or [],
         "own_clips": pipeline.read_json(d / "own_clips.json", []) or [],
+        "subs_pos": (j.get("options") or {}).get("subs_pos") or load_settings().get("subs_pos") or "mid_low",
         "images_waiting": pipeline.needs_images_choice(j),
         "images_manual": pipeline.images_manual(j),
         "improve": pipeline.read_json(d / "improve.json"),
@@ -658,9 +659,11 @@ def job_subtitles(jid: str, data: dict = Body(...)):
     stage, out = ("video", "video.mp4") if kind == "video" else ("short_video", "short.mp4")
     if j["status"] == "running" and (j["stage"] == stage or (d / f"{stage}.json").exists()):
         raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
-    on = bool(data.get("on"))
     opts = dict(j["options"])
-    opts["subs_video" if kind == "video" else "subs_short"] = on
+    if data.get("pos") in captions.POSITIONS:  # only the height of the subtitles changes
+        opts["subs_pos"] = data["pos"]
+    else:
+        opts["subs_video" if kind == "video" else "subs_short"] = bool(data.get("on"))
     db.update(jid, options=opts)
     if (d / f"{stage}.json").exists():
         # Clips stay, so only the last assembly runs again.

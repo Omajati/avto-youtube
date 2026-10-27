@@ -242,8 +242,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     out.write_text(header + "\n".join(rows) + "\n", encoding="utf-8")
 
 
+# The owner's choice of caption height: the distance of the lowest line from the bottom, as a share of the height.
+# Shorts keep clear of the bottom fifth, where YouTube shows the title and the buttons.
+POSITIONS = {"low": "Совсем внизу", "mid_low": "Ниже середины (обычно)", "mid": "Чуть ниже центра", "center": "По центру"}
+POS_SHARE = {True: {"low": 0.17, "mid_low": 0.22, "mid": 0.30, "center": 0.42},
+             False: {"low": 0.04, "mid_low": 0.065, "mid": 0.12, "center": 0.40}}
+
+
 def build(dir_: Path, prefix: str, scenes: list, durations: list, width: int, height: int, smart: bool = False,
-          blocked: dict = None) -> dict:
+          blocked: dict = None, pos: str = "") -> dict:
     """Writes output/<name>.srt always and an .ass file next to the clips. Returns paths and font info.
     smart: a caption moves to a calmer part of the frame when its usual place is busy in that scene's picture."""
     vertical = height > width
@@ -264,6 +271,7 @@ def build(dir_: Path, prefix: str, scenes: list, durations: list, width: int, he
     write_srt(cues, srt)
     fdir, family = font()
     ass = dir_ / f"{name}.ass"
-    write_ass(cues, ass, width, height, vertical, family, places=places)
+    share = POS_SHARE[vertical].get(pos or "mid_low", POS_SHARE[vertical]["mid_low"])
+    write_ass(cues, ass, width, height, vertical, family, margin_v=int(height * share), places=places)
     moved = sum(1 for p in places or [] if p != PLACES[vertical][0][0])
     return {"srt": srt, "ass": ass, "fonts": fdir, "moved": moved}

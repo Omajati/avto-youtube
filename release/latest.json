@@ -1,6 +1,6 @@
 {
- "version": 133,
- "label": "обработка готового ролика",
- "notes": "обработка готового ролика: субтитры, музыка, переходы, кнопки без нарезки",
+ "version": 134,
+ "label": "высота субтитров",
+ "notes": "выбор высоты субтитров, на шортсах по умолчанию ниже",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

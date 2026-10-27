@@ -3126,7 +3126,8 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     music = _music_bed(c, prefix, scenes, durations, total, clips_dir, width, height) or _music_for(c, total)
     out.parent.mkdir(exist_ok=True)
     smart = opts.get("subs_smart", False)
-    cap = captions.build(c.dir, prefix, scenes, durations, width, height, smart=smart, blocked=blocked)
+    pos = opts.get("subs_pos") or c.project.get("subs_pos") or c.settings.get("subs_pos") or "mid_low"
+    cap = captions.build(c.dir, prefix, scenes, durations, width, height, smart=smart, blocked=blocked, pos=pos)
     if subs and cap.get("moved"):
         c.log(f"Субтитры: {cap['moved']} строк перенесено в свободное место кадра.")
     sfx_file = clips_dir / "sfx.wav"
