@@ -304,6 +304,12 @@ def create_job(data: dict = Body(...)):
             if voice_up:
                 pipeline.job_dir(j["id"]).mkdir(parents=True, exist_ok=True)
                 shutil.copy(voice_up, pipeline.job_dir(j["id"]) / f"own_voice{voice_up.suffix}")
+            pics = [p for p in (_upload_path(x) for x in data.get("own_pics_uploads") or []) if p]
+            if pics:  # the owner's pictures in his order: the script is laid over them, one scene each
+                pdir = pipeline.job_dir(j["id"]) / "own_pics"
+                pdir.mkdir(parents=True, exist_ok=True)
+                for k, p in enumerate(pics):
+                    shutil.copy(p, pdir / f"{k:03d}{p.suffix}")
             if video_up:
                 pipeline.job_dir(j["id"]).mkdir(parents=True, exist_ok=True)
                 shutil.copy(video_up, pipeline.job_dir(j["id"]) / f"own_video{video_up.suffix}")
@@ -321,7 +327,8 @@ def create_job(data: dict = Body(...)):
 
 
 UPLOADS = DATA_DIR / "uploads"
-AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".webm", ".mp4", ".mov")
+AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".webm", ".mp4", ".mov",
+             ".png", ".jpg", ".jpeg", ".webp", ".heic", ".avif")
 
 
 def _upload_path(uid):
@@ -337,7 +344,7 @@ async def upload_file(request: Request, name: str):
     """The owner's recording for the montage page, kept until the video is created."""
     ext = Path(name).suffix.lower()
     if ext not in AUDIO_EXT:
-        raise UserError("Подходят звук mp3, wav, m4a, aac, ogg, flac или видео mp4, mov, webm.")
+        raise UserError("Подходят звук mp3, wav, m4a, aac, ogg, flac, видео mp4, mov, webm или картинки png, jpg, webp.")
     raw = await request.body()
     if len(raw) > 2048 * 1024 * 1024:
         raise UserError("Файл больше 2 ГБ.")

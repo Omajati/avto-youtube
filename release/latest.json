@@ -1,6 +1,6 @@
 {
- "version": 134,
- "label": "высота субтитров",
- "notes": "выбор высоты субтитров, на шортсах по умолчанию ниже",
+ "version": 135,
+ "label": "монтаж по своим картинкам",
+ "notes": "монтаж по своим картинкам: текст раскладывается по картинкам, оживление, монтаж",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

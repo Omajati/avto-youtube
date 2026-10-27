@@ -1932,6 +1932,8 @@ def st_scenes(c: Ctx):
     script = c.data("review")["final_script"]
     if own_video_file(c.dir):
         return _scenes_from_video(c, script)
+    if own_pictures(c.dir):
+        return _scenes_from_pictures(c, script)
     if c.opts.get("montage"):
         _montage_world(c, script)
     chunks = split_chunks(c.strip_host_labels(script), c.scene_words("short_words_per_scene" if c.short_format else "words_per_scene"),
@@ -2118,6 +2120,102 @@ def own_voice_file(d: Path):
 def own_video_file(d: Path):
     """The owner's finished video of all scenes glued together (the montage page), or None."""
     return next(iter(sorted(d.glob("own_video.*"))), None)
+
+
+def own_pictures(d: Path) -> list:
+    """The owner's pictures for a montage, in his order (one scene each), or []."""
+    pdir = d / "own_pics"
+    return sorted(p for p in pdir.iterdir() if p.is_file()) if pdir.is_dir() else []
+
+
+def _sentences(text: str) -> list:
+    """The script as sentences; a very long sentence is split at its commas, so a picture can change inside it."""
+    out = []
+    for para in [x.strip() for x in re.split(r"\n\s*\n", text) if x.strip()]:
+        para = re.sub(r"\s+", " ", para)
+        for snt in re.split(r"(?<=[.!?…])[\"”’')\]»]*\s+", para):
+            if word_count(snt) > 30:
+                out += [x for x in re.split(r"(?<=[,;:—–])\s+", snt) if x.strip()]
+            elif snt.strip():
+                out.append(snt.strip())
+    return out
+
+
+SCHEMA_PIC_SCENES = {"type": "object", "properties": {"pictures": {"type": "array", "items": {
+    "type": "object", "properties": {"first_sentence": {"type": "integer"}, "prompt": {"type": "string"}},
+    "required": ["first_sentence", "prompt"], "additionalProperties": False}}},
+    "required": ["pictures"], "additionalProperties": False}
+
+
+def _scenes_from_pictures(c: Ctx, script: str):
+    """The owner's own pictures, in his order: each becomes one scene. The script is not cut by length: the AI looks
+    at the pictures and gives each one the sentences it illustrates, so the picture is on screen while they are said."""
+    from PIL import Image, ImageOps
+    import io
+    pics = own_pictures(c.dir)
+    sents = _sentences(c.strip_host_labels(script))
+    n = len(pics)
+    words = [word_count(x) for x in sents]
+    total = sum(words) or 1
+    # Without the AI's answer: the sentences spread over the pictures by their length.
+    firsts, acc = [], 0
+    for k, w in enumerate(words):
+        if len(firsts) < n and acc >= total * len(firsts) / n:
+            firsts.append(k)
+        acc += w
+    prompts = [""] * n
+    if n <= 80 and len(sents) >= n and not c.demo:
+        thumbs = []
+        for p in pics:
+            im = ImageOps.exif_transpose(Image.open(p)).convert("RGB")
+            im.thumbnail((448, 448))
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=80)
+            thumbs.append(buf.getvalue())
+        numbered = "\n".join(f"{k + 1}. {x}" for k, x in enumerate(sents))
+        c.log(f"Смотрю ваши {n} картинок и раскладываю по ним текст…")
+        try:
+            r = _pic_check_call(c, "You match the pictures of a video to its narration. Answer only with JSON.",
+                                f"The {n} pictures above are the shots of one video, in this order (picture 1 is the "
+                                "first image). The narration below is numbered by sentence. Each picture is on screen "
+                                "while a run of consecutive sentences is said; the runs follow the order of the pictures "
+                                "and together cover all sentences. For each picture give first_sentence (1-based; picture 1 "
+                                "starts at 1, each next picture starts later than the previous one) where its run begins: "
+                                "the sentence it illustrates best. Also give prompt: one English sentence describing what "
+                                "the picture shows and a gentle natural motion for animating it (no camera cuts, no text)."
+                                f"\n\nNARRATION:\n{numbered}", SCHEMA_PIC_SCENES, c.usage, 8000, images=thumbs)
+            got = r.get("pictures") or []
+            f = [int(x.get("first_sentence") or 0) - 1 for x in got]
+            if len(f) == n and f[0] == 0 and all(a < b for a, b in zip(f, f[1:])) and f[-1] < len(sents):
+                firsts = f
+            else:
+                c.log("Разметка от ИИ не сошлась, раскладываю текст по картинкам по длине.")
+            prompts = [(x.get("prompt") or "").strip() for x in got][:n] + [""] * max(0, n - len(got))
+        except UserError as e:
+            if "ключ" in str(e) or "денег" in str(e):
+                raise
+            c.log(f"Посмотреть картинки не получилось ({e}), раскладываю текст по картинкам по длине.")
+        c.save_usage()
+    if len(firsts) < n:  # fewer sentences than pictures: the text is cut by words instead
+        texts = split_by_time(" ".join(sents), [k / n for k in range(1, n)])
+    else:
+        texts = [" ".join(sents[a:b]) for a, b in zip(firsts, firsts[1:] + [len(sents)])]
+    img = c.dir / "images"
+    img.mkdir(exist_ok=True)
+    size = (1080, 1920) if c.vertical else (1920, 1080)
+    scenes = []
+    for i, p in enumerate(pics[:len(texts)]):
+        out = img / f"scene_{i:03d}.png"
+        if not out.exists():
+            ImageOps.fit(ImageOps.exif_transpose(Image.open(p)).convert("RGB"), size, Image.LANCZOS).save(out)
+        scenes.append({"text": texts[i], "prompt": prompts[i] or "The scene in the picture comes gently to life.",
+                       "prompt_ru": f"Ваша картинка {i + 1} ({p.name})", "paragraph_end": False,
+                       "motion": media.MOTIONS[i % len(media.MOTIONS)], "characters": [], "items": []})
+    if len(texts) < n:
+        c.log(f"Текста хватило только на {len(texts)} картинок из {n}: лишние не вошли в ролик.")
+    write_json(c.dir / "own_images.json", [f"scene:{i}" for i in range(len(scenes))])
+    write_json(c.out("scenes"), {"scenes": scenes, "own_pictures": True})
+    c.log(f"Текст разложен по вашим {len(scenes)} картинкам.")
 
 
 def split_by_time(text: str, fractions: list) -> list:

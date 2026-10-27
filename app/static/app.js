@@ -3201,6 +3201,8 @@ async function viewMontage() {
     <div class="card mt-build"><h2>Картинки</h2>
       <label class="check"><input type="radio" name="mt-img" value="video" checked> Одно готовое видео целиком <span class="hint">все сцены склеены; программа найдёт склейки, разрежет видео по ним, каждому кадру даст его слова из озвучки и подгонит по времени, картинки не нужны</span></label>
       <div id="mt-own-video" style="margin:6px 0 10px"><input type="file" id="mt-videofile" accept="video/*"><div class="muted small">Можно загрузить и позже, на странице ролика в шаге «Сцены».</div></div>
+      <label class="check"><input type="radio" name="mt-img" value="pics"> Мои картинки сразу <span class="hint">загружаете все картинки ролика по порядку; программа сама посмотрит их и разложит текст по картинкам, оживит (если включена анимация) и смонтирует</span></label>
+      <div id="mt-own-pics" style="display:none;margin:6px 0 10px"><label class="btn sm" style="cursor:pointer">🖼 Выбрать картинки<input type="file" id="mt-picfiles" accept="image/*" multiple style="display:none"></label> <label class="btn sm" style="cursor:pointer">📁 Папкой<input type="file" id="mt-picdir" accept="image/*" multiple webkitdirectory style="display:none"></label> <span class="muted small" id="mt-pics-n">Порядок по номеру в имени файла (1.png, 2.png…)</span></div>
       <label class="check"><input type="radio" name="mt-img" value="own"> Свои картинки и видео: после озвучки пауза, загружаете картинки (шаг «Сцены») и клипы (шаг «Анимация») пачкой, номер сцены в имени файла${s.images_manual !== false ? "" : ", недостающие дорисует ИИ"}</label>
       <label class="check"><input type="radio" name="mt-img" value="ai"> Все картинки рисует ИИ по тексту (в стиле проекта)</label>
     </div>
@@ -3245,7 +3247,10 @@ async function viewMontage() {
       main.querySelectorAll(".mt-build").forEach(x => x.style.display = pol ? "none" : "");
     });
     main.querySelectorAll('input[name="mt-vsrc"]').forEach(r => r.onchange = () => { $("#mt-own-voice").style.display = vsrc() === "own" ? "" : "none"; $("#mt-ai-voice").style.display = vsrc() === "own" ? "none" : ""; });
-    main.querySelectorAll('input[name="mt-img"]').forEach(r => r.onchange = () => { $("#mt-own-video").style.display = main.querySelector('input[name="mt-img"]:checked').value === "video" ? "" : "none"; });
+    let picFiles = [];
+    const pickPics = inp => { picFiles = [...inp.files].filter(f => /^image\//.test(f.type) || /\.(png|jpe?g|webp|heic|avif)$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); $("#mt-pics-n").textContent = `Выбрано картинок: ${picFiles.length}`; };
+    $("#mt-picfiles").onchange = e => pickPics(e.target); $("#mt-picdir").onchange = e => pickPics(e.target);
+    main.querySelectorAll('input[name="mt-img"]').forEach(r => r.onchange = () => { const m = main.querySelector('input[name="mt-img"]:checked').value; $("#mt-own-video").style.display = m === "video" ? "" : "none"; $("#mt-own-pics").style.display = m === "pics" ? "" : "none"; });
     $("#mt-music").onchange = () => { $("#mt-own-music").style.display = $("#mt-music").value === "own" ? "" : "none"; };
     $("#mt-music").onchange();
     const ta = $("#mt-text"), wc = $("#mt-wc");
@@ -3293,6 +3298,11 @@ async function viewMontage() {
         return d;
       };
       try {
+        if (imgMode === "pics") {
+          if (!picFiles.length) throw new Error("Выберите свои картинки");
+          body.own_pics_uploads = [];
+          for (const [k, f] of picFiles.entries()) { toast(`Загружаю картинки: ${k + 1} из ${picFiles.length}`); const r = await fetch(`/api/uploads?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f }); let x = {}; try { x = await r.json(); } catch (e) {} if (!r.ok) throw new Error(`${f.name}: ${x.error || x.detail || "не загрузилась"}`); body.own_pics_uploads.push(x.id); }
+        }
         if (imgMode === "video" && vidf) body.own_video_upload = (await send(`/api/uploads?name=${encodeURIComponent(vidf.name)}`, vidf, "видео")).id;
         if (ownVoice) { body.own_voice_upload = (await send(`/api/uploads?name=${encodeURIComponent(vf.name)}`, vf, "озвучку")).id; delete body.voice_id; }
         if (body.music_mode === "own") { await send(`/api/music/upload?name=${encodeURIComponent(mf.name)}`, mf, "музыку"); body.music_track = mf.name; body.music_mode = "library"; }
