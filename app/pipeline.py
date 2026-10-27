@@ -2155,10 +2155,21 @@ def _scenes_from_video(c: Ctx, script: str):
     length = media.video_duration(vid)
     cuts = media.scene_cuts(vid)
     bounds = [0.0] + cuts + [length]
-    texts = split_by_time(c.strip_host_labels(script), [t / length for t in cuts])
-    bounds = bounds[:len(texts)] + [length]
-    c.log(f"В вашем видео {len(bounds) - 1} кадров (склеек: {len(bounds) - 2}): каждый кадр станет сценой со своими "
-          "словами, под озвучку он подгонится сам.")
+    polish = bool(c.opts.get("polish"))
+    if polish:
+        # Only polish: every word stays where it is said; a shot gets the words that start while it is on screen.
+        words = [tuple(x) for x in (read_json(c.dir / "own_voice_words.json") or {}).get("words") or []]
+        if not words:
+            words = _own_voice_words(c, c.strip_host_labels(script))
+        texts = [" ".join(x[0] for x in words if bounds[i] <= x[1] < bounds[i + 1] or (i == 0 and x[1] < 0))
+                 for i in range(len(bounds) - 1)]
+        c.log(f"В вашем видео {len(bounds) - 1} кадров: ролик не режется и не ускоряется, добавляю только субтитры, "
+              "музыку, звуки переходов и кнопки.")
+    else:
+        texts = split_by_time(c.strip_host_labels(script), [t / length for t in cuts])
+        bounds = bounds[:len(texts)] + [length]
+        c.log(f"В вашем видео {len(bounds) - 1} кадров (склеек: {len(bounds) - 2}): каждый кадр станет сценой со своими "
+              "словами, под озвучку он подгонится сам.")
     adir, img = c.dir / "anim", c.dir / "images"
     adir.mkdir(exist_ok=True)
     img.mkdir(exist_ok=True)
@@ -2173,7 +2184,8 @@ def _scenes_from_video(c: Ctx, script: str):
         media.run(["-ss", f"{min(0.1, (b - a) / 2):.3f}", "-i", out, "-frames:v", 1, img / f"scene_{i:03d}.tmp.png"], "Кадр")
         (img / f"scene_{i:03d}.tmp.png").replace(img / f"scene_{i:03d}.png")
         scenes.append({"text": t, "prompt": "", "prompt_ru": f"Кадр {i + 1} вашего видео ({a:.1f}–{b:.1f} с)",
-                       "paragraph_end": False, "motion": media.MOTIONS[0], "characters": [], "items": []})
+                       "paragraph_end": False, "motion": media.MOTIONS[0], "characters": [], "items": [],
+                       **({"start": a, "end": b} if polish else {})})
         c.progress((i + 1) / len(texts))
     write_json(c.dir / "own_clips.json", [f"scene:{i}" for i in range(len(scenes))])
     write_json(c.out("scenes"), {"scenes": scenes, "own_video": True})
@@ -2241,22 +2253,29 @@ def _own_voice(c: Ctx, scenes: list):
     if not full.exists():
         media.to_wav(own_voice_file(c.dir), full)
     length = media.wav_duration(full)
-    words = _own_voice_words(c, " ".join(sc["text"] for sc in scenes))
-    counts = [len([t for t in sc["text"].split() if any(ch.isalnum() for ch in t)]) for sc in scenes]
-    n, w = sum(counts) or 1, len(words)
-    # Word index where each scene starts; scaled if the recording has a few words more or less than the text.
-    starts, acc = [], 0
-    for k in counts:
-        starts.append(min(w - 1, round(acc * w / n)))
-        acc += k
-    starts.append(w)
-    cuts = [0.0]
-    for i in range(1, len(scenes)):
-        a, b = starts[i] - 1, starts[i]
-        cuts.append((words[a][2] + words[b][1]) / 2 if 0 <= a < b < w else cuts[-1])
-    cuts.append(length)
-    for i in range(1, len(cuts)):  # every scene lasts at least a moment, so no clip is empty
-        cuts[i] = min(max(cuts[i], cuts[i - 1] + 0.4), length) if i < len(cuts) - 1 else max(cuts[i], cuts[i - 1] + 0.4)
+    if scenes and "start" in scenes[0]:
+        # A finished video only polished: the sound is cut exactly at the video's own cuts, nothing is moved.
+        words = [tuple(x) for x in (read_json(c.dir / "own_voice_words.json") or {}).get("words") or []] \
+            or _own_voice_words(c, " ".join(sc["text"] for sc in scenes))
+        cuts = [sc["start"] for sc in scenes] + [scenes[-1]["end"]]
+        starts = [next((k for k, x in enumerate(words) if x[1] >= t), len(words)) for t in cuts[:-1]] + [len(words)]
+    else:
+        words = _own_voice_words(c, " ".join(sc["text"] for sc in scenes))
+        counts = [len([t for t in sc["text"].split() if any(ch.isalnum() for ch in t)]) for sc in scenes]
+        n, w = sum(counts) or 1, len(words)
+        # Word index where each scene starts; scaled if the recording has a few words more or less than the text.
+        starts, acc = [], 0
+        for k in counts:
+            starts.append(min(w - 1, round(acc * w / n)))
+            acc += k
+        starts.append(w)
+        cuts = [0.0]
+        for i in range(1, len(scenes)):
+            a, b = starts[i] - 1, starts[i]
+            cuts.append((words[a][2] + words[b][1]) / 2 if 0 <= a < b < w else cuts[-1])
+        cuts.append(length)
+        for i in range(1, len(cuts)):  # every scene lasts at least a moment, so no clip is empty
+            cuts[i] = min(max(cuts[i], cuts[i - 1] + 0.4), length) if i < len(cuts) - 1 else max(cuts[i], cuts[i - 1] + 0.4)
     import wave
     with wave.open(str(full), "rb") as src:
         rate, width, ch = src.getframerate(), src.getsampwidth(), src.getnchannels()

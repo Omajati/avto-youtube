@@ -3166,6 +3166,14 @@ async function viewMontage() {
     main.innerHTML = `<h1>✂️ Монтаж</h1>
     <p class="muted">Соберите ролик из своего: текст, своя озвучка или голос ИИ, свои картинки и видео по сценам, своя музыка. Программа разобьёт всё на сцены, остановится, чтобы вы загрузили картинки и клипы (номер сцены в имени файла), и смонтирует по всем нашим правилам: эффекты, звуки, музыка, субтитры, кнопки «Подписаться» и «Нравится».</p>
     <div class="card">
+      <label class="check"><input type="radio" name="mt-mode" value="build" checked> Собрать ролик <span class="hint">из текста или своей озвучки, своих картинок или видео</span></label>
+      <label class="check"><input type="radio" name="mt-mode" value="polish"> Обработать готовый ролик <span class="hint">ролик не режется и не ускоряется: добавляются только субтитры, музыка, звуки переходов, кнопки «Подписаться» и «Нравится»</span></label>
+      <div id="mt-polish" style="display:none;margin-top:8px">
+        <label class="f">Готовый ролик</label><input type="file" id="mt-polishfile" accept="video/*">
+        <label class="f">Отдельная озвучка <span class="hint">необязательно: если голос уже есть в ролике, субтитры сделаются по нему</span></label><input type="file" id="mt-polishvoice" accept="audio/*">
+      </div>
+    </div>
+    <div class="card">
       <div class="grid2"><div>
         <label class="f">Проект <span class="hint">берутся его персонажи, стиль картинок и голос</span></label>
         <select id="mt-proj"><option value="">Без проекта (общие настройки)</option>${projs.map(x => `<option value="${x.id}" ${x.id === cur ? "selected" : ""}>${esc(x.icon || "")} ${esc(x.name)}</option>`).join("")}</select>
@@ -3177,17 +3185,17 @@ async function viewMontage() {
         <label class="f">Язык</label>
         <select id="mt-lang">${opt(Object.entries(LANG_RU).map(([k, n]) => [k, n[0].toUpperCase() + n.slice(1)]), p.language || "ru")}</select>
       </div></div>
-      <label class="f">Текст для озвучки <span class="hint">со своей озвучкой текст необязателен: программа сама расшифрует запись. Ровно то, что будет прочитано. Пустая строка разделяет абзацы. Реплика героя своим голосом: «Имя: фраза» отдельным абзацем, имя вслух не читается</span></label>
+      <div class="mt-build"><label class="f">Текст для озвучки <span class="hint">со своей озвучкой текст необязателен: программа сама расшифрует запись. Ровно то, что будет прочитано. Пустая строка разделяет абзацы. Реплика героя своим голосом: «Имя: фраза» отдельным абзацем, имя вслух не читается</span></label>
       <textarea id="mt-text" rows="12" placeholder="Вставьте сценарий сюда"></textarea>
-      <div class="muted small" id="mt-wc"></div>
+      <div class="muted small" id="mt-wc"></div></div>
     </div>
-    <div class="card"><h2>Картинки</h2>
+    <div class="card mt-build"><h2>Картинки</h2>
       <label class="check"><input type="radio" name="mt-img" value="video" checked> Одно готовое видео целиком <span class="hint">все сцены склеены; программа найдёт склейки, разрежет видео по ним, каждому кадру даст его слова из озвучки и подгонит по времени, картинки не нужны</span></label>
       <div id="mt-own-video" style="margin:6px 0 10px"><input type="file" id="mt-videofile" accept="video/*"><div class="muted small">Можно загрузить и позже, на странице ролика в шаге «Сцены».</div></div>
       <label class="check"><input type="radio" name="mt-img" value="own"> Свои картинки и видео: после озвучки пауза, загружаете картинки (шаг «Сцены») и клипы (шаг «Анимация») пачкой, номер сцены в имени файла${s.images_manual !== false ? "" : ", недостающие дорисует ИИ"}</label>
       <label class="check"><input type="radio" name="mt-img" value="ai"> Все картинки рисует ИИ по тексту (в стиле проекта)</label>
     </div>
-    <div class="card"><h2>Голос</h2>
+    <div class="card mt-build"><h2>Голос</h2>
       <label class="check"><input type="radio" name="mt-vsrc" value="ai" checked> Озвучивает ИИ (ElevenLabs) по тексту</label>
       <label class="check"><input type="radio" name="mt-vsrc" value="own"> Своя озвучка из файла <span class="hint">mp3, wav, m4a или видео; пауз программа не добавляет, режет запись по сценам и делает субтитры по словам</span></label>
       <div id="mt-own-voice" style="display:none;margin:6px 0 10px"><input type="file" id="mt-voicefile" accept="audio/*,video/mp4,video/quicktime"></div>
@@ -3221,6 +3229,12 @@ async function viewMontage() {
     </div>
     <div class="row"><button class="primary" id="mt-go">🎬 Начать монтаж</button><span class="muted small">Текст не проверяется и не переписывается.</span></div>`;
     const vsrc = () => main.querySelector('input[name="mt-vsrc"]:checked').value;
+    const mode = () => main.querySelector('input[name="mt-mode"]:checked').value;
+    main.querySelectorAll('input[name="mt-mode"]').forEach(r => r.onchange = () => {
+      const pol = mode() === "polish";
+      $("#mt-polish").style.display = pol ? "" : "none";
+      main.querySelectorAll(".mt-build").forEach(x => x.style.display = pol ? "none" : "");
+    });
     main.querySelectorAll('input[name="mt-vsrc"]').forEach(r => r.onchange = () => { $("#mt-own-voice").style.display = vsrc() === "own" ? "" : "none"; $("#mt-ai-voice").style.display = vsrc() === "own" ? "none" : ""; });
     main.querySelectorAll('input[name="mt-img"]').forEach(r => r.onchange = () => { $("#mt-own-video").style.display = main.querySelector('input[name="mt-img"]:checked').value === "video" ? "" : "none"; });
     $("#mt-music").onchange = () => { $("#mt-own-music").style.display = $("#mt-music").value === "own" ? "" : "none"; };
@@ -3230,6 +3244,24 @@ async function viewMontage() {
     ta.oninput = count;
     $("#mt-proj").onchange = e => { cur = e.target.value; lsSet("ay_montage_proj", cur); const t = ta.value, ti = $("#mt-title").value; draw(); $("#mt-text").value = t; $("#mt-title").value = ti; $("#mt-text").oninput(); };
     $("#mt-go").onclick = async () => {
+      const mf0 = $("#mt-musicfile").files[0];
+      if (mode() === "polish") {
+        const pf = $("#mt-polishfile").files[0], pv = $("#mt-polishvoice").files[0];
+        if (!pf) return toast("Выберите готовый ролик", true);
+        if ($("#mt-music").value === "own" && !mf0) return toast("Выберите файл своей музыки", true);
+        $("#mt-go").disabled = true;
+        const up = async (url, file, what) => { toast(`Загружаю ${what}…`); const r = await fetch(url, { method: "POST", body: file }); let d = {}; try { d = await r.json(); } catch (e) {} if (!r.ok) throw new Error(d.error || d.detail || `Не удалось загрузить ${what}`); return d; };
+        try {
+          const body = { polish: true, topic: $("#mt-title").value, project_id: cur, format: $("#mt-fmt").value, language: $("#mt-lang").value,
+            images_pause: true, review_pause: false, idea_pause: false, music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, graphics: $("#mt-gfx").checked,
+            subs_smart: $("#mt-smart").checked, subs_video: $("#mt-subs").checked, subs_short: $("#mt-subs").checked, cta_short: $("#mt-cta").value, cta_lang: $("#mt-cta-lang").value, anim_mode: "off" };
+          body.own_video_upload = (await up(`/api/uploads?name=${encodeURIComponent(pf.name)}`, pf, "ролик")).id;
+          if (pv) body.own_voice_upload = (await up(`/api/uploads?name=${encodeURIComponent(pv.name)}`, pv, "озвучку")).id;
+          if (body.music_mode === "own") { await up(`/api/music/upload?name=${encodeURIComponent(mf0.name)}`, mf0, "музыку"); body.music_track = mf0.name; body.music_mode = "library"; }
+          const jobs = await api("/api/jobs", { json: body }); toast("Обработка начата"); location.hash = `#/job/${jobs[0].id}`;
+        } catch (e) { toast(e.message, true); $("#mt-go").disabled = false; }
+        return;
+      }
       const ownVoice = vsrc() === "own", vf = $("#mt-voicefile").files[0], mf = $("#mt-musicfile").files[0];
       const imgMode = main.querySelector('input[name="mt-img"]:checked').value, vidf = $("#mt-videofile").files[0];
       if (ownVoice && !vf) return toast("Выберите файл своей озвучки", true);

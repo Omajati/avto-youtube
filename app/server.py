@@ -221,6 +221,19 @@ def create_job(data: dict = Body(...)):
     }
     voice_up = _upload_path(data.get("own_voice_upload"))
     video_up = _upload_path(data.get("own_video_upload"))
+    if data.get("polish"):
+        # A finished video only polished: the voice is its own sound unless a separate recording was given.
+        if not video_up:
+            raise UserError("Загрузите готовый ролик.")
+        opts["polish"] = True
+        opts["anim_mode"] = "off"
+        data["montage_script"] = " "  # the words and their times come from the sound itself
+        if not voice_up:
+            voice_up = video_up.with_name(video_up.stem + "_voice.m4a")
+            try:
+                media.run(["-i", video_up, "-vn", "-ac", 1, "-c:a", "aac", "-b:a", "128k", voice_up], "Звук из ролика")
+            except UserError:
+                raise UserError("В ролике нет звука. Загрузите озвучку отдельным файлом.")
     if voice_up:
         data["montage_script"] = data.get("montage_script") or " "  # no text: it is transcribed from the recording
     if data.get("music_track") and (MUSIC_DIR / Path(str(data["music_track"])).name).is_file():

@@ -1,6 +1,6 @@
 {
- "version": 132,
- "label": "загрузка папкой",
- "notes": "загрузка картинок и клипов целой папкой",
+ "version": 133,
+ "label": "обработка готового ролика",
+ "notes": "обработка готового ролика: субтитры, музыка, переходы, кнопки без нарезки",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
