@@ -2098,7 +2098,7 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
             ch = next((x for x in c.characters if x["id"] == who and x.get("voice_id")), None)
             if ch:
                 settings = {**c.settings, "elevenlabs_voice_id": ch["voice_id"]}
-            chars = tts.synthesize(settings, sc["text"], mp3, prev_t, next_t, c.lang)
+            chars = tts.synthesize(settings, sc.get("tts_text") or sc["text"], mp3, prev_t, next_t, c.lang)
             c.add_usage("tts_chars", chars)
         media.to_wav(mp3, wav, c.voice_tempo())
         return i
@@ -2110,6 +2110,60 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
             done[0] += 1
             yield done[0], len(scenes)
     c.save_usage()
+
+
+V3_TAGS = ("[whispers]", "[excited]", "[sad]", "[angry]", "[curious]", "[sarcastic]", "[serious]", "[calm]",
+           "[mysterious]", "[dramatic tone]", "[surprised]", "[nervous]", "[sighs]", "[laughs]", "[pause]")
+SCHEMA_TAGS = {"type": "object", "properties": {"scenes": {"type": "array", "items": {
+    "type": "object", "properties": {"n": {"type": "integer"}, "text": {"type": "string"}},
+    "required": ["n", "text"], "additionalProperties": False}}}, "required": ["scenes"], "additionalProperties": False}
+
+
+def _untag(text: str) -> str:
+    return " ".join(re.sub(r"\[[^\]]{1,40}\]", " ", text).split())
+
+
+def _emotion_tags(c: Ctx, scenes: list, kind: str):
+    """ElevenLabs v3 changes its voice by audio tags ([whispers], [excited]…): the AI places a few where the story
+    calls for them. Only the voice reads them; the scene text, the subtitles and the pictures stay without tags."""
+    todo = [i for i, sc in enumerate(scenes) if "tts_text" not in sc]
+    if not todo:
+        return
+    c.log(f"Расставляю интонации для голоса v3 ({len(todo)} фрагментов)…")
+    tagged = 0
+    for k in range(0, len(todo), 60):
+        part = todo[k:k + 60]
+        listing = "\n".join(f"{i + 1}. {scenes[i]['text']}" for i in part)
+        try:
+            r = _pic_check_call(c, "You direct a voice actor. Answer only with JSON.",
+                                "These numbered lines are read one after another by an ElevenLabs v3 voice "
+                                f"(language: {c.lang}). Add audio tags where the emotion or delivery should change "
+                                "with the story: a secret is whispered, a shock is surprised, a loss is sad, a twist is "
+                                "dramatic. Use only these tags, in English: " + ", ".join(V3_TAGS) + ". Put a tag right "
+                                "before the words it colours. Be sparing: most lines need no tag, never more than two in a "
+                                "line, never the same tag on many lines in a row. Do not change, add or remove any word or "
+                                "punctuation. Return every line with its number n and its text (with tags or unchanged)."
+                                f"\n\nLINES:\n{listing}", SCHEMA_TAGS, c.usage, 16000)
+        except UserError as e:
+            if "ключ" in str(e) or "денег" in str(e):
+                raise
+            c.log(f"Интонации расставить не получилось ({e}), голос прочитает текст как есть.")
+            return
+        got = {int(x.get("n") or 0) - 1: x.get("text") or "" for x in r.get("scenes") or []}
+        for i in part:
+            t = got.get(i, "")
+            # A line whose words changed is read as written: the subtitles must match what is said.
+            ok = t and _untag(t) == " ".join(scenes[i]["text"].split()) and t != scenes[i]["text"]
+            scenes[i]["tts_text"] = t if ok else scenes[i]["text"]
+            tagged += bool(ok)
+    c.save_usage()
+    if kind == "short":
+        data = c.data("short_script")
+        data["scenes"] = scenes
+        write_json(c.out("short_script"), data)
+    else:
+        write_json(c.out("scenes"), dict(c.data("scenes"), scenes=scenes))
+    c.log(f"Интонации расставлены: в {tagged} фрагментах из {len(todo)}.")
 
 
 def own_voice_file(d: Path):
@@ -2417,6 +2471,11 @@ def st_voice(c: Ctx):
     total = len(scenes) + (len(short["scenes"]) if short else 0)
     c.log(f"Без озвучки: {len(scenes)} сцен под музыку, без текста на экране…" if c.mute else
           f"Озвучиваю {len(scenes)} фрагментов голосом {c.settings.get('elevenlabs_voice_name') or ''}…")
+    if (c.settings.get("elevenlabs_model") == "eleven_v3" and c.settings.get("voice_tags", True)
+            and not c.mute and not c.demo):
+        _emotion_tags(c, scenes, "scene")
+        if short:
+            _emotion_tags(c, short["scenes"], "short")
     for n, _ in _voice_list(c, scenes, "scene"):
         c.progress(n / total)
     gap, pgap = float(c.settings["scene_gap"]), float(c.settings["paragraph_gap"])

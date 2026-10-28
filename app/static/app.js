@@ -2170,6 +2170,7 @@ async function viewSettings(id) {
     <input type="text" id="voice-id" placeholder="например JBFqnCBsd6RMkjVDRZzb">
     <div id="voice-marks"></div>
     ${field("elevenlabs_model", "Модель озвучки", s, { type: "select", options: META.tts_models.map(m => [m.id, m.name]) })}
+    ${field("voice_tags", "Интонации по сюжету (только для модели v3)", s, { type: "select", options: [["true", "Да: ИИ расставляет в тексте пометки шёпот, удивление, грусть и т. п. там, где этого требует сюжет (центы за ролик)"], ["false", "Нет: голос читает текст как есть"]] })}
     <div class="grid2"><div>
       ${field("voice_stability", "Стабильность", s, { type: "range", min: 0, max: 1, step: 0.05, hint: "Меньше — эмоциональнее, больше — ровнее" })}
       ${field("voice_similarity", "Похожесть на оригинал", s, { type: "range", min: 0, max: 1, step: 0.05 })}

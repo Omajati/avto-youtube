@@ -86,7 +86,8 @@ DEFAULTS = {
     # Subtitles burned into the picture (can be switched per video too)
     "subtitles_long": False,
     "subtitles_short": True,
-    "subs_pos": "mid_low",  # height of the subtitles: low, mid_low, mid, center (see captions.POSITIONS)
+    "subs_pos": "mid_low",
+    "voice_tags": True,  # ElevenLabs v3: the AI places emotion tags ([whispers], [excited]) along the story  # height of the subtitles: low, mid_low, mid, center (see captions.POSITIONS)
     "cta_short": "both",  # animated Subscribe / Like buttons on Shorts (see cta.py)
     "cta_lang": "auto",  # their language: auto = the video's, ru, en
     # Animation of scenes (image-to-video on fal.ai)

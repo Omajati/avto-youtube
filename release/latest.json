@@ -1,6 +1,6 @@
 {
- "version": 135,
- "label": "монтаж по своим картинкам",
- "notes": "монтаж по своим картинкам: текст раскладывается по картинкам, оживление, монтаж",
+ "version": 136,
+ "label": "интонации для голоса v3",
+ "notes": "интонации по сюжету для голоса v3",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

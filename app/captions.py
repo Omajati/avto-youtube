@@ -45,7 +45,15 @@ def _scene_words(text: str, align_file: Path, speech: float) -> list:
             a = json.loads(align_file.read_text(encoding="utf-8"))
             chars, st, en = a["characters"], a["character_start_times_seconds"], a["character_end_times_seconds"]
             cur, cs, ce = "", None, None
+            depth = 0
             for ch, s, e in zip(chars, st, en):
+                # Audio tags of the v3 voice ([whispers]) are spoken directions, never shown in the subtitles.
+                if ch == "[":
+                    depth += 1
+                    continue
+                if depth:
+                    depth -= ch == "]"
+                    continue
                 if ch.isspace():
                     if cur:
                         words.append((cur, cs, ce))
