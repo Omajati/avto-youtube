@@ -1,6 +1,6 @@
 {
- "version": 136,
- "label": "интонации для голоса v3",
- "notes": "интонации по сюжету для голоса v3",
+ "version": 137,
+ "label": "испанские и немецкие голоса везде",
+ "notes": "Кнопка «Голоса других языков» (испанские, немецкие и др.) у всех списков голосов",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

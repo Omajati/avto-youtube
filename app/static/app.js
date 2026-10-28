@@ -522,6 +522,7 @@ async function renderChars() {
       return { voice_id: vsel.value, voice_name: vsel.value ? (o.dataset.name || o.text) : "" };
     };
     loadVoices().then(vs => { const cur = vsel.value; vsel.innerHTML = vsel.options[0].outerHTML + voiceOptions(vs, cur, ""); vsel.value = cur; }).catch(() => { });
+    addLibButton(vsel, "");
     root.querySelector(".c-vprev").onclick = () => {
       const v = (VOICES || []).find(x => x.voice_id === vsel.value);
       if (!v || !v.preview_url) return toast("Выберите голос из списка (для своего ID образца нет)", true);
@@ -805,6 +806,15 @@ function openVoiceLibrary(onPick, lang) {
   more.onclick = () => { page++; load(false); };
   load(true);
 }
+// A button next to a voice list that opens the library with native speakers of any language (Spanish, German…).
+function addLibButton(sel, lang) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "sm"; b.textContent = "🌍 Голоса других языков";
+  b.title = "Испанские, немецкие, английские, французские и русские голоса из библиотеки ElevenLabs";
+  b.onclick = () => openVoiceLibrary((vid, name) => pickIntoSelect(sel, vid, name), lang);
+  sel.insertAdjacentElement("afterend", b);
+}
+
 function pickIntoSelect(sel, vid, name) {
   const opt = sel.querySelector(`option[value="${CSS.escape(vid)}"]`);
   if (!opt) sel.insertAdjacentHTML("beforeend", `<option value="${esc(vid)}" data-name="${esc(name)}">${esc(name)}</option>`);
@@ -1551,6 +1561,7 @@ function renderStages(d) {
       sel.dataset.loaded = "1";
       loadVoices().then(vs => { sel.insertAdjacentHTML("beforeend", voiceOptions(vs, "", j.options.language || "ru")); sel.value = ""; }).catch(e => toast(e.message, true));
     });
+    addLibButton(sel, j.options.language || "ru");
     box.querySelector(".rv-play").onclick = () => {
       const v = (VOICES || []).find(x => x.voice_id === sel.value);
       if (!v || !v.preview_url) return toast(sel.value ? "У этого голоса нет образца" : "Сначала выберите голос", true);
@@ -2332,6 +2343,7 @@ async function viewSettings(id) {
     box.querySelector("details").addEventListener("toggle", async () => {
       const sel = box.querySelector(".ch-voice");
       if (sel.dataset.loaded) return; sel.dataset.loaded = 1;
+      addLibButton(sel, "");
       try {
         const vs = voices.length ? voices : (voices = await api("/api/voices"));
         const cur = sel.value;
@@ -2779,6 +2791,7 @@ async function viewRemakeOne(id) {
   window.addEventListener("resize", onResize);
   draw();
   const vsel = $("#rm-v");
+  if (!running) addLibButton(vsel, "en");
   loadVoices().then(vs => { vsel.innerHTML = `<option value="">— выберите голос —</option>` + voiceOptions(vs, o.voice_id || "", "en"); vsel.value = o.voice_id || ""; })
     .catch(e => { vsel.innerHTML = `<option value="">Голоса не загрузились: ${esc(e.message)}</option>`; });
   $("#rm-go").onclick = async () => {
@@ -3247,6 +3260,7 @@ async function viewMontage() {
       $("#mt-polish").style.display = pol ? "" : "none";
       main.querySelectorAll(".mt-build").forEach(x => x.style.display = pol ? "none" : "");
     });
+    addLibButton($("#mt-voice"), p.language || "ru");
     main.querySelectorAll('input[name="mt-vsrc"]').forEach(r => r.onchange = () => { $("#mt-own-voice").style.display = vsrc() === "own" ? "" : "none"; $("#mt-ai-voice").style.display = vsrc() === "own" ? "none" : ""; });
     let picFiles = [];
     const pickPics = inp => { picFiles = [...inp.files].filter(f => /^image\//.test(f.type) || /\.(png|jpe?g|webp|heic|avif)$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); $("#mt-pics-n").textContent = `Выбрано картинок: ${picFiles.length}`; };
