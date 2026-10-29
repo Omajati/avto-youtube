@@ -385,6 +385,14 @@ def _job_or_404(jid):
     return j
 
 
+def _live(d: Path, j: dict):
+    """How much Claude has written so far in the answer it is streaming now (for the line under the status)."""
+    e = pipeline.read_json(d / "live.json") if j.get("status") == "running" else None
+    if not e or time.time() - e.get("at", 0) > 30:
+        return None
+    return {"words": round(e.get("text", 0) / 6), "think": round(e.get("think", 0) / 6), "secs": time.time() - e["since"]}
+
+
 def _render_eta(d: Path, j: dict):
     """Seconds left of the assembly now running, for the big timer; None when nothing is being assembled."""
     if j.get("status") != "running" or j.get("stage") not in ("video", "short_video"):
@@ -422,6 +430,7 @@ def job_detail(jid: str):
         "images_waiting": pipeline.needs_images_choice(j),
         "images_manual": pipeline.images_manual(j),
         "render_eta": _render_eta(d, j),
+        "live": _live(d, j),
         "improve": pipeline.read_json(d / "improve.json"),
         "chapters": pipeline.chapters_text(jid),
         "files": {

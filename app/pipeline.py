@@ -1020,8 +1020,16 @@ class Ctx:
                     words=self.words,
                     words_min=int(self.words * 0.9), words_max=int(self.words * 1.1), **values) + extra \
             + self.voice_rule(prompt_file)
-        result = llm.call_json(self.settings if prompt_file in WRITER_PROMPTS else _helper_settings(self.settings),
-                               system, user, schema, self.usage, max_tokens)
+        live = self.dir / "live.json"
+        since = time.time()
+
+        def on_progress(text, think):
+            write_json(live, {"text": text, "think": think, "at": time.time(), "since": since})
+        try:
+            result = llm.call_json(self.settings if prompt_file in WRITER_PROMPTS else _helper_settings(self.settings),
+                                   system, user, schema, self.usage, max_tokens, on_progress=on_progress)
+        finally:
+            live.unlink(missing_ok=True)
         self.save_usage()
         return result
 

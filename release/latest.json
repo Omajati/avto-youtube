@@ -1,6 +1,6 @@
 {
- "version": 142,
- "label": "Claude не зависает молча",
- "notes": "Если Claude не отвечает 3 минуты, программа пишет об этом, а не ждёт бесконечно",
+ "version": 143,
+ "label": "видно, как Claude пишет",
+ "notes": "На странице ролика видно, сколько Claude уже написал",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

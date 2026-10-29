@@ -1,6 +1,7 @@
 """Text model calls (Anthropic Claude or OpenAI) that return JSON matching a schema."""
 import copy
 import json
+import time
 
 import anthropic
 
@@ -45,13 +46,13 @@ def has_key(settings: dict) -> bool:
 
 
 def call_json(settings: dict, system: str, user: str, schema: dict, usage: dict, max_tokens: int = 32000,
-              images: list = None) -> dict:
+              images: list = None, on_progress=None) -> dict:
     """images: optional list of JPEG bytes the model should look at (e.g. photos of a character)."""
     schema = strict_schema(schema)
     provider = settings.get("llm_provider", "anthropic")
     if provider == "openai":
         return _openai(settings, system, user, schema, usage, max_tokens, images)
-    return _anthropic(settings, system, user, schema, usage, max_tokens, images)
+    return _anthropic(settings, system, user, schema, usage, max_tokens, images, on_progress)
 
 
 def _b64(data: bytes) -> str:
@@ -68,7 +69,7 @@ def _add_usage(usage: dict, model: str, inp: int, out: int):
     balance.record("anthropic" if model.startswith("claude") else "openai", cost)
 
 
-def _anthropic(settings, system, user, schema, usage, max_tokens, images=None):
+def _anthropic(settings, system, user, schema, usage, max_tokens, images=None, on_progress=None):
     key = settings.get("anthropic_key")
     if not key:
         raise UserError("Не указан ключ Anthropic (Claude). Вставьте его в Настройках, раздел «Сценарий».")
@@ -92,7 +93,7 @@ def _anthropic(settings, system, user, schema, usage, max_tokens, images=None):
         },
     )
     for attempt in range(2):
-        msg = _anthropic_once(client, kwargs, model)
+        msg = _anthropic_once(client, kwargs, model, on_progress)
         u = msg.usage
         _add_usage(usage, model, (u.input_tokens or 0), (u.output_tokens or 0))
         if msg.stop_reason != "max_tokens" or kwargs["max_tokens"] >= 64000:
@@ -107,7 +108,26 @@ def _anthropic(settings, system, user, schema, usage, max_tokens, images=None):
     return _parse(text, "Claude")
 
 
-def _anthropic_once(client, kwargs, model):
+def _follow(stream, on_progress):
+    """Reads the answer as it streams; on_progress(chars written, chars thought) every few seconds."""
+    if on_progress:
+        text = think = 0
+        last = 0.0
+        for ev in stream:
+            if getattr(ev, "type", "") == "content_block_delta":
+                d = ev.delta
+                text += len(getattr(d, "text", "") or "") if getattr(d, "type", "") == "text_delta" else 0
+                think += len(getattr(d, "thinking", "") or "") if getattr(d, "type", "") == "thinking_delta" else 0
+            if time.time() - last > 4:
+                last = time.time()
+                try:
+                    on_progress(text, think)
+                except Exception:  # noqa: BLE001 - the live line is an extra
+                    pass
+    return stream.get_final_message()
+
+
+def _anthropic_once(client, kwargs, model, on_progress=None):
     try:
         msg = None
         if model in FALLBACK_MODELS:
@@ -116,13 +136,13 @@ def _anthropic_once(client, kwargs, model):
                 with client.beta.messages.stream(
                     betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kwargs
                 ) as stream:
-                    msg = stream.get_final_message()
+                    msg = _follow(stream, on_progress)
             except anthropic.BadRequestError as e:
                 if "fallback" not in str(e).lower():
                     raise
         if msg is None:
             with client.messages.stream(**kwargs) as stream:
-                msg = stream.get_final_message()
+                msg = _follow(stream, on_progress)
     except anthropic.AuthenticationError:
         raise UserError("Claude: ключ API не подошёл. Проверьте ключ Anthropic в Настройках.")
     except anthropic.PermissionDeniedError as e:
