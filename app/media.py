@@ -52,7 +52,21 @@ def ffmpeg_with_subtitles() -> str:
     raise UserError("Эта версия FFmpeg не умеет накладывать субтитры. Запустите установку программы ещё раз.")
 
 
-def run(args: list, what: str = "FFmpeg", cwd=None, exe=None):
+def run(args: list, what: str = "FFmpeg", cwd=None, exe=None, total: float = 0, on_progress=None):
+    """on_progress(fraction) is called while ffmpeg works through the given total seconds of output."""
+    if on_progress and total > 0:
+        p = subprocess.Popen([exe or ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-progress", "pipe:1", "-nostats",
+                              *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd)
+        for line in p.stdout:
+            if line.startswith("out_time_us=") and line.strip()[12:].isdigit():
+                try:
+                    on_progress(min(int(line.strip()[12:]) / 1e6 / total, 1.0))
+                except Exception:  # noqa: BLE001 - the timer is an extra, never a reason to lose the video
+                    pass
+        err = p.stderr.read()
+        if p.wait() != 0:
+            raise UserError(f"{what}: ошибка сборки. {err[-600:]}")
+        return
     p = subprocess.run([exe or ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", *map(str, args)],
                        capture_output=True, text=True, cwd=cwd)
     if p.returncode != 0:
@@ -215,7 +229,7 @@ def pick_music(music_dir: Path):
 
 
 def final_mix(video: Path, narration: Path, music, out: Path, music_volume: float, lufs: float, total: float,
-              subs: Path = None, fonts: Path = None, sfx: Path = None):
+              subs: Path = None, fonts: Path = None, sfx: Path = None, on_progress=None):
     """subs: an .ass file to burn into the picture (re-encodes the video), otherwise the video is copied."""
     args = ["-i", video, "-i", narration]
     if music:
@@ -247,7 +261,7 @@ def final_mix(video: Path, narration: Path, music, out: Path, music_volume: floa
         vmap, vcodec = "0:v", ["-c:v", "copy"]
     run([*args, "-filter_complex", fc, "-map", vmap, "-map", "[a]", *vcodec, "-c:a", "aac",
          "-b:a", "192k", "-ar", 44100, "-t", f"{total:.3f}", "-movflags", "+faststart", tmp], "Финальная сборка",
-        cwd=cwd, exe=exe)
+        cwd=cwd, exe=exe, total=total, on_progress=on_progress)
     tmp.replace(out)
 
 

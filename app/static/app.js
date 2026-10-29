@@ -1198,6 +1198,23 @@ async function renderEpisodes(pid) {
 const openStages = new Set();
 let lastStagesKey = "";
 
+// The big countdown while a video is assembled. The numbers tick every second between the page's refreshes.
+const clock = sec => { sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`; };
+function etaCard(e, stage) {
+  const now = Date.now();
+  return `<div class="eta" data-eta-end="${now + e.remaining * 1000}" data-eta-start="${now - e.elapsed * 1000}">
+    <div class="lbl">⏱ ${stage === "short_video" ? "До конца монтажа шортса" : "До конца монтажа ролика"} примерно</div>
+    <div class="num" data-eta-num>${clock(e.remaining)}</div>
+    <div class="sub">Прошло <span data-eta-el>${clock(e.elapsed)}</span> · готово ${Math.round(e.frac * 100)}%</div>
+    <div class="track"><div style="width:${Math.round(e.frac * 100)}%"></div></div></div>`;
+}
+setInterval(() => document.querySelectorAll("[data-eta-end]").forEach(x => {
+  const left = (+x.dataset.etaEnd - Date.now()) / 1000;
+  x.querySelector("[data-eta-num]").textContent = left > 0 ? clock(left) : "почти готово…";
+  x.querySelector("[data-eta-el]").textContent = clock((Date.now() - +x.dataset.etaStart) / 1000);
+}), 1000);
+
 async function viewJob(id) {
   lastStagesKey = "";
   main.innerHTML = `<div id="jhead"></div><div id="jstages"></div>
@@ -1245,6 +1262,7 @@ function renderHead(d) {
       <span class="muted small" title="Текст (ИИ): $${(u.llm_cost || 0).toFixed(2)} · Картинки: $${(u.image_cost || 0).toFixed(2)} (${u.images || 0} шт.) · Анимация: $${(u.anim_cost || 0).toFixed(2)}">Потрачено: ~$${cost.toFixed(2)} (картинки $${(u.image_cost || 0).toFixed(2)}${u.anim_cost ? `, анимация $${u.anim_cost.toFixed(2)}` : ""}${u.music_cost ? `, музыка $${u.music_cost.toFixed(2)}` : ""}, текст $${(u.llm_cost || 0).toFixed(2)})${u.tts_chars ? ` + ${Math.round(u.tts_chars).toLocaleString("ru")} символов ElevenLabs` : ""}</span>
     </div>
     ${j.status !== "done" ? `<div class="bar"><div style="width:${j.progress}%"></div></div>` : ""}
+    ${d.render_eta ? etaCard(d.render_eta, j.stage) : ""}
     ${j.status === "error" ? `<div class="banner bad">${nl(j.error)}</div>` : ""}
     ${d.images_waiting && d.images_manual ? `<div class="banner info">⏸ Сценарий, сцены и озвучка готовы. Картинки программа не рисует. Откройте шаг «Сцены и описания картинок»: кнопка «📋 Описания картинок для другого сервиса» даст описание для каждой сцены. Сделайте картинки и загрузите их пачкой (номер сцены в имени файла: 1.png, 2.png…), потом нажмите «Собрать видео с моими картинками». Загружено: ${(d.own_images || []).length}.</div>` : ""}
     ${d.images_waiting && !d.images_manual ? `<div class="banner info">⏸ Сценарий и озвучка готовы. Откройте шаг «Сцены и описания картинок»: кнопка «📋 Описания картинок для другого сервиса» даст готовые описания для каждой сцены. Загрузите свои картинки по одной кнопкой «📤 Своя» или все сразу, потом нажмите «Продолжить». Сцены без вашей картинки программа нарисует сама. Загружено ваших: ${(d.own_images || []).length}.</div>` : ""}

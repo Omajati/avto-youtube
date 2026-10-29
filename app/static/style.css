@@ -441,3 +441,13 @@ html[data-look^="pro"] .side .updcheck { display: block; margin: 0 8px 6px; font
 .mrow audio { height: 34px; width: 260px; flex: none; }
 .ctile { display: block; }
 #itemsel[data-ad="1"]::before { content: "Рекламный проект: отметьте товар, который рекламируем. Люди в ролике не появятся, товар будет в каждом кадре."; display: block; margin-bottom: 8px; padding: 8px 12px; border-radius: 8px; background: #fef3c7; color: #92400e; font-size: 13px; }
+
+/* the big timer while a video is being assembled */
+.eta { margin: 12px 0; padding: 22px 24px; border-radius: 18px; color: #fff;
+  background: linear-gradient(135deg, #0a84ff 0%, #5e5ce6 55%, #bf5af2 100%); box-shadow: 0 8px 28px rgba(94,92,230,.35); }
+.eta .lbl { font-size: 14px; opacity: .85; letter-spacing: .02em; }
+.eta .num { font-size: 64px; font-weight: 800; line-height: 1.05; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin: 4px 0 10px; }
+.eta .sub { font-size: 13px; opacity: .85; font-variant-numeric: tabular-nums; }
+.eta .track { height: 10px; border-radius: 99px; background: rgba(255,255,255,.25); overflow: hidden; margin-top: 12px; }
+.eta .track > div { height: 100%; border-radius: 99px; background: #fff; transition: width 1s linear; }
+@media (max-width: 600px) { .eta .num { font-size: 48px; } }

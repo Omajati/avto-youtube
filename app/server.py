@@ -384,6 +384,17 @@ def _job_or_404(jid):
     return j
 
 
+def _render_eta(d: Path, j: dict):
+    """Seconds left of the assembly now running, for the big timer; None when nothing is being assembled."""
+    if j.get("status") != "running" or j.get("stage") not in ("video", "short_video"):
+        return None
+    e = pipeline.read_json(d / f"render_eta_{'short' if j['stage'] == 'short_video' else 'scene'}.json")
+    if not e:
+        return None
+    return {"remaining": max(0.0, e["remaining"] - (time.time() - e["at"])), "frac": e.get("frac", 0),
+            "elapsed": e.get("elapsed", 0) + time.time() - e["at"]}
+
+
 @app.get("/api/jobs/{jid}")
 def job_detail(jid: str):
     j = _job_or_404(jid)
@@ -409,6 +420,7 @@ def job_detail(jid: str):
         "subs_pos": (j.get("options") or {}).get("subs_pos") or load_settings().get("subs_pos") or "mid_low",
         "images_waiting": pipeline.needs_images_choice(j),
         "images_manual": pipeline.images_manual(j),
+        "render_eta": _render_eta(d, j),
         "improve": pipeline.read_json(d / "improve.json"),
         "chapters": pipeline.chapters_text(jid),
         "files": {

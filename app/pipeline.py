@@ -3267,6 +3267,64 @@ def st_animate(c: Ctx):
     write_json(c.out("animate"), result)
 
 
+class RenderTimer:
+    """How long the assembly still takes, for the big timer on the video's page. The speed of this Mac is learnt
+    from earlier assemblies (seconds of work per second of video), so the first guess gets better each time."""
+    SPEED = JOBS_DIR.parent / "render_speed.json"
+
+    def __init__(self, c: Ctx, prefix: str, todo_secs: float, total: float, burn: bool):
+        self.c, self.prefix, self.todo, self.total, self.burn = c, prefix, todo_secs, total, burn
+        sp = read_json(self.SPEED) or {}
+        self.clip_rate = float(sp.get("clip") or 0.6)
+        self.mix_rate = float(sp.get("mix_subs" if burn else "mix") or (0.35 if burn else 0.03))
+        self.t0 = self.t_mix = time.time()
+        self.done = 0.0
+        self.clip_time = 0.0
+        self.file = c.dir / f"render_eta_{prefix}.json"
+        self._write(self.clip_rate * todo_secs + self._mix_left(0.0), 0.0)
+
+    def _mix_left(self, frac: float) -> float:
+        return self.mix_rate * self.total * (1 - frac) + 0.02 * self.total
+
+    def _write(self, left: float, frac: float):
+        write_json(self.file, {"remaining": round(max(left, 0), 1), "at": time.time(), "frac": round(frac, 3),
+                               "elapsed": round(time.time() - self.t0, 1)})
+
+    def clip_done(self, secs: float):
+        self.done += secs
+        el = time.time() - self.t0
+        left = el / self.done * max(self.todo - self.done, 0) if self.done else self.clip_rate * self.todo
+        work = self.todo * self.clip_rate + self.total * self.mix_rate or 1
+        self._write(left + self._mix_left(0.0), min(0.9, self.done * self.clip_rate / work))
+
+    def clips_finished(self):
+        self.clip_time = time.time() - self.t0
+        self.t_mix = time.time()
+        self.first = None  # (time, fraction) of the final assembly's first report
+        self.mix(0.0)
+
+    def mix(self, frac: float):
+        if frac > 0 and self.first is None:
+            self.first = (time.time(), frac)
+        el = time.time() - self.first[0] if self.first else 0.0
+        done = frac - self.first[1] if self.first else 0.0
+        left = el / done * (1 - frac) if done > 0.03 and el > 3 else self._mix_left(frac)
+        work = self.todo * self.clip_rate + self.total * self.mix_rate or 1
+        base = self.todo * self.clip_rate / work
+        self._write(left, base + (1 - base) * frac)
+
+    def finish(self):
+        self.file.unlink(missing_ok=True)
+        sp = read_json(self.SPEED) or {}
+        if self.todo > 5 and self.clip_time > 0:
+            sp["clip"] = round((float(sp.get("clip") or self.clip_time / self.todo) + self.clip_time / self.todo) / 2, 3)
+        mix = time.time() - self.t_mix
+        if self.total > 5:
+            k = "mix_subs" if self.burn else "mix"
+            sp[k] = round((float(sp.get(k) or mix / self.total) + mix / self.total) / 2, 3)
+        write_json(self.SPEED, sp)
+
+
 def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path, out: Path,
             clips_dir: Path, width: int, height: int, subs: bool = False):
     fps = int(c.settings["fps"])
@@ -3330,12 +3388,15 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
                           scenes[i]["motion"], strength, fade_in=(i == 0), fade_out=(i == len(scenes) - 1),
                           effect=fx[i][1])
 
+    timer = RenderTimer(c, prefix, sum(durations[i] for i in todo), total, bool(subs))
     with ThreadPoolExecutor(max_workers=max(1, int(c.settings["render_parallel"]))) as ex:
-        futures = [ex.submit(work, i) for i in todo]
+        futures = {ex.submit(work, i): i for i in todo}
         for f in as_completed(futures):
             f.result()
             done[0] += 1
             c.progress(0.9 * done[0] / len(scenes))
+            timer.clip_done(durations[futures[f]])
+    timer.clips_finished()
     c.check()
     c.log("Склеиваю фрагменты и накладываю звук…")
     joined = clips_dir / "joined.mp4"
@@ -3387,7 +3448,9 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
             c.log("⚠️ Ролик без озвучки, а музыки нет: он будет беззвучным. Добавьте треки в «Музыку» или включите «Сочинять новую».")
     media.final_mix(joined, narration, music, out, float(vol if vol not in (None, "") else c.settings["music_volume"]),
                     float(c.settings["loudness_lufs"]), total,
-                    subs=cap["ass"] if subs else None, fonts=cap["fonts"], sfx=sfx_file if has_sfx else None)
+                    subs=cap["ass"] if subs else None, fonts=cap["fonts"], sfx=sfx_file if has_sfx else None,
+                    on_progress=timer.mix)
+    timer.finish()
     joined.unlink(missing_ok=True)
     sfx_file.unlink(missing_ok=True)
     return {"file": str(out.relative_to(c.dir)), "duration": total, "music": music.name if music else "",

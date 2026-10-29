@@ -1,6 +1,6 @@
 {
- "version": 139,
- "label": "Opus только для сценария",
- "notes": "Opus пишет только сценарий, остальные шаги с текстом на Sonnet",
+ "version": 140,
+ "label": "таймер монтажа",
+ "notes": "Крупный таймер: сколько осталось до конца монтажа ролика",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
