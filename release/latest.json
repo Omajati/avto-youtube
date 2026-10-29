@@ -1,6 +1,6 @@
 {
- "version": 140,
- "label": "таймер монтажа",
- "notes": "Крупный таймер: сколько осталось до конца монтажа ролика",
+ "version": 141,
+ "label": "туман, дождь, снег по сценарию",
+ "notes": "Атмосфера по сценарию: туман, дождь, гроза, снег, пыль, искры, старая плёнка",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

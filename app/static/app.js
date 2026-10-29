@@ -1602,6 +1602,18 @@ function renderStages(d) {
       .then(() => toast("Видео пересобирается")).catch(e => { toast(e.message, true); b.checked = !b.checked; b.disabled = false; });
     lastStagesKey = "";
   });
+  el.querySelectorAll(".atm-apply").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    await api(`/api/jobs/${j.id}/atmos`, { json: { mode: b.parentElement.querySelector(".atm-mode").value } })
+      .then(() => toast("Атмосфера изменена, видео пересобирается")).catch(e => { toast(e.message, true); b.disabled = false; });
+    lastStagesKey = "";
+  });
+  el.querySelectorAll(".atm-sel").forEach(sel => sel.onchange = async () => {
+    sel.disabled = true;
+    await api(`/api/jobs/${j.id}/atmos`, { json: { scene: +sel.dataset.i, kind: sel.value } })
+      .then(() => toast("Эффект сцены изменён" + (d.files.video ? ", видео пересобирается" : ""))).catch(e => toast(e.message, true));
+    sel.disabled = false; lastStagesKey = "";
+  });
   el.querySelectorAll(".fx-apply").forEach(b => b.onclick = async () => {
     b.disabled = true;
     await api(`/api/jobs/${j.id}/effects`, { json: { mode: b.parentElement.querySelector(".fx-sel").value } })
@@ -1861,7 +1873,7 @@ const RENDER = {
       <span class="muted small">Номер сцены берётся из имени файла (1.png, scene_12.jpg, 03.webp); без номера по порядку.</span></div>
     <table><tr><th>#</th><th>Картинка</th><th>Текст сцены и что на картинке</th><th></th></tr>
     ${r.scenes.map((s, i) => `<tr><td>${i + 1}${durs ? `<div class="muted small">${durs[i].toFixed(1)}с</div>` : ""}</td><td>${img(d, `scene_${String(i).padStart(3, "0")}.png`, d.format === "short" ? "vsc" : "sc")}</td>
-      <td><div>${esc(s.prompt_ru)}</div>${s.location || s.shot ? `<div class="muted small">${s.location ? `📍 ${esc(s.location)}` : ""}${s.shot ? ` 🎥 ${esc(({ wide: "общий план", medium: "средний план", pov: "от первого лица", closeup: "крупный план", ots: "из-за плеча", detail: "деталь крупно", low: "снизу", high: "сверху", profile: "в профиль" })[s.shot] || s.shot)}` : ""}</div>` : ""}<div class="en">${esc(s.text)}</div>${fxTag(s)}</td>
+      <td><div>${esc(s.prompt_ru)}</div>${s.location || s.shot ? `<div class="muted small">${s.location ? `📍 ${esc(s.location)}` : ""}${s.shot ? ` 🎥 ${esc(({ wide: "общий план", medium: "средний план", pov: "от первого лица", closeup: "крупный план", ots: "из-за плеча", detail: "деталь крупно", low: "снизу", high: "сверху", profile: "в профиль" })[s.shot] || s.shot)}` : ""}</div>` : ""}<div class="en">${esc(s.text)}</div>${fxTag(s)}${atmSel(s, i, busy)}</td>
       <td>${d.images_manual ? "" : `<button class="sm" data-regen="scene:${i}">Перерисовать</button>`}<label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="scene:${i}" style="display:none" ${busy ? "disabled" : ""}></label>${own.has(`scene:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
   },
   extras(r, d) {
@@ -2006,6 +2018,11 @@ const RENDER = {
   },
 };
 
+function atmSel(s, i, busy) {
+  const cur = s.atmosphere || "none";
+  return `<div class="row small" style="margin-top:4px;gap:6px"><span class="muted">🌫 Атмосфера:</span><select class="atm-sel sm" data-i="${i}" style="width:auto;padding:2px 6px" ${busy ? "disabled" : ""}>${Object.entries(META.atmos_kinds).map(([k, n]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>`;
+}
+
 function fxTag(s) {
   const parts = [META.effect_ru[s.effect], META.sfx_ru[s.sfx]].filter(Boolean);
   return (s.speaker_name ? `<div class="tag-mod">🗣 Говорит: ${esc(s.speaker_name)}</div>` : "")
@@ -2097,7 +2114,10 @@ function fxRow(d) {
     <span class="muted small">видео пересоберётся</span></div>
   <div class="row" style="margin-top:8px"><span>Эффекты:</span>
     <select class="fx-sel" style="max-width:420px" ${busy ? "disabled" : ""}>${Object.entries(META.fx_modes).map(([k, n]) => `<option value="${k}" ${k === d.fx_mode ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
-    <button class="sm fx-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">видео пересоберётся бесплатно</span></div>`;
+    <button class="sm fx-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">видео пересоберётся бесплатно</span></div>
+  <div class="row" style="margin-top:8px"><span>Атмосфера:</span>
+    <select class="atm-mode" style="max-width:420px" ${busy ? "disabled" : ""}>${[...Object.entries(META.atmos_modes), ...Object.entries(META.atmos_kinds).filter(([k]) => k !== "none").map(([k, n]) => [k, `${n}: на весь ролик`])].map(([k, n]) => `<option value="${k}" ${k === d.atmos_mode ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+    <button class="sm atm-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">туман, дождь, снег поверх картинок; у каждой сцены можно поменять на шаге «Сцены»</span></div>`;
 }
 
 function subsRow(d, kind, fileKey, fileName) {
@@ -2263,6 +2283,16 @@ async function viewSettings(id) {
     </div><div>
       ${field("sfx_volume", "Громкость звуковых эффектов", s, { type: "range", min: 0, max: 1, step: 0.05 })}
     </div></div>
+    <h3>Атмосфера: туман, дождь, снег</h3>
+    <p class="muted small">ИИ при описании сцен отмечает погоду и настроение по сценарию, и программа рисует их поверх картинки: туман, дождь, грозу с молниями, снег, пыль, искры от огня, зерно старой плёнки. Под такими сценами тихо звучит дождь, ветер или треск огня. Это бесплатно. Эффект любой сцены можно поменять на шаге «Сцены».</p>
+    <div class="grid2"><div>
+      ${field("atmos_mode", "Атмосфера по умолчанию", s, { type: "select", options: Object.entries(META.atmos_modes) })}
+    </div><div>
+      ${field("atmos_volume", "Громкость дождя, ветра и огня", s, { type: "range", min: 0, max: 1, step: 0.05 })}
+    </div></div>
+    <details class="atm-lib" style="margin-top:6px"><summary>🎞 Свои футажи и звуки для эффектов (необязательно)</summary>
+      <p class="muted small">Программа рисует эффекты сама. Если хотите, чтобы было как в кино, положите сюда настоящие видео дождя, тумана, снега, искр <b>на чёрном фоне</b> (бесплатные есть на pixabay.com и mixkit.co, ищите «rain overlay», «fog overlay», «snow overlay black background»). Чёрный фон станет прозрачным. Звук (mp3, wav) заменит встроенный шум.</p>
+      <div data-atm-list>Загружаю…</div></details>
     <h3>Субтитры</h3>
     <p class="muted small">Текст озвучки появляется на видео в такт голосу. Это значение по умолчанию для новых роликов: у каждого ролика субтитры можно включить или выключить отдельно. Файл .srt для YouTube создаётся всегда.</p>
     <div class="grid2"><div>
@@ -2393,6 +2423,26 @@ async function viewSettings(id) {
   const save = async (quiet) => { SETTINGS_CACHE = await api("/api/settings", { json: collect() }); draftClear(); if (!quiet) { toast("Настройки сохранены"); await viewSettings(); draftBaseReset(); } };
   $("#save").onclick = () => save(false).catch(e => toast(e.message, true));
   main.querySelectorAll("input[name=imgprov]").forEach(r => r.onchange = () => main.querySelectorAll(".provider").forEach(p => p.classList.toggle("sel", p.contains(main.querySelector("input[name=imgprov]:checked")))));
+  const atmBox = main.querySelector("[data-atm-list]");
+  const drawAtm = async () => {
+    const lib = await api("/api/atmos").catch(() => ({}));
+    atmBox.innerHTML = Object.entries(META.atmos_kinds).filter(([k]) => k !== "none").map(([k, n]) => `<div class="row" style="gap:8px;margin:6px 0;flex-wrap:wrap">
+      <b style="min-width:180px">${esc(n)}</b>
+      ${(lib[k] || []).map(f => `<span class="tag-mod">${/\.(mp3|wav|m4a|aac|ogg)$/i.test(f.name) ? "🔊" : "🎞"} ${esc(f.name)} <a href="#" data-atm-del="${k}/${esc(f.name)}" title="Убрать">✕</a></span>`).join("") || `<span class="muted small">встроенный</span>`}
+      <label class="btn sm" style="cursor:pointer">＋ Добавить<input type="file" accept="video/*,audio/*" multiple data-atm-up="${k}" style="display:none"></label></div>`).join("");
+    atmBox.querySelectorAll("[data-atm-up]").forEach(inp => inp.onchange = async () => {
+      for (const f of inp.files) {
+        toast(`Загружаю ${f.name}…`);
+        const r = await fetch(`/api/atmos/${inp.dataset.atmUp}/upload?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
+        if (!r.ok) { const x = await r.json().catch(() => ({})); toast(x.error || x.detail || "Не загрузилось", true); }
+      }
+      drawAtm();
+    });
+    atmBox.querySelectorAll("[data-atm-del]").forEach(a => a.onclick = async e => {
+      e.preventDefault(); await fetch(`/api/atmos/${a.dataset.atmDel}`, { method: "DELETE" }); drawAtm();
+    });
+  };
+  if (atmBox) drawAtm();
   $("#load-voices").onclick = async () => {
     try {
       await save(true);
@@ -3258,6 +3308,7 @@ async function viewMontage() {
       <div class="grid2"><div>
         <label class="f">Музыка</label><select id="mt-music">${opt([...Object.entries(META.music_modes), ["own", "Своя музыка из файла"]], p.music_mode || "library")}</select>
         <div id="mt-own-music" style="display:none;margin:4px 0 8px"><input type="file" id="mt-musicfile" accept="audio/*"><div class="muted small">Трек сохранится и в раздел «Музыка».</div></div>
+        <label class="f">Атмосфера: туман, дождь, снег <span class="hint">поверх картинок, бесплатно</span></label><select id="mt-atm">${opt([...Object.entries(META.atmos_modes), ...Object.entries(META.atmos_kinds).filter(([k]) => k !== "none").map(([k, n]) => [k, `${n}: на весь ролик`])], p.atmos_mode || s.atmos_mode || "auto")}</select>
         <label class="f">Эффекты и звуки</label><select id="mt-fx">${opt(Object.entries(META.fx_modes), p.fx_mode || s.fx_mode || "light")}</select>
         <label class="f">Скорость готового ролика <span class="hint">голос и картинка вместе, тон голоса не меняется</span></label>
         <select id="mt-speed">${opt([1, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.4, 1.5].map(x => [x, x === 1 ? "Обычная" : `×${x}`]), 1)}</select>
@@ -3302,7 +3353,7 @@ async function viewMontage() {
         const up = async (url, file, what) => { toast(`Загружаю ${what}…`); const r = await fetch(url, { method: "POST", body: file }); let d = {}; try { d = await r.json(); } catch (e) {} if (!r.ok) throw new Error(d.error || d.detail || `Не удалось загрузить ${what}`); return d; };
         try {
           const body = { polish: true, topic: $("#mt-title").value, project_id: cur, format: $("#mt-fmt").value, language: $("#mt-lang").value,
-            images_pause: true, review_pause: false, idea_pause: false, music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, graphics: $("#mt-gfx").checked,
+            images_pause: true, review_pause: false, idea_pause: false, music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, atmos_mode: $("#mt-atm").value, graphics: $("#mt-gfx").checked,
             subs_smart: $("#mt-smart").checked, subs_video: $("#mt-subs").checked, subs_short: $("#mt-subs").checked, cta_short: $("#mt-cta").value, cta_lang: $("#mt-cta-lang").value, anim_mode: "off" };
           if ($("#mt-polishtext").value.trim()) body.montage_script = $("#mt-polishtext").value;
           body.own_video_upload = (await up(`/api/uploads?name=${encodeURIComponent(pf.name)}`, pf, "ролик")).id;
@@ -3322,7 +3373,7 @@ async function viewMontage() {
         images_pause: imgMode !== "ai", review_pause: false, idea_pause: false,
         voice_id: v.value || undefined, voice_name: v.value ? (vo.dataset.name || vo.textContent) : undefined,
         voice_stability: $("#mt-voice_stability").value, voice_similarity: $("#mt-voice_similarity").value, voice_style: $("#mt-voice_style").value, voice_speed: $("#mt-voice_speed").value,
-        music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, graphics: $("#mt-gfx").checked, subs_smart: $("#mt-smart").checked, speed_video: +$("#mt-speed").value,
+        music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, atmos_mode: $("#mt-atm").value, graphics: $("#mt-gfx").checked, subs_smart: $("#mt-smart").checked, speed_video: +$("#mt-speed").value,
         subs_video: $("#mt-subs").checked, subs_short: $("#mt-subs").checked, cta_short: $("#mt-cta").value, cta_lang: $("#mt-cta-lang").value,
         anim_mode: $("#mt-anim").value, anim_count: +$("#mt-anim-n").value, anim_pause: $("#mt-anim-p").checked };
       $("#mt-go").disabled = true;

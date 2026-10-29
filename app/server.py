@@ -10,7 +10,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, animate, captions, cta, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, thumb, tts, updater, uploader, worker, youtube
+from . import analytics, animate, atmos, captions, cta, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, thumb, tts, updater, uploader, worker, youtube
 from .config import (DATA_DIR, DEFAULTS, MUSIC_DIR, PROMPTS_DEFAULT_DIR, PROMPTS_DIR, load_settings,
                      public_settings, save_settings)
 from .net import UserError
@@ -99,7 +99,7 @@ def meta():
                           "clip": round(animate.clip_seconds({"video_model": k}, 5) * v["price"], 2)}
                          for k, v in animate.VIDEO_MODELS.items()],
         "anim_modes": animate.MODES, "video_model": load_settings().get("video_model", "kling25"),
-        "fx_modes": effects.MODES, "subs_positions": captions.POSITIONS, "cta_modes": cta.MODES, "cta_langs": cta.LANGS, "thumb_fonts": {k: v[0] for k, v in thumb.STYLE_FONTS.items()}, "thumb_looks": thumb.LOOKS, "effect_ru": effects.EFFECT_RU, "sfx_ru": effects.SFX_RU,
+        "atmos_kinds": atmos.RU, "atmos_modes": atmos.MODES, "fx_modes": effects.MODES, "subs_positions": captions.POSITIONS, "cta_modes": cta.MODES, "cta_langs": cta.LANGS, "thumb_fonts": {k: v[0] for k, v in thumb.STYLE_FONTS.items()}, "thumb_looks": thumb.LOOKS, "effect_ru": effects.EFFECT_RU, "sfx_ru": effects.SFX_RU,
         "image_styles": projects.IMAGE_STYLES,
         "default_niches": {**{k: v.get("niche", "") for k, v in projects.PRESETS.items()}, "": DEFAULTS["niche"]},
         "presets": {k: {"name": v["name"], "icon": v["icon"], "language": v["language"]} for k, v in projects.PRESETS.items()},
@@ -218,6 +218,7 @@ def create_job(data: dict = Body(...)):
         "fx_mode": data.get("fx_mode") if data.get("fx_mode") in effects.MODES else proj.get("fx_mode") or s.get("fx_mode", "light"),
         "short_seconds": _short_seconds(data.get("short_seconds") or proj.get("short_seconds")),
         "music_mode": data.get("music_mode") if data.get("music_mode") in musiclib.MODES else proj.get("music_mode") or "library",
+        **({"atmos_mode": data["atmos_mode"]} if data.get("atmos_mode") in atmos.MODES or data.get("atmos_mode") in atmos.KINDS else {}),
     }
     voice_up = _upload_path(data.get("own_voice_upload"))
     video_up = _upload_path(data.get("own_video_upload"))
@@ -436,6 +437,7 @@ def job_detail(jid: str):
         "subs": {"video": pipeline.subs_on(j, "video"), "short": pipeline.subs_on(j, "short")},
         "format": j["options"].get("format", "long"),
         "fx_mode": pipeline.fx_mode(j),
+        "atmos_mode": pipeline.atmos_mode(j),
         "project": projects.get(j["options"].get("project_id", "")) or None,
         "anim": {"mode": pipeline.anim_options(j)[0], "short": pipeline.anim_options(j)[1],
                  "waiting": pipeline.needs_anim_choice(j), "suggest": pipeline.anim_suggest(jid, j),
@@ -744,6 +746,72 @@ def job_effects(jid: str, data: dict = Body(...)):
         db.update(jid, status="queued", error="")
         worker.wake()
     return {"ok": True}
+
+
+@app.post("/api/jobs/{jid}/atmos")
+def job_atmos(jid: str, data: dict = Body(...)):
+    """Fog, rain and the like: for the whole video (mode) or one scene (scene + kind). Only the scenes it touches are
+    assembled again: free, no API calls."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
+    d = pipeline.job_dir(jid)
+    drop = ["video.json", "output/video.mp4"]
+    if "mode" in data:
+        if not (data["mode"] in atmos.MODES or data["mode"] in atmos.KINDS):
+            raise HTTPException(400, "Неизвестный режим")
+        db.update(jid, options=dict(j["options"], atmos_mode=data["mode"]))
+        drop.append("clips")
+    else:
+        kind, i = data.get("kind"), int(data.get("scene", -1))
+        sc = pipeline.read_json(d / "scenes.json") or {}
+        if kind not in atmos.KINDS or not 0 <= i < len(sc.get("scenes") or []):
+            raise HTTPException(400, "Неизвестная сцена или эффект")
+        sc["scenes"][i].update(atmosphere=kind, atmosphere_own=True)
+        pipeline.write_json(d / "scenes.json", sc)
+        drop.append(f"clips/scene_{i:03d}.mp4")
+        if pipeline.atmos_mode(j) == "off":  # a scene picked by hand turns the effects on
+            db.update(jid, options=dict(j["options"], atmos_mode="auto"))
+    for rel in drop:
+        pipeline._remove(d, rel)
+    if j["status"] in ("done", "error") and (d / "output").exists():
+        db.update(jid, status="queued", error="")
+        worker.wake()
+    return {"ok": True}
+
+
+@app.get("/api/atmos")
+def atmos_list():
+    """The owner's own footage and sounds for each effect."""
+    return {k: [{"name": f.name, "size": f.stat().st_size} for f in sorted(atmos.own_dir(k).iterdir())
+                if not f.name.startswith(".")] for k in atmos.KINDS if k != "none"}
+
+
+@app.post("/api/atmos/{kind}/upload")
+async def atmos_upload(kind: str, request: Request, name: str):
+    if kind not in atmos.KINDS or kind == "none":
+        raise HTTPException(404)
+    safe = Path(name).name
+    if Path(safe).suffix.lower() not in atmos._VIDEO + atmos._AUDIO:
+        raise UserError("Подходят видео (mp4, mov, webm) с эффектом на чёрном фоне или звук (mp3, wav, m4a).")
+    (atmos.own_dir(kind) / safe).write_bytes(await request.body())
+    return {"ok": True}
+
+
+@app.delete("/api/atmos/{kind}/{name}")
+def atmos_delete(kind: str, name: str):
+    if kind not in atmos.KINDS or kind == "none":
+        raise HTTPException(404)
+    (atmos.own_dir(kind) / Path(name).name).unlink(missing_ok=True)
+    return {"ok": True}
+
+
+@app.get("/atmos/{kind}/{name}")
+def atmos_file(kind: str, name: str):
+    p = atmos.ATMOS_DIR / Path(kind).name / Path(name).name
+    if kind not in atmos.KINDS or not p.is_file():
+        raise HTTPException(404)
+    return FileResponse(p)
 
 
 @app.post("/api/jobs/{jid}/assembly")

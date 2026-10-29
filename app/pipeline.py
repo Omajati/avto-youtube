@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import animate, balance, captions, cta, db, effects, graphics, images, llm, media, music as musiclib, take, thumb, tts
+from . import animate, atmos, balance, captions, cta, db, effects, graphics, images, llm, media, music as musiclib, take, thumb, tts
 from .config import JOBS_DIR, MUSIC_DIR, PROMPTS_DIR, PROMPTS_DEFAULT_DIR, load_settings
 from .net import Cancelled, UserError
 
@@ -542,6 +542,7 @@ SCHEMA_PROMPTS = {
         "index": {"type": "integer"}, "prompt": {"type": "string"}, "prompt_ru": {"type": "string"},
         "location": {"type": "string"},
         "effect": {"type": "string", "enum": effects.EFFECTS}, "sfx": {"type": "string", "enum": effects.SFX},
+        "atmosphere": {"type": "string", "enum": atmos.KINDS},
         "characters": {"type": "array", "items": {"type": "string"}},
         "items": {"type": "array", "items": {"type": "string"}}}}}},
 }
@@ -1669,6 +1670,7 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
                              for i in range(len(part))]}
         else:
             fx = effects.PROMPT_BLOCK.format(limit=effects.LIMIT["short" if vertical else "long"])
+            fx += atmos.PROMPT_BLOCK if not ad else "\n\nSet atmosphere to \"none\" for every fragment."
             names = ", ".join(c.char_name(ch) for ch in c.characters)
             fx += (f"\n\nIn field characters list which of the channel's recurring characters ({names}) are visible "
                    "in the picture, using exactly these names; otherwise an empty list." if names else
@@ -1724,6 +1726,7 @@ def _prompts_for(c: Ctx, chunks: list, vertical: bool, title: str) -> list:
                 **({"speaker": ch["speaker"]} if ch.get("speaker") else {}),
                 "effect": (p or {}).get("effect", "none"),
                 "sfx": (p or {}).get("sfx", "none"),
+                "atmosphere": (p or {}).get("atmosphere") if (p or {}).get("atmosphere") in atmos.KINDS else "none",
             })
     return out
 
@@ -2215,8 +2218,9 @@ def _sentences(text: str) -> list:
 
 
 SCHEMA_PIC_SCENES = {"type": "object", "properties": {"pictures": {"type": "array", "items": {
-    "type": "object", "properties": {"first_sentence": {"type": "integer"}, "prompt": {"type": "string"}},
-    "required": ["first_sentence", "prompt"], "additionalProperties": False}}},
+    "type": "object", "properties": {"first_sentence": {"type": "integer"}, "prompt": {"type": "string"},
+                                     "atmosphere": {"type": "string", "enum": atmos.KINDS}},
+    "required": ["first_sentence", "prompt", "atmosphere"], "additionalProperties": False}}},
     "required": ["pictures"], "additionalProperties": False}
 
 
@@ -2237,6 +2241,7 @@ def _scenes_from_pictures(c: Ctx, script: str):
             firsts.append(k)
         acc += w
     prompts = [""] * n
+    airs = []
     if not llm.has_key(c.settings) and not c.demo:
         c.log("Ключа Claude нет: раскладываю текст по картинкам по длине, по порядку картинок.")
     if n <= 80 and len(sents) >= n and not c.demo and llm.has_key(c.settings):
@@ -2257,7 +2262,10 @@ def _scenes_from_pictures(c: Ctx, script: str):
                                 "and together cover all sentences. For each picture give first_sentence (1-based; picture 1 "
                                 "starts at 1, each next picture starts later than the previous one) where its run begins: "
                                 "the sentence it illustrates best. Also give prompt: one English sentence describing what "
-                                "the picture shows and a gentle natural motion for animating it (no camera cuts, no text)."
+                                "the picture shows and a gentle natural motion for animating it (no camera cuts, no text). "
+                                "And atmosphere: the weather or mood layer to draw over this picture, only if the picture "
+                                "or its sentences clearly have it (fog, rain, storm, snow, dust, embers of a fire, grain for "
+                                "an old-film flashback), otherwise none."
                                 f"\n\nNARRATION:\n{numbered}", SCHEMA_PIC_SCENES, c.usage, 8000, images=thumbs)
             got = r.get("pictures") or []
             f = [int(x.get("first_sentence") or 0) - 1 for x in got]
@@ -2266,6 +2274,7 @@ def _scenes_from_pictures(c: Ctx, script: str):
             else:
                 c.log("Разметка от ИИ не сошлась, раскладываю текст по картинкам по длине.")
             prompts = [(x.get("prompt") or "").strip() for x in got][:n] + [""] * max(0, n - len(got))
+            airs = [x.get("atmosphere") if x.get("atmosphere") in atmos.KINDS else "none" for x in got][:n]
         except UserError as e:
             if "ключ" in str(e) or "денег" in str(e):
                 raise
@@ -2285,7 +2294,8 @@ def _scenes_from_pictures(c: Ctx, script: str):
             ImageOps.fit(ImageOps.exif_transpose(Image.open(p)).convert("RGB"), size, Image.LANCZOS).save(out)
         scenes.append({"text": texts[i], "prompt": prompts[i] or "The scene in the picture comes gently to life.",
                        "prompt_ru": f"Ваша картинка {i + 1} ({p.name})", "paragraph_end": False,
-                       "motion": media.MOTIONS[i % len(media.MOTIONS)], "characters": [], "items": []})
+                       "motion": media.MOTIONS[i % len(media.MOTIONS)], "characters": [], "items": [],
+                       "atmosphere": airs[i] if i < len(airs) else "none"})
     if len(texts) < n:
         c.log(f"Текста хватило только на {len(texts)} картинок из {n}: лишние не вошли в ролик.")
     write_json(c.dir / "own_images.json", [f"scene:{i}" for i in range(len(scenes))])
@@ -3127,6 +3137,13 @@ def job_language(job: dict) -> str:
     return projects.get(opts.get("project_id", "")).get("language") or "en"
 
 
+def atmos_mode(job_or_opts, settings=None) -> str:
+    """auto (the AI's choice per scene), off, or one kind for the whole video (the owner's choice on the montage page)."""
+    opts = job_or_opts.get("options", job_or_opts)
+    m = opts.get("atmos_mode") or (settings or load_settings()).get("atmos_mode", "auto")
+    return m if m in atmos.MODES or m in atmos.KINDS else "auto"
+
+
 def fx_mode(job_or_opts) -> str:
     """Effects mode of a job. Jobs made before this feature have none."""
     opts = job_or_opts.get("options", job_or_opts)
@@ -3366,7 +3383,20 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
 
     whole_video = own_video_file(c.dir) is not None and prefix == "scene"
 
+    kinds = atmos.kinds_of(scenes, atmos_mode(db.get(c.id) or c.opts, c.settings)) if not tk else ["none"] * len(scenes)
+    if any(k != "none" for k in kinds):
+        c.log("Атмосфера по сценарию: " + ", ".join(f"{atmos.RU[k].lower()} ({kinds.count(k)})"
+                                                     for k in atmos.KINDS if k != "none" and k in kinds) + ".")
+
     def work(i):
+        _make(i)
+        if kinds[i] != "none":
+            try:
+                atmos.apply(clips[i], kinds[i], width, height, fps, seed=i)
+            except UserError as e:
+                c.log(f"Эффект в сцене {i + 1} не наложился ({e}), сцена без него.")
+
+    def _make(i):
         c.check()
         a, b = bounds[i]
         orbit = c.dir / "anim" / f"{prefix}_{i:03d}.mp4"
@@ -3437,6 +3467,12 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
         c.log(f"Субтитры: {cap['moved']} строк перенесено в свободное место кадра.")
     sfx_file = clips_dir / "sfx.wav"
     has_sfx = effects.build_track(fx, durations, sfx_file, float(c.settings.get("sfx_volume", 0.5)))
+    if any(k in atmos.SOUND_RU for k in kinds) and float(c.settings.get("atmos_volume", 0.35)) > 0:
+        try:
+            has_sfx = atmos.ambient(kinds, durations, sfx_file, has_sfx, float(c.settings.get("atmos_volume", 0.35)))
+            c.log("Звук атмосферы: " + ", ".join(sorted({atmos.SOUND_RU[k] for k in kinds if k in atmos.SOUND_RU})) + ".")
+        except UserError as e:
+            c.log(f"Звук атмосферы добавить не получилось: {e}")
     if has_sfx:
         c.log(f"Звуковые эффекты: {sum(1 for f in fx if f[2] != 'none')}")
     if subs:
