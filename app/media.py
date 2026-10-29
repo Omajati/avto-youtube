@@ -293,6 +293,27 @@ def demo_audio(out: Path, seconds: float, idx: int):
          "-ar", 44100, "-ac", 1, "-c:a", "libmp3lame", "-b:a", "128k", out], "Демо-звук")
 
 
+def speech_spans(path: Path, noise_db: int = -35, min_silence: float = 0.25) -> list:
+    """[(start, end)] of the parts of a recording where someone speaks, found by its pauses (silence)."""
+    p = subprocess.run([ffmpeg(), "-hide_banner", "-i", str(path), "-vn", "-af",
+                        f"silencedetect=noise={noise_db}dB:d={min_silence}", "-f", "null", "-"], capture_output=True, text=True)
+    total = 0.0
+    m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", p.stderr)
+    if m:
+        total = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    spans, pos = [], 0.0
+    for kind, t in re.findall(r"silence_(start|end): ([\d.]+)", p.stderr):
+        t = float(t)
+        if kind == "start":
+            if t - pos > 0.05:
+                spans.append((pos, t))
+        else:
+            pos = t
+    if total - pos > 0.05:
+        spans.append((pos, total))
+    return spans or [(0.0, total)]
+
+
 def scene_cuts(path: Path, threshold: float = 0.3, min_gap: float = 0.8) -> list:
     """Times (seconds) of the hard cuts in a finished video: where one shot ends and the next begins."""
     p = subprocess.run([ffmpeg(), "-hide_banner", "-i", str(path), "-an", "-vf",

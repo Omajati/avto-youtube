@@ -1,6 +1,6 @@
 {
- "version": 137,
- "label": "испанские и немецкие голоса везде",
- "notes": "Кнопка «Голоса других языков» (испанские, немецкие и др.) у всех списков голосов",
+ "version": 138,
+ "label": "монтаж своей озвучки без ключей",
+ "notes": "Монтаж со своей озвучкой и картинками работает без ключей ElevenLabs и Claude",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

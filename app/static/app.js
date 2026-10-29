@@ -3194,6 +3194,7 @@ async function viewMontage() {
       <div id="mt-polish" style="display:none;margin-top:8px">
         <label class="f">Готовый ролик</label><input type="file" id="mt-polishfile" accept="video/*">
         <label class="f">Отдельная озвучка <span class="hint">необязательно: если голос уже есть в ролике, субтитры сделаются по нему</span></label><input type="file" id="mt-polishvoice" accept="audio/*">
+        <label class="f">Текст озвучки <span class="hint">необязательно, если есть ключ ElevenLabs: тогда программа сама расшифрует голос. Без ключа вставьте текст, и программа сама расставит слова по паузам в голосе</span></label><textarea id="mt-polishtext" rows="4" placeholder="Текст, который звучит в ролике"></textarea>
       </div>
     </div>
     <div class="card">
@@ -3284,6 +3285,7 @@ async function viewMontage() {
           const body = { polish: true, topic: $("#mt-title").value, project_id: cur, format: $("#mt-fmt").value, language: $("#mt-lang").value,
             images_pause: true, review_pause: false, idea_pause: false, music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, graphics: $("#mt-gfx").checked,
             subs_smart: $("#mt-smart").checked, subs_video: $("#mt-subs").checked, subs_short: $("#mt-subs").checked, cta_short: $("#mt-cta").value, cta_lang: $("#mt-cta-lang").value, anim_mode: "off" };
+          if ($("#mt-polishtext").value.trim()) body.montage_script = $("#mt-polishtext").value;
           body.own_video_upload = (await up(`/api/uploads?name=${encodeURIComponent(pf.name)}`, pf, "ролик")).id;
           if (pv) body.own_voice_upload = (await up(`/api/uploads?name=${encodeURIComponent(pv.name)}`, pv, "озвучку")).id;
           if (body.music_mode === "own") { await up(`/api/music/upload?name=${encodeURIComponent(mf0.name)}`, mf0, "музыку"); body.music_track = mf0.name; body.music_mode = "library"; }

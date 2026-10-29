@@ -227,7 +227,8 @@ def create_job(data: dict = Body(...)):
             raise UserError("Загрузите готовый ролик.")
         opts["polish"] = True
         opts["anim_mode"] = "off"
-        data["montage_script"] = " "  # the words and their times come from the sound itself
+        # The words and their times come from the sound itself, or from the owner's text laid over its pauses.
+        data["montage_script"] = data.get("montage_script") or " "
         if not voice_up:
             voice_up = video_up.with_name(video_up.stem + "_voice.m4a")
             try:

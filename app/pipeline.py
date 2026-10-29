@@ -1982,6 +1982,12 @@ def st_extras(c: Ctx):
     script = c.data("review")["final_script"]
     if c.demo:
         r = _demo("extras")
+    elif c.opts.get("montage") and not llm.has_key(c.settings):
+        # The owner's own montage without a Claude key: plain title and description from his own text.
+        title = (db.get(c.id) or {}).get("title") or " ".join(script.split()[:8])
+        r = dict(_demo("extras"), youtube_title=title, youtube_title_ru=title, description=script[:4500],
+                 tags=[], thumbnail_text=title[:40], thumbnail_text_ru=title[:40], script_ru=script)
+        c.log("Ключа Claude нет: название и описание взяты из вашего текста, поправьте их сами при загрузке.")
     else:
         c.log("Готовлю название, описание и теги" + ("…" if c.lang == "ru" else ", перевожу сценарий на русский…"))
         seo = (c.project.get("seo_ru") or "").strip()
@@ -2218,7 +2224,9 @@ def _scenes_from_pictures(c: Ctx, script: str):
             firsts.append(k)
         acc += w
     prompts = [""] * n
-    if n <= 80 and len(sents) >= n and not c.demo:
+    if not llm.has_key(c.settings) and not c.demo:
+        c.log("Ключа Claude нет: раскладываю текст по картинкам по длине, по порядку картинок.")
+    if n <= 80 and len(sents) >= n and not c.demo and llm.has_key(c.settings):
         thumbs = []
         for p in pics:
             im = ImageOps.exif_transpose(Image.open(p)).convert("RGB")
@@ -2369,10 +2377,73 @@ def _own_voice_words(c: Ctx, text: str) -> list:
     got = read_json(cache) or {}
     if got.get("key") == key and got.get("words"):
         return [tuple(w) for w in got["words"]]
-    c.log("Сопоставляю ваш текст с вашей озвучкой (ElevenLabs), чтобы знать время каждого слова…")
-    words = tts.align(c.settings, own_voice_file(c.dir), text)
+    if c.settings.get("elevenlabs_key"):
+        c.log("Сопоставляю ваш текст с вашей озвучкой (ElevenLabs), чтобы знать время каждого слова…")
+        words = tts.align(c.settings, own_voice_file(c.dir), text)
+    else:
+        c.log("Ключа ElevenLabs нет: время слов считаю сам по паузам в вашей озвучке (субтитры могут чуть "
+              "расходиться с голосом; с ключом ElevenLabs они ложатся точно по словам).")
+        words = estimate_word_times(own_voice_file(c.dir), text)
     write_json(cache, {"key": key, "words": words})
     return words
+
+
+def estimate_word_times(audio: Path, text: str) -> list:
+    """[(word, start, end)] without any service: each sentence is placed so it ends in the pause nearest to where its
+    length says it should, and its words are spread over the speech inside, each by its length."""
+    words = [t for t in text.split() if any(ch.isalnum() for ch in t)]
+    if not words:
+        return []
+    spans = media.speech_spans(audio)
+    end = spans[-1][1]
+    weights = [len(t) + 2 for t in words]
+
+    def talk(a, b):  # the spans of speech between two moments
+        return [(max(x, a), min(y, b)) for x, y in spans if min(y, b) > max(x, a)] or [(a, b)]
+
+    def spread(idx, a, b):  # words idx said between a and b, over the speech there
+        sp = talk(a, b)
+        total_t = sum(y - x for x, y in sp)
+        total_w = sum(weights[i] for i in idx) or 1
+
+        def at(x):
+            for p, q in sp:
+                if x <= q - p:
+                    return p + x
+                x -= q - p
+            return sp[-1][1]
+        acc, out = 0.0, []
+        for i in idx:
+            s0, e0 = acc / total_w * total_t, (acc + weights[i] - 1) / total_w * total_t
+            out.append((words[i], round(at(s0), 3), round(at(max(e0, s0)), 3)))
+            acc += weights[i]
+        return out
+    # Sentences, and where each would end if the speech were even.
+    groups, cur = [], []
+    for i, t in enumerate(words):
+        cur.append(i)
+        if re.search(r"[.!?…]\W*$", t):
+            groups.append(cur)
+            cur = []
+    if cur:
+        groups.append(cur)
+    gaps = [(spans[k][1], spans[k + 1][0]) for k in range(len(spans) - 1)]
+    even = spread(list(range(len(words))), 0.0, end)
+    bounds, used = [0.0], -1
+    for g in groups[:-1]:
+        t = even[g[-1]][2]
+        near = min(((abs((a + b) / 2 - t), k) for k, (a, b) in enumerate(gaps) if k > used and a > bounds[-1]),
+                   default=None)
+        if near and near[0] < 2.5:
+            used = near[1]
+            bounds.append((gaps[used][0] + gaps[used][1]) / 2)
+        else:
+            bounds.append(max(t, bounds[-1] + 0.1))
+    bounds.append(end)
+    out = []
+    for g, a, b in zip(groups, bounds, bounds[1:]):
+        out += spread(g, a, b)
+    return out
 
 
 OWN_VOICE_TITLE = "Ролик с моей озвучкой"
@@ -2380,6 +2451,9 @@ OWN_VOICE_TITLE = "Ролик с моей озвучкой"
 
 def _transcribe_own_voice(c: Ctx):
     """No text was given with the owner's recording: it is transcribed and becomes the script."""
+    if not c.settings.get("elevenlabs_key"):
+        raise UserError("Чтобы расшифровать вашу озвучку, нужен ключ ElevenLabs. Без ключа вставьте текст озвучки "
+                        "в поле «Текст» и создайте ролик заново: время слов программа посчитает сама.")
     c.log("Текста нет: расшифровываю вашу озвучку (ElevenLabs)…")
     text, words = tts.transcribe(c.settings, own_voice_file(c.dir), c.lang)
     write_json(c.dir / "own_voice_words.json", {"key": hashlib.md5(" ".join(text.split()).encode("utf-8")).hexdigest(),
@@ -3315,6 +3389,9 @@ def _graphics_for(c: Ctx, prefix: str, scenes: list, durations: list, total: flo
     if plan is None:
         if c.demo:
             plan = {"items": []}
+        elif not llm.has_key(_check_settings(c.settings)):
+            c.log("Ключа Claude нет: анимации цифр и надписей пропущены.")
+            return []
         else:
             c.log("Ищу в тексте цифры и важные моменты для анимаций…")
             try:
@@ -3899,6 +3976,9 @@ def prepare_montage(jid: str, title: str, script: str):
     opts = job.get("options") or {}
     text = re.sub(r"\n{3,}", "\n\n", script.replace("\r", "")).strip()
     transcribe = own_voice_file(d) is not None and word_count(text) < 3
+    if transcribe and not load_settings().get("elevenlabs_key"):
+        raise UserError("Без ключа ElevenLabs программа не может сама расшифровать озвучку. Вставьте текст озвучки "
+                        "в поле «Текст»: время слов для субтитров программа посчитает сама по паузам в голосе.")
     if transcribe:
         text = "Текст появится после расшифровки вашей озвучки."
         title = (title or "").strip() or OWN_VOICE_TITLE

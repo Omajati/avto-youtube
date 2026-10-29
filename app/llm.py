@@ -39,6 +39,11 @@ def strict_schema(schema: dict) -> dict:
     return s
 
 
+def has_key(settings: dict) -> bool:
+    """Whether the chosen text AI (Claude or OpenAI) has its key, so optional AI help can be skipped without one."""
+    return bool(settings.get("openai_key" if settings.get("llm_provider", "anthropic") == "openai" else "anthropic_key"))
+
+
 def call_json(settings: dict, system: str, user: str, schema: dict, usage: dict, max_tokens: int = 32000,
               images: list = None) -> dict:
     """images: optional list of JPEG bytes the model should look at (e.g. photos of a character)."""
