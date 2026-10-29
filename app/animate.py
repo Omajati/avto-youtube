@@ -190,19 +190,31 @@ def generate(settings, img: Path, prompt: str, need: float, vertical: bool, chec
     sub = r.json()
     status_url = sub.get("status_url") or f"https://queue.fal.run/{m['endpoint']}/requests/{sub['request_id']}/status"
     result_url = sub.get("response_url") or f"https://queue.fal.run/{m['endpoint']}/requests/{sub['request_id']}"
-    # A clip that hangs in fal.ai's queue does not hold the whole video: after 10 minutes the scene stays a picture.
-    deadline = time.time() + 10 * 60
+    # A clip that hangs in fal.ai's queue does not hold the whole video: if fal.ai has not started it in 2 minutes,
+    # the request is cancelled (so it is not billed later) and the scene stays a picture. Once started, a clip
+    # normally takes 1-3 minutes; after 6 the scene stays a picture too.
+    started, queued_since = None, time.time()
+    cancel_url = f"https://queue.fal.run/{m['endpoint']}/requests/{sub['request_id']}/cancel" if sub.get("request_id") else ""
     while True:
         if check:
             check()
-        st = net.request("fal.ai", "GET", status_url, headers=headers, timeout=60).json()
+        st = net.request("fal.ai", "GET", status_url, headers=headers, timeout=30, tries=2).json()
         status = st.get("status")
         if status == "COMPLETED":
             break
         if status not in ("IN_QUEUE", "IN_PROGRESS"):
             raise UserError(f"fal.ai: анимация не получилась ({str(st)[:300]})")
-        if time.time() > deadline:
-            raise UserError("fal.ai слишком долго делает анимацию. Попробуйте ещё раз позже.")
+        if status == "IN_PROGRESS" and started is None:
+            started = time.time()
+        if started is None and time.time() - queued_since > 120:
+            if cancel_url:
+                try:
+                    net.request("fal.ai", "PUT", cancel_url, headers=headers, timeout=20, tries=1)
+                except UserError:
+                    pass
+            raise UserError("fal.ai 2 минуты не брал сцену в работу (у них очередь), запрос отменён")
+        if started is not None and time.time() - started > 6 * 60:
+            raise UserError("fal.ai делал сцену дольше 6 минут")
         time.sleep(4)
     out = net.request("fal.ai", "GET", result_url, headers=headers, timeout=120).json()
     url = ((out or {}).get("video") or {}).get("url")
