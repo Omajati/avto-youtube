@@ -148,6 +148,11 @@ def _anthropic_once(client, kwargs, model, on_progress=None):
     except anthropic.AuthenticationError:
         raise UserError("Claude: ключ API не подошёл. Проверьте ключ Anthropic в Настройках.")
     except anthropic.PermissionDeniedError as e:
+        if "verif" in str(e).lower() or "can't receive replies" in str(e).lower():
+            raise UserError("Anthropic временно закрыл ответы Claude для вашего аккаунта и просит подтвердить "
+                            "организацию. Это не ошибка программы: войдите на console.anthropic.com тем же аккаунтом, "
+                            "откройте portal.anthropic.com/verify и пройдите подтверждение. Пока оно не пройдено, все "
+                            "шаги с Claude не работают (можно временно выбрать OpenAI в Настройках → «1. Сценарий»).")
         raise UserError(f"Claude: нет доступа ({e}). Проверьте ключ и баланс на console.anthropic.com.")
     except anthropic.NotFoundError:
         raise UserError(f"Claude: модель «{model}» не найдена. Проверьте название модели в Настройках.")

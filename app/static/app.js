@@ -3144,15 +3144,16 @@ async function viewInsta() {
       : `<p class="muted">Пока нет ни одной ниши для Инстаграма.</p>`}
     <div class="row" style="gap:8px;margin-top:6px"><select id="ig-niche" style="max-width:360px">${nOpts}<option value="custom">＋ Свой проект с нуля</option></select><button class="primary" id="ig-new">Создать нишу для Инстаграма</button></div>
   </div>
-  <div class="card"><h2>Разобрать рилс</h2>
-    <label class="f">Ссылка на рилс или пост</label>
-    <input type="text" id="ig-link" placeholder="https://www.instagram.com/reel/…">
+  <div class="card"><h2>Разобрать рилс или профиль</h2>
+    <label class="f">Ссылка на рилс или на профиль <span class="hint">профиль: программа найдёт его рилсы с наибольшими просмотрами, разберёт каждый и выведет общую формулу аккаунта</span></label>
+    <input type="text" id="ig-link" placeholder="https://www.instagram.com/reel/… или https://www.instagram.com/имя/">
+    <div class="row" style="gap:6px;margin-top:6px"><span class="small">Для профиля разобрать лучших рилсов:</span><select id="ig-count" style="width:auto">${[3, 5, 8, 10].map(n => `<option value="${n}" ${n === 5 ? "selected" : ""}>${n}</option>`).join("")}</select><span class="muted small">≈ $0.05 за рилс</span></div>
     <label class="f">…или вставьте текст рилса</label>
     <textarea id="ig-text" rows="3" placeholder="Текст чужого рилса, который вам понравился"></textarea>
     <div class="row" style="margin-top:10px"><button class="primary" id="ig-go">▶ Разобрать</button>
       <label class="btn" style="display:inline-block;cursor:pointer">📤 Загрузить видео<input type="file" id="ig-file" accept="video/*" style="display:none"></label>
       <span id="ig-up" class="muted small"></span></div>
-    <p class="muted small">Продюсер смотрит рилс как рилс: первая секунда, обложка, текст на экране, подпись, звук, темп, за что его сохраняют и пересылают. Стоит примерно $0.03–0.08. Профиль целиком Инстаграм без входа не отдаёт, поэтому разбирайте лучшие рилсы по одному.</p>
+    <p class="muted small">Продюсер смотрит рилс как рилс: первая секунда, обложка, текст на экране, подпись, звук, темп, за что его сохраняют и пересылают. Стоит примерно $0.03–0.08. Профиль тоже можно: нужен ваш вход в Инстаграм в браузере (ниже).</p>
   </div>
   <div class="card"><h2>Разборы рилсов (${reels.length})</h2>${reels.length ? `<table>${reels.map(x => `<tr><td><a href="#/producer/${x.id}">${esc(x.title || x.source)}</a><div class="muted small">${esc(x.source)}</div></td><td>${PR_STATUS[x.status] || esc(x.status)}</td></tr>`).join("")}</table>` : `<p class="muted">Пока ни одного разбора.</p>`}</div>
   ${projs.length ? `<div class="card"><h2>Хранилища ниш</h2><div class="pgrid sm">${projs.map((p, i) => `<a class="pcard" href="#/library/${p.id}"><div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b>
@@ -3169,7 +3170,7 @@ async function viewInsta() {
     const link = $("#ig-link").value.trim(), text = $("#ig-text").value.trim();
     if (!link && !text) return toast("Вставьте ссылку или текст", true);
     $("#ig-go").disabled = true;
-    try { const m = await api("/api/producer", { json: { link, text: link ? "" : text, platform: "instagram" } }); location.hash = `#/producer/${m.id}`; }
+    try { const m = await api("/api/producer", { json: { link, text: link ? "" : text, platform: "instagram", count: +$("#ig-count").value } }); location.hash = `#/producer/${m.id}`; }
     catch (e) { $("#ig-go").disabled = false; toast(e.message, true); }
   };
   $("#ig-file").onchange = async e => {

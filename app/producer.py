@@ -23,6 +23,7 @@ _threads = {}
 _lock = threading.Lock()
 YT_RE = re.compile(r"^https?://(www\.|m\.)?(youtube\.com|youtu\.be)/", re.I)
 IG_RE = re.compile(r"^https?://(www\.|m\.)?instagram\.com/", re.I)
+IG_PROFILE_RE = re.compile(r"^https?://(www\.|m\.)?instagram\.com/(?!reel|reels|p/|tv/|stories|explore)([\w.]+)/?(reels/?)?(\?.*)?$", re.I)
 IG_REEL_RE = re.compile(r"^https?://(www\.|m\.)?instagram\.com/(?:[\w.]+/)?(reel|reels|p|tv)/[\w-]+", re.I)
 
 
@@ -86,9 +87,9 @@ def start(source: str = "", count: int = 5, text: str = "", file_bytes: bytes = 
     channel's latest videos that fired with the ones that got little."""
     source = (source or "").strip()
     if source and IG_RE.match(source):
-        if not IG_REEL_RE.match(source):
-            raise UserError("Нужна ссылка на конкретный рилс или пост, например https://www.instagram.com/reel/…. "
-                            "Профиль целиком Инстаграм без входа не отдаёт: разберите несколько его лучших рилсов по ссылкам.")
+        if not IG_REEL_RE.match(source) and not IG_PROFILE_RE.match(source):
+            raise UserError("Нужна ссылка на рилс (https://www.instagram.com/reel/…) или на профиль "
+                            "(https://www.instagram.com/имя/).")
         if mode == "patterns":
             raise UserError("Закономерности считаются только для каналов YouTube. Рилсы разбирайте по ссылкам.")
         platform = "instagram"
@@ -264,6 +265,79 @@ def channel_videos(url: str, count: int) -> tuple:
         raise UserError("Не нашёл роликов на этом канале. Проверьте ссылку: нужна ссылка вида https://www.youtube.com/@канал")
     entries.sort(key=lambda e: e["views"] or 0, reverse=True)
     return title, subs, entries[:count]
+
+
+IG_APP_ID = "936619743392459"  # the id instagram.com itself sends with its own web requests
+_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+
+
+def _ig_cookies() -> dict:
+    """The owner's Instagram sign-in from his browser (the browser chosen for YouTube first, then the others)."""
+    try:
+        from yt_dlp.cookies import extract_cookies_from_browser
+    except ImportError:
+        raise UserError("Загрузчик не установлен. Нажмите «Обновить загрузчик YouTube» на странице «ИИ продюсер».")
+    chosen = load_settings().get("yt_cookies_browser", "") or ""
+    order = ([chosen] if chosen and chosen != "none" else []) + [b for b in _installed_browsers() if b != chosen]
+    errors = []
+    for b in order:
+        try:
+            jar = extract_cookies_from_browser(b)
+        except Exception as e:  # noqa: BLE001 - try the next browser
+            errors.append(f"{BROWSERS.get(b, b)}: {str(e)[:80]}")
+            continue
+        got = {c.name: c.value for c in jar if "instagram.com" in (c.domain or "")}
+        if got.get("sessionid"):
+            return got
+    raise UserError("Чтобы разобрать профиль, нужен ваш вход в Инстаграм: откройте instagram.com в Chrome или Firefox "
+                    "и войдите в свой аккаунт, затем запустите разбор ещё раз. Если Mac спросит пароль для «Chrome Safe "
+                    "Storage», нажмите «Разрешать всегда»." + (f" ({'; '.join(errors)[:300]})" if errors else ""))
+
+
+def ig_profile_reels(url: str, count: int) -> tuple:
+    """(name, followers, [the most played reels], how many reels were looked at) of an Instagram profile."""
+    user = IG_PROFILE_RE.match(url).group(2)
+    ck = _ig_cookies()
+    head = {"User-Agent": _UA, "x-ig-app-id": IG_APP_ID, "X-Requested-With": "XMLHttpRequest",
+            "Referer": f"https://www.instagram.com/{user}/reels/", "x-csrftoken": ck.get("csrftoken", "")}
+    with httpx.Client(cookies=ck, headers=head, timeout=30, follow_redirects=True) as cl:
+        r = cl.get("https://www.instagram.com/api/v1/users/web_profile_info/", params={"username": user})
+        if r.status_code == 404:
+            raise UserError(f"Профиль «{user}» не найден. Проверьте ссылку.")
+        if r.status_code >= 400 or "json" not in r.headers.get("content-type", ""):
+            raise UserError(f"Инстаграм не отдал профиль (ошибка {r.status_code}). Откройте instagram.com в браузере, "
+                            "проверьте, что вы вошли, и попробуйте через несколько минут.")
+        u = (r.json().get("data") or {}).get("user") or {}
+        if u.get("is_private") and not u.get("followed_by_viewer"):
+            raise UserError("Это закрытый профиль: его рилсы видны только подписчикам.")
+        name = u.get("full_name") or user
+        subs = (u.get("edge_followed_by") or {}).get("count")
+        reels, max_id = [], ""
+        for _ in range(6):  # up to about 70 latest reels
+            r = cl.post("https://www.instagram.com/api/v1/clips/user/",
+                        data={"target_user_id": u.get("id", ""), "page_size": 12, "include_feed_video": "true",
+                              **({"max_id": max_id} if max_id else {})})
+            if r.status_code >= 400:
+                if reels:
+                    break
+                raise UserError(f"Инстаграм не отдал список рилсов (ошибка {r.status_code}). Попробуйте через несколько минут.")
+            d = r.json()
+            for it in d.get("items") or []:
+                md = it.get("media") or {}
+                if md.get("code"):
+                    reels.append({"id": md["code"], "url": f"https://www.instagram.com/reel/{md['code']}/",
+                                  "title": ((md.get("caption") or {}).get("text") or "").split("\n")[0][:90] or md["code"],
+                                  "views": md.get("play_count") or md.get("view_count") or 0,
+                                  "likes": md.get("like_count") or 0})
+            pg = d.get("paging_info") or {}
+            if not pg.get("more_available") or not pg.get("max_id"):
+                break
+            max_id = pg["max_id"]
+            time.sleep(1.5)  # gently, like a person scrolling
+    if not reels:
+        raise UserError("В этом профиле не нашлось рилсов.")
+    reels.sort(key=lambda e: (e["views"], e["likes"]), reverse=True)
+    return name, subs, reels[:count], len(reels)
 
 
 def _is_channel(url: str) -> bool:
@@ -653,15 +727,21 @@ def _work(d: Path):
         items.append(_item(meta, a, _plain(lines), ""))
         for f in (src, mp3):
             f.unlink(missing_ok=True)
-    elif _is_channel(m["source"]):
-        _log(d, "Ищу самые просматриваемые ролики канала…")
-        title, subs, entries = channel_videos(m["source"], m["count"])
-        m.update(title=f"Канал {title}" if title else m["source"], subscribers=subs)
+    elif _is_channel(m["source"]) or IG_PROFILE_RE.match(m["source"]):
+        ig = bool(IG_PROFILE_RE.match(m["source"]))
+        if ig:
+            _log(d, "Смотрю рилсы профиля (через ваш вход в Инстаграм в браузере)…")
+            title, subs, entries, total = ig_profile_reels(m["source"], m["count"])
+            _log(d, f"Нашёл {total} рилсов, беру {len(entries)} с наибольшими просмотрами.")
+        else:
+            _log(d, "Ищу самые просматриваемые ролики канала…")
+            title, subs, entries = channel_videos(m["source"], m["count"])
+        m.update(title=(f"Профиль {title}" if ig else f"Канал {title}") if title else m["source"], subscribers=subs)
         _write(d / "meta.json", m)
         _log(d, f"Беру {len(entries)} роликов с наибольшими просмотрами.")
         for i, e in enumerate(entries):
             try:
-                items.append(_one_video(d, settings, usage, e["url"], i))
+                items.append(_one_video(d, settings, usage, e["url"], i, "instagram" if ig else ""))
             except UserError as err:
                 _log(d, f"Ролик «{e['title']}» пропущен: {err}")
             m["items"] = items
@@ -671,8 +751,8 @@ def _work(d: Path):
         _log(d, "Ищу общую формулу канала…")
         brief = "\n\n".join(f"### {x['title']} ({x.get('views')} views)\nWhy: {x.get('why_ru', '')}\nHook: {x.get('hook_ru', '')}\n"
                             f"Techniques: {'; '.join(x.get('techniques') or [])}" for x in items)
-        m["channel"] = llm.call_json(settings, "You are a YouTube producer. Answer only with JSON.",
-                                     f"Channel: {title} ({subs} subscribers). Analyses of its most viewed videos:\n\n{brief}\n\n"
+        m["channel"] = llm.call_json(settings, "You are a YouTube and Instagram Reels producer. Answer only with JSON.",
+                                     f"{'Instagram account' if ig else 'Channel'}: {title} ({subs} {'followers' if ig else 'subscribers'}). Analyses of its most viewed videos:\n\n{brief}\n\n"
                                      "Return: summary_ru (what the channel does, for whom, Russian); formula_ru (the repeatable "
                                      "formula of its hits: topic choice, hook, structure, character, packaging; Russian, 4-8 "
                                      "sentences); strengths_ru (Russian list); techniques (English rules for a scriptwriter); "

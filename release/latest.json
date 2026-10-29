@@ -1,6 +1,6 @@
 {
- "version": 147,
- "label": "fal ждём 2 минуты",
- "notes": "Если fal.ai 2 минуты не берёт сцену в работу, запрос отменяется и сцена остаётся картинкой",
+ "version": 148,
+ "label": "разбор профиля Инстаграма",
+ "notes": "Разбор профиля Инстаграма: лучшие рилсы и формула аккаунта; понятная ошибка, когда Anthropic просит подтвердить аккаунт",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
