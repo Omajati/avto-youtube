@@ -66,7 +66,11 @@ def set_known(service: str, amount: float):
 
 def _elevenlabs(key: str) -> dict:
     r = net.request("ElevenLabs", "GET", "https://api.elevenlabs.io/v1/user/subscription", tries=1, timeout=15,
-                    headers={"xi-api-key": key}).json()
+                    headers={"xi-api-key": key})
+    try:
+        r = r.json()
+    except ValueError:  # a block page instead of the answer: ElevenLabs is closed for Russia without a VPN
+        return {"kind": "error", "error": "ElevenLabs не ответил: включите VPN"}
     used, limit = int(r.get("character_count") or 0), int(r.get("character_limit") or 0)
     left = max(limit - used, 0)
     out = {"kind": "real", "value": left, "unit": "символов", "limit": limit,

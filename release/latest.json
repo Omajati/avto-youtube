@@ -1,6 +1,6 @@
 {
- "version": 141,
- "label": "туман, дождь, снег по сценарию",
- "notes": "Атмосфера по сценарию: туман, дождь, гроза, снег, пыль, искры, старая плёнка",
+ "version": 142,
+ "label": "Claude не зависает молча",
+ "notes": "Если Claude не отвечает 3 минуты, программа пишет об этом, а не ждёт бесконечно",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

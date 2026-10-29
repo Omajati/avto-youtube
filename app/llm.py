@@ -75,8 +75,10 @@ def _anthropic(settings, system, user, schema, usage, max_tokens, images=None):
     model = settings.get("anthropic_model") or "claude-opus-5-5"
     # A blocked connection (no VPN) fails within seconds instead of hanging for many minutes.
     # The SDK's own Timeout class: newer versions are built on another HTTP library.
-    timeout = anthropic.Timeout(900, connect=20) if hasattr(anthropic, "Timeout") else 900
-    client = anthropic.Anthropic(api_key=key, max_retries=4, timeout=timeout)
+    # The answer streams with regular pings: three minutes of silence means a stalled connection (often the VPN),
+    # which is reported instead of waiting without end.
+    timeout = anthropic.Timeout(900, read=180, connect=20) if hasattr(anthropic, "Timeout") else 900
+    client = anthropic.Anthropic(api_key=key, max_retries=2, timeout=timeout)
     kwargs = dict(
         model=model,
         max_tokens=max_tokens,
@@ -134,6 +136,9 @@ def _anthropic_once(client, kwargs, model):
         if "credit" in text.lower() or "balance" in text.lower():
             raise UserError("Claude: на аккаунте закончились деньги. Пополните баланс на console.anthropic.com.")
         raise UserError(f"Claude отклонил запрос: {text[:400]}")
+    except anthropic.APITimeoutError:
+        raise UserError("Claude не отвечает уже несколько минут: связь зависла. Проверьте интернет и VPN и нажмите "
+                        "«Продолжить» (уже готовые шаги заново не делаются).")
     except anthropic.APIConnectionError:
         raise UserError("Claude: нет связи с сервисом. Проверьте интернет и что включён VPN (из России Claude работает только через VPN).")
     except anthropic.APIStatusError as e:
