@@ -2213,6 +2213,11 @@ async function viewSettings(id) {
 
   <div class="card"><h2>2. Озвучка (ElevenLabs)</h2>
     ${field("elevenlabs_key", "Ключ ElevenLabs", s, { type: "secret", hint: `Получить: <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank">elevenlabs.io → Settings → API Keys</a>` })}
+    <details class="el-keys" style="margin-top:8px"><summary>🔑 Запасные ключи ElevenLabs: когда на одном кончаются кредиты, программа сама берёт следующий</summary>
+      <p class="muted small">Добавьте ключи других аккаунтов ElevenLabs. Озвучка идёт с рабочего ключа; как только на нём кончатся кредиты, программа сама переключится на следующий и продолжит с той же сцены. Голоса из библиотеки программа сама добавит в новый аккаунт. Свой клонированный голос есть только в том аккаунте, где его сделали.</p>
+      <div data-el-list class="small">Загружаю…</div>
+      <div class="row" style="margin-top:6px;gap:6px"><input type="password" data-el-new placeholder="вставьте ещё один ключ ElevenLabs (sk_…)" autocomplete="off" style="max-width:420px"><button class="sm primary" data-el-add type="button">＋ Добавить ключ</button></div>
+    </details>
     <div class="row" style="margin-top:10px"><button id="load-voices">Загрузить список голосов</button><span id="el-acc" class="muted small"></span></div>
     <label class="f">Голос <span class="hint">Сейчас: ${esc(s.elevenlabs_voice_name)}. Для историй хорошо подходят спокойные низкие мужские голоса (George, Brian, Daniel).</span></label>
     <select id="voice-sel"><option value="${esc(s.elevenlabs_voice_id)}">${esc(s.elevenlabs_voice_name)}</option></select>
@@ -2424,6 +2429,29 @@ async function viewSettings(id) {
   const save = async (quiet) => { SETTINGS_CACHE = await api("/api/settings", { json: collect() }); draftClear(); if (!quiet) { toast("Настройки сохранены"); await viewSettings(); draftBaseReset(); } };
   $("#save").onclick = () => save(false).catch(e => toast(e.message, true));
   main.querySelectorAll("input[name=imgprov]").forEach(r => r.onchange = () => main.querySelectorAll(".provider").forEach(p => p.classList.toggle("sel", p.contains(main.querySelector("input[name=imgprov]:checked")))));
+  const elBox = main.querySelector(".el-keys");
+  const drawKeys = async () => {
+    const list = elBox.querySelector("[data-el-list]");
+    try {
+      const ks = await api("/api/eleven/keys");
+      list.innerHTML = ks.length ? `<table>${ks.map(k => `<tr><td>${k.active ? "✅ <b>рабочий</b>" : "запасной"}</td><td><code>${esc(k.mask)}</code></td>
+        <td>${k.left !== undefined ? `осталось ${k.left.toLocaleString("ru")} символов` : `<span class="muted">${esc(k.error || "не проверить")}</span>`}${k.spent ? " · <span class=\"muted\">кончились недавно</span>" : ""}</td>
+        <td>${k.active ? "" : `<button class="sm" type="button" data-el-use="${k.id}">Сделать рабочим</button> <button class="sm" type="button" data-el-del="${k.id}">Убрать</button>`}</td></tr>`).join("")}</table>` : `<p class="muted">Ключей пока нет.</p>`;
+      list.querySelectorAll("[data-el-use]").forEach(b => b.onclick = async () => { await api(`/api/eleven/keys/${b.dataset.elUse}/use`, { json: {} }).catch(e => toast(e.message, true)); drawKeys(); });
+      list.querySelectorAll("[data-el-del]").forEach(b => b.onclick = async () => {
+        if (!confirm("Убрать этот ключ из программы?")) return;
+        await fetch(`/api/eleven/keys/${b.dataset.elDel}`, { method: "DELETE" }); drawKeys();
+      });
+    } catch (e) { list.innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
+  };
+  if (elBox) {
+    elBox.addEventListener("toggle", () => { if (elBox.open) drawKeys(); });
+    elBox.querySelector("[data-el-add]").onclick = async () => {
+      const inp = elBox.querySelector("[data-el-new]");
+      if (!inp.value.trim()) return toast("Вставьте ключ", true);
+      await api("/api/eleven/keys", { json: { key: inp.value.trim() } }).then(() => { inp.value = ""; toast("Ключ добавлен"); drawKeys(); }).catch(e => toast(e.message, true));
+    };
+  }
   const atmBox = main.querySelector("[data-atm-list]");
   const drawAtm = async () => {
     const lib = await api("/api/atmos").catch(() => ({}));

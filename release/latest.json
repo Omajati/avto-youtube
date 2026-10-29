@@ -1,6 +1,6 @@
 {
- "version": 143,
- "label": "видно, как Claude пишет",
- "notes": "На странице ролика видно, сколько Claude уже написал",
+ "version": 144,
+ "label": "запасные ключи ElevenLabs",
+ "notes": "Запасные ключи ElevenLabs: кончились кредиты, программа сама берёт следующий",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

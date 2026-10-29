@@ -2128,8 +2128,14 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
             ch = next((x for x in c.characters if x["id"] == who and x.get("voice_id")), None)
             if ch:
                 settings = {**c.settings, "elevenlabs_voice_id": ch["voice_id"]}
+            key = settings.get("elevenlabs_key")
             chars = tts.synthesize(settings, sc.get("tts_text") or sc["text"], mp3, prev_t, next_t, c.lang)
             c.add_usage("tts_chars", chars)
+            if settings.get("elevenlabs_key") != key:
+                from . import elkeys
+                c.settings["elevenlabs_key"] = settings["elevenlabs_key"]
+                c.log("На ключе ElevenLabs закончились кредиты: озвучка продолжается с запасного ключа "
+                      f"{elkeys.mask(settings['elevenlabs_key'])}.")
         media.to_wav(mp3, wav, c.voice_tempo())
         return i
 

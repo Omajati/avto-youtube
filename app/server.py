@@ -1870,6 +1870,66 @@ def voices_library(gender: str = "", use_case: str = "", search: str = "", page:
     return tts.library(load_settings(), gender, use_case, search, page, language)
 
 
+@app.get("/api/eleven/keys")
+def eleven_keys():
+    """The working ElevenLabs key and the reserve ones (masked), with the characters left on each."""
+    from concurrent.futures import ThreadPoolExecutor
+    from . import elkeys, net
+    keys = elkeys.all_keys()
+    cur = load_settings().get("elevenlabs_key", "")
+
+    def one(k):
+        row = {"id": elkeys.fp(k), "mask": elkeys.mask(k), "active": k == cur,
+               "spent": time.time() - elkeys.spent_at(k) < 6 * 3600}
+        try:
+            d = net.request("ElevenLabs", "GET", f"{tts.BASE}/user/subscription", headers={"xi-api-key": k},
+                            timeout=15, tries=1).json()
+            row["left"] = max(int(d.get("character_limit") or 0) - int(d.get("character_count") or 0), 0)
+        except Exception as e:  # noqa: BLE001 - a key that can't be checked is still listed
+            row["error"] = str(e)[:160]
+        return row
+    with ThreadPoolExecutor(4) as ex:
+        return list(ex.map(one, keys))
+
+
+def _eleven_key_by_id(kid: str) -> str:
+    from . import elkeys
+    k = next((x for x in elkeys.all_keys() if elkeys.fp(x) == kid), None)
+    if not k:
+        raise HTTPException(404, "Ключ не найден")
+    return k
+
+
+@app.post("/api/eleven/keys")
+def eleven_key_add(data: dict = Body(...)):
+    from . import elkeys
+    key = (data.get("key") or "").strip()
+    if len(key) < 20:
+        raise UserError("Это не похоже на ключ ElevenLabs: он длинный и обычно начинается с sk_.")
+    if not load_settings().get("elevenlabs_key"):
+        save_settings({"elevenlabs_key": key})
+    else:
+        elkeys.add(key)
+    return {"ok": True}
+
+
+@app.post("/api/eleven/keys/{kid}/use")
+def eleven_key_use(kid: str):
+    from . import elkeys
+    elkeys.use(_eleven_key_by_id(kid))
+    return {"ok": True}
+
+
+@app.delete("/api/eleven/keys/{kid}")
+def eleven_key_delete(kid: str):
+    from . import elkeys
+    k = _eleven_key_by_id(kid)
+    if k == load_settings().get("elevenlabs_key"):
+        raise UserError("Это рабочий ключ. Сначала сделайте рабочим другой ключ.")
+    elkeys.remove(k)
+    return {"ok": True}
+
+
 @app.post("/api/voices/library/add")
 def voices_library_add(data: dict = Body(...)):
     s = load_settings()

@@ -73,9 +73,13 @@ def library(settings, gender: str = "", use_case: str = "", search: str = "", pa
 
 def add_from_library(settings, owner: str, voice_id: str, name: str) -> str:
     """Adds a library voice to the account's own voices (the API can only speak with those). Returns its voice_id."""
-    r = net.request("ElevenLabs", "POST", f"{BASE}/voices/add/{owner}/{voice_id}", headers={"xi-api-key": _key(settings)},
+    from . import elkeys
+    key = _key(settings)
+    r = net.request("ElevenLabs", "POST", f"{BASE}/voices/add/{owner}/{voice_id}", headers={"xi-api-key": key},
                     json={"new_name": (name or "Голос")[:100]}, timeout=60, tries=2)
-    return r.json().get("voice_id") or voice_id
+    vid = r.json().get("voice_id") or voice_id
+    elkeys.remember_voice(vid, owner, voice_id, name, key)
+    return vid
 
 
 _WORDS_RU = {
@@ -193,7 +197,62 @@ def is_audio(head: bytes) -> bool:
 
 def synthesize(settings, text: str, out_path: Path, previous_text: str = "", next_text: str = "",
                language: str = "") -> int:
-    """Writes an mp3 file. Returns the number of characters billed."""
+    """Writes an mp3 file. Returns the number of characters billed. When the credits of the working key run out,
+    the next reserve key takes over (settings["elevenlabs_key"] is changed in place), and a library voice is added
+    to that account by itself."""
+    from . import elkeys
+    voice = settings.get("elevenlabs_voice_id") or "JBFqnCBsd6RMkjVDRZzb"
+    readded = set()
+    for _ in range(len(elkeys.all_keys()) + 3):
+        key = _key(settings)
+        try:
+            return _synthesize(dict(settings, elevenlabs_voice_id=elkeys.voice_for(key, voice)), text, out_path,
+                               previous_text, next_text, language)
+        except UserError as e:
+            msg = str(e)
+            if "закончились деньги" in msg or "лимит на аккаунте" in msg:
+                if elkeys.switch(settings, key):
+                    continue
+                if len(elkeys.all_keys()) > 1:
+                    raise UserError("ElevenLabs: на всех ваших ключах закончились кредиты. Добавьте новый ключ в "
+                                    "Настройках → «2. Озвучка» → «Запасные ключи ElevenLabs» и нажмите «Продолжить».")
+                raise
+            info = elkeys.known_voice(voice)
+            if ("voice_not_found" in msg or "(404)" in msg) and not info:
+                info = _learn_voice(voice)
+            if ("voice_not_found" in msg or "(404)" in msg) and info and key not in readded:
+                # A library voice is personal to an account: it is added to this account too.
+                readded.add(key)
+                new = add_from_library(settings, info["owner"], info["public_id"], info.get("name", ""))
+                elkeys.set_voice(key, voice, new)
+                continue
+            if "voice_not_found" in msg or "(404)" in msg:
+                raise UserError("ElevenLabs: этого голоса нет в аккаунте ключа, который сейчас работает (голоса из "
+                                "библиотеки у каждого аккаунта свои). Выберите голос заново через «🌍 Библиотека "
+                                "голосов»: программа запомнит его и сама добавит в другие аккаунты.")
+            raise
+    raise UserError("ElevenLabs: не получилось озвучить ни с одним ключом.")
+
+
+def _learn_voice(voice: str) -> dict:
+    """A library voice chosen before the reserve keys existed: its owner is read from an account that has it."""
+    from . import elkeys
+    for k in elkeys.all_keys():
+        try:
+            v = net.request("ElevenLabs", "GET", f"{BASE}/voices/{voice}", headers={"xi-api-key": k}, timeout=30,
+                            tries=1).json()
+        except (UserError, ValueError):
+            continue
+        sh = v.get("sharing") or {}
+        owner, public = sh.get("public_owner_id"), sh.get("original_voice_id")
+        if owner and public:
+            elkeys.remember_voice(voice, owner, public, v.get("name", ""), k)
+            return elkeys.known_voice(voice)
+    return {}
+
+
+def _synthesize(settings, text: str, out_path: Path, previous_text: str = "", next_text: str = "",
+                language: str = "") -> int:
     model = settings.get("elevenlabs_model") or "eleven_multilingual_v2"
     voice = settings.get("elevenlabs_voice_id") or "JBFqnCBsd6RMkjVDRZzb"
     stability = _unit(settings.get("voice_stability", 0.5), 0.5)
