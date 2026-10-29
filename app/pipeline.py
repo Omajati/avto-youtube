@@ -1019,7 +1019,8 @@ class Ctx:
                     words=self.words,
                     words_min=int(self.words * 0.9), words_max=int(self.words * 1.1), **values) + extra \
             + self.voice_rule(prompt_file)
-        result = llm.call_json(self.settings, system, user, schema, self.usage, max_tokens)
+        result = llm.call_json(self.settings if prompt_file in WRITER_PROMPTS else _helper_settings(self.settings),
+                               system, user, schema, self.usage, max_tokens)
         self.save_usage()
         return result
 
@@ -1174,7 +1175,7 @@ def _critic_pick(c: Ctx, ideas: list, r: dict, idx: int) -> int:
     text = "\n\n".join(f"{i}. {x.get('title', '')}\nFirst line: {x.get('first_line', '')}\n"
                         f"Story: {x.get('premise', '')}\nTwist: {x.get('twist', '')}" for i, x in enumerate(ideas))
     try:
-        cr = llm.call_json(c.settings, "You judge YouTube Shorts ideas. Answer only with JSON.",
+        cr = llm.call_json(_helper_settings(c.settings), "You judge YouTube Shorts ideas. Answer only with JSON.",
                            IDEA_CRITIC.format(ideas=text, niche=c.niche.strip()[:3000], audience=(
                                "\nThe audience is small children and their parents: kind, safe, happy endings are required; "
                                "judge surprise by the unexpected way the story gets there." if c.project.get("made_for_kids") else
@@ -1782,6 +1783,18 @@ def _logic_check(c: Ctx, scenes: list):
     c.log(f"Контролёр логики: исправлено описаний {n}." if n else "Контролёр логики: противоречий не нашёл.")
 
 
+# The steps where the chosen model writes the script itself; every other text step may use the cheaper Sonnet.
+WRITER_PROMPTS = ("03_script.txt", "04_review.txt")
+
+
+def _helper_settings(settings: dict) -> dict:
+    """Ideas, plan, scene descriptions, YouTube texts and the like: Sonnet instead of the expensive Opus or Fable
+    (half the price), unless the owner wants the chosen model everywhere."""
+    if settings.get("opus_script_only", True) and (settings.get("anthropic_model") or "").startswith(("claude-opus", "claude-fable")):
+        return dict(settings, anthropic_model="claude-sonnet-5-5")
+    return settings
+
+
 def _check_settings(settings: dict) -> dict:
     """The checkers look at many pictures: the same provider, a light effort, and Sonnet instead of the
     expensive Opus or Fable (checking needs a sharp eye, not the best writer)."""
@@ -2020,7 +2033,7 @@ def _record_episode(c: Ctx, script: str):
     else:
         c.log("Запоминаю, что произошло в этой серии, для следующих серий…")
         try:
-            r = llm.call_json(c.settings, "You are the script supervisor of an animated series. Answer only with JSON.",
+            r = llm.call_json(_helper_settings(c.settings), "You are the script supervisor of an animated series. Answer only with JSON.",
                               f"Episode {c.episode} script:\n\n{script}\n\nReturn:\n"
                               "- summary: 80-140 words in English: what happened, in order, with the names; the key "
                               "facts later episodes must stay consistent with;\n- summary_ru: the same in Russian;\n"
@@ -3417,7 +3430,7 @@ def _music_prompt(c: Ctx, wish: str, extras: dict) -> str:
     """The owner's music wish (often in Russian) as an English prompt for the music model. The owner's style wins;
     the video's mood only fills in what he did not say."""
     try:
-        r = llm.call_json(c.settings, "You write prompts for an AI music generator. Answer only with JSON.",
+        r = llm.call_json(_helper_settings(c.settings), "You write prompts for an AI music generator. Answer only with JSON.",
                           f"The owner wants this background music (may be in Russian): {wish}\n"
                           f"The video's mood, only for what the owner did not specify: {extras.get('music_prompt', '')}\n"
                           "Return prompt: one English prompt for instrumental background music under a voiceover: genre, "
@@ -4213,7 +4226,7 @@ def _translate_lines(c: Ctx, title: str, lines: list) -> tuple:
                    f"TITLE: {title}\n" if start == 0 else "Return the title unchanged.\n")
                 + "\nLINES:\n" + listing)
         for attempt in range(2):
-            r = llm.call_json(c.settings, system, user, SCHEMA_TRANSLATION, c.usage, 16000)
+            r = llm.call_json(_helper_settings(c.settings), system, user, SCHEMA_TRANSLATION, c.usage, 16000)
             got = [str(x).strip() for x in r.get("lines") or []]
             if len(got) == len(part) and all(got):
                 break

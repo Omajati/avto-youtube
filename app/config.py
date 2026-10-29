@@ -41,6 +41,7 @@ DEFAULTS = {
     # Script
     "llm_provider": "anthropic",
     "anthropic_model": "claude-opus-5-5",
+    "opus_script_only": True,  # Opus/Fable write only the script and its editing; the other text steps use Sonnet
     "anthropic_effort": "high",
     "openai_model": "gpt-5",
     "niche": "real historical stories: dramatic, little-known true events from history",
