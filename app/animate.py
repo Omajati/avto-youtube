@@ -190,7 +190,8 @@ def generate(settings, img: Path, prompt: str, need: float, vertical: bool, chec
     sub = r.json()
     status_url = sub.get("status_url") or f"https://queue.fal.run/{m['endpoint']}/requests/{sub['request_id']}/status"
     result_url = sub.get("response_url") or f"https://queue.fal.run/{m['endpoint']}/requests/{sub['request_id']}"
-    deadline = time.time() + 20 * 60
+    # A clip that hangs in fal.ai's queue does not hold the whole video: after 10 minutes the scene stays a picture.
+    deadline = time.time() + 10 * 60
     while True:
         if check:
             check()

@@ -1025,6 +1025,9 @@ class Ctx:
 
         def on_progress(text, think):
             write_json(live, {"text": text, "think": think, "at": time.time(), "since": since})
+            j = db.get(self.id)
+            if j is None or j["status"] in ("paused", "queued"):  # paused or restarted by the owner meanwhile
+                raise Cancelled()
         try:
             result = llm.call_json(_step_settings(self.settings if prompt_file in WRITER_PROMPTS
                                                   else _helper_settings(self.settings), prompt_file),

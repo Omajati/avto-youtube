@@ -6,7 +6,7 @@ import time
 import anthropic
 
 from . import balance, net
-from .net import UserError
+from .net import Cancelled, UserError
 
 # Approximate prices per 1M tokens (input, output) for the cost estimate shown in the UI.
 PRICES = {
@@ -122,6 +122,8 @@ def _follow(stream, on_progress):
                 last = time.time()
                 try:
                     on_progress(text, think)
+                except Cancelled:  # paused by the owner: the answer is dropped at once, not waited for
+                    raise
                 except Exception:  # noqa: BLE001 - the live line is an extra
                     pass
     return stream.get_final_message()

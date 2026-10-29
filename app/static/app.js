@@ -1263,6 +1263,7 @@ function renderHead(d) {
     </div>
     ${j.status !== "done" ? `<div class="bar"><div style="width:${j.progress}%"></div></div>` : ""}
     ${d.render_eta ? etaCard(d.render_eta, j.stage) : ""}
+    ${d.stopping ? `<div class="banner info">⏳ Останавливаю прошлую попытку: она ждёт ответа от сервиса (Claude, ElevenLabs или fal.ai). Как только он ответит или выйдет время, ролик сам продолжится. Обычно это до нескольких минут, нажимать ничего не нужно.</div>` : ""}
     ${d.live ? `<div class="banner info">✍️ Claude ${d.live.words ? `пишет ответ: уже ${d.live.words.toLocaleString("ru")} слов` : d.live.think ? `обдумывает: ${d.live.think.toLocaleString("ru")} слов размышлений` : "получил задание и начинает"} · идёт ${clock(d.live.secs)}</div>` : ""}
     ${j.status === "error" ? `<div class="banner bad">${nl(j.error)}</div>` : ""}
     ${d.images_waiting && d.images_manual ? `<div class="banner info">⏸ Сценарий, сцены и озвучка готовы. Картинки программа не рисует. Откройте шаг «Сцены и описания картинок»: кнопка «📋 Описания картинок для другого сервиса» даст описание для каждой сцены. Сделайте картинки и загрузите их пачкой (номер сцены в имени файла: 1.png, 2.png…), потом нажмите «Собрать видео с моими картинками». Загружено: ${(d.own_images || []).length}.</div>` : ""}

@@ -430,6 +430,8 @@ def job_detail(jid: str):
         "images_waiting": pipeline.needs_images_choice(j),
         "images_manual": pipeline.images_manual(j),
         "render_eta": _render_eta(d, j),
+        # Paused or restarted while a call to a service was still going: that call is being stopped first.
+        "stopping": j.get("status") != "running" and jid in worker._running,
         "live": _live(d, j),
         "improve": pipeline.read_json(d / "improve.json"),
         "chapters": pipeline.chapters_text(jid),
