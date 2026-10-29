@@ -1026,7 +1026,8 @@ class Ctx:
         def on_progress(text, think):
             write_json(live, {"text": text, "think": think, "at": time.time(), "since": since})
         try:
-            result = llm.call_json(self.settings if prompt_file in WRITER_PROMPTS else _helper_settings(self.settings),
+            result = llm.call_json(_step_settings(self.settings if prompt_file in WRITER_PROMPTS
+                                                  else _helper_settings(self.settings), prompt_file),
                                    system, user, schema, self.usage, max_tokens, on_progress=on_progress)
         finally:
             live.unlink(missing_ok=True)
@@ -1792,6 +1793,21 @@ def _logic_check(c: Ctx, scenes: list):
             n += 1
             c.log(f"Контролёр логики, сцена {i + 1}: {f.get('problem_ru', '')}")
     c.log(f"Контролёр логики: исправлено описаний {n}." if n else "Контролёр логики: противоречий не нашёл.")
+
+
+# How hard the model thinks on each step. Its thinking is billed like its writing and was most of the cost of a
+# long video: only the script itself is thought through at the owner's level; the others think less (never more).
+STEP_EFFORT = {"01_ideas.txt": "medium", "02_outline.txt": "medium", "04_review.txt": "medium",
+               "05_scenes.txt": "low", "06_extras.txt": "low", "07_short.txt": "medium"}
+_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+
+
+def _step_settings(settings: dict, prompt_file: str) -> dict:
+    own = settings.get("anthropic_effort") or "high"
+    want = STEP_EFFORT.get(prompt_file)
+    if want and settings.get("step_effort", True) and own in _EFFORTS and _EFFORTS.index(want) < _EFFORTS.index(own):
+        settings = dict(settings, anthropic_effort=want)
+    return settings
 
 
 # The steps where the chosen model writes the script itself; every other text step may use the cheaper Sonnet.
@@ -3954,11 +3970,16 @@ def run_job(job: dict):
                   else "Жду, пока другой ролик выберет тему, чтобы темы не повторились…")
             while not gate.acquire(timeout=2):
                 c.check()
+        spent = c.usage.get("llm_cost", 0)
         try:
             STAGE_FUNCS[sid](c)
         finally:
             if gate:
                 gate.release()
+            if c.usage.get("llm_cost", 0) > spent:  # what each step cost in text, to see where the money goes
+                by = c.usage.setdefault("llm_by_stage", {})
+                by[sid] = round(by.get(sid, 0) + c.usage["llm_cost"] - spent, 4)
+                c.save_usage()
         c.log(f"✓ {STAGE_NAMES[sid]}")
     c.stage = "done"
     db.update(c.id, progress=100, stage="done")

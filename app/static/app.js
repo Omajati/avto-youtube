@@ -1259,7 +1259,7 @@ function renderHead(d) {
     <div class="row" style="margin:10px 0">${badge(j.status)}
       <span class="muted small">${j.status === "running" ? "Сейчас: " + esc(META.stages.find(s => s.id === j.stage)?.name || "") : ""}</span>
       <span class="grow"></span>
-      <span class="muted small" title="Текст (ИИ): $${(u.llm_cost || 0).toFixed(2)} · Картинки: $${(u.image_cost || 0).toFixed(2)} (${u.images || 0} шт.) · Анимация: $${(u.anim_cost || 0).toFixed(2)}">Потрачено: ~$${cost.toFixed(2)} (картинки $${(u.image_cost || 0).toFixed(2)}${u.anim_cost ? `, анимация $${u.anim_cost.toFixed(2)}` : ""}${u.music_cost ? `, музыка $${u.music_cost.toFixed(2)}` : ""}, текст $${(u.llm_cost || 0).toFixed(2)})${u.tts_chars ? ` + ${Math.round(u.tts_chars).toLocaleString("ru")} символов ElevenLabs` : ""}</span>
+      <span class="muted small" title="Текст (ИИ): $${(u.llm_cost || 0).toFixed(2)}${u.llm_by_stage ? " (" + Object.entries(u.llm_by_stage).map(([k, v]) => `${META.stages.find(s => s.id === k)?.name || k}: $${v.toFixed(2)}`).join(", ") + ")" : ""} · Картинки: $${(u.image_cost || 0).toFixed(2)} (${u.images || 0} шт.) · Анимация: $${(u.anim_cost || 0).toFixed(2)}">Потрачено: ~$${cost.toFixed(2)} (картинки $${(u.image_cost || 0).toFixed(2)}${u.anim_cost ? `, анимация $${u.anim_cost.toFixed(2)}` : ""}${u.music_cost ? `, музыка $${u.music_cost.toFixed(2)}` : ""}, текст $${(u.llm_cost || 0).toFixed(2)})${u.tts_chars ? ` + ${Math.round(u.tts_chars).toLocaleString("ru")} символов ElevenLabs` : ""}</span>
     </div>
     ${j.status !== "done" ? `<div class="bar"><div style="width:${j.progress}%"></div></div>` : ""}
     ${d.render_eta ? etaCard(d.render_eta, j.stage) : ""}
