@@ -1,6 +1,6 @@
 {
- "version": 149,
- "label": "эффекты атмосферы в 3–4 раза быстрее",
- "notes": "Эффекты атмосферы в 3–4 раза быстрее",
+ "version": 150,
+ "label": "перевод не падает из-за потерянной строки",
+ "notes": "Перевод не падает из-за потерянной строки",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

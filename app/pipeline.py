@@ -4336,7 +4336,9 @@ SHORT_MORE = {"ru": "Полная история на нашем канале.",
               "fr": "L'histoire complète est sur notre chaîne."}
 LANG_RU = {"en": "английский", "ru": "русский", "de": "немецкий", "es": "испанский", "fr": "французский"}
 SCHEMA_TRANSLATION = {"type": "object", "properties": {
-    "title": {"type": "string"}, "lines": {"type": "array", "items": {"type": "string"}}},
+    "title": {"type": "string"},
+    "lines": {"type": "array", "items": {"type": "object", "properties": {
+        "n": {"type": "integer"}, "text": {"type": "string"}}, "required": ["n", "text"]}}},
     "required": ["title", "lines"]}
 # A mirrored picture with a camera move in the other direction reads as a new shot.
 MIRROR_MOTION = {"zoom_in": "zoom_out", "zoom_out": "zoom_in", "pan_left": "pan_right", "pan_right": "pan_left"}
@@ -4350,30 +4352,50 @@ def _translate_lines(c: Ctx, title: str, lines: list) -> tuple:
               "jokes and slang that land the same way, numbers and units the way a native narrator says them. "
               "Keep the meaning, the hook, the twist and the punchline. Answer only with JSON."
               + c.char_block() + "\n\nChannel niche (may be in Russian): " + c.niche[:2000])
-    out = []
-    new_title = title
-    for start in range(0, len(lines), 60):
-        part = lines[start:start + 60]
-        listing = "\n".join(f"{i}. {t}" for i, t in enumerate(part))
+    def ask(nums: list, with_title: bool) -> tuple:
+        """Translates the lines with these numbers; returns (title, {number: text}) for the lines that came back."""
+        listing = "\n".join(f"{n}. {lines[n]}" for n in nums)
         user = (f"Translate the video below into {target}. Each numbered line is the narration of one picture: "
-                f"return exactly {len(part)} lines in the same order, line i for picture i, never merge or split "
-                "lines, keep each one about as long when spoken. A character's manner of speech stays recognisable "
+                f"return all {len(nums)} lines, each with its own number n, never merge or split lines, keep each "
+                "one about as long when spoken. A character's manner of speech stays recognisable "
                 "(use slang of the same strength in the new language). Spoken text only: numbers in words.\n"
                 + (f"Also translate the title into a strong, clickable {target} YouTube title (max 70 characters).\n"
-                   f"TITLE: {title}\n" if start == 0 else "Return the title unchanged.\n")
+                   f"TITLE: {title}\n" if with_title else "Return the title unchanged.\n")
                 + "\nLINES:\n" + listing)
-        for attempt in range(2):
-            r = llm.call_json(_helper_settings(c.settings), system, user, SCHEMA_TRANSLATION, c.usage, 16000)
-            got = [str(x).strip() for x in r.get("lines") or []]
-            if len(got) == len(part) and all(got):
+        r = llm.call_json(_helper_settings(c.settings), system, user, SCHEMA_TRANSLATION, c.usage, 16000)
+        got = {}
+        for x in r.get("lines") or []:
+            try:
+                n, t = int(x.get("n")), str(x.get("text") or "").strip()
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if n in nums and t:
+                got[n] = t
+        return r.get("title") or "", got
+
+    done = {}
+    new_title = title
+    for start in range(0, len(lines), 40):
+        nums = list(range(start, min(start + 40, len(lines))))
+        t, got = ask(nums, start == 0)
+        if start == 0 and t:
+            new_title = t
+        done.update(got)
+        # A model now and then drops or glues a line: only the missing ones are asked again, then one by one.
+        for attempt in range(3):
+            missing = [n for n in nums if n not in done]
+            if not missing:
                 break
-        else:
-            raise UserError(f"Перевод вернул {len(got)} строк вместо {len(part)}. Запустите шаг ещё раз.")
-        if start == 0:
-            new_title = r.get("title") or title
-        out += got
+            if attempt == 2:
+                for n in missing:
+                    done.update(ask([n], False)[1])
+            else:
+                done.update(ask(missing, False)[1])
         c.save_usage()
-    return new_title, out
+    missing = [n + 1 for n in range(len(lines)) if n not in done]
+    if missing:
+        raise UserError(f"Перевод не вернул строки {', '.join(map(str, missing[:10]))}. Запустите шаг ещё раз.")
+    return new_title, [done[n] for n in range(len(lines))]
 
 
 def _translated(c: Ctx, scenes: list, lines: list) -> list:
