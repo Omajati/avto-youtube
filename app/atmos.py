@@ -155,15 +155,28 @@ def _draw(kind: str, w: int, h: int, layer: int) -> Path:
 
 # ---------------------------------------------------------------- the layer over one clip
 
+def _tone(contrast=1.0, bright=0.0, sat=1.0, du=0, dv=0) -> str:
+    """Contrast, brightness, saturation and a colour shift as one lookup table: far faster than eq or colorbalance,
+    which turn every frame to RGB and back."""
+    return (f"lutyuv=y='clip((val-128)*{contrast}+128+{bright * 255:.1f},0,255)'"
+            f":u='clip((val-128)*{sat}+128+{du},0,255)':v='clip((val-128)*{sat}+128+{dv},0,255)'")
+
+
+def _layer(i: int, alpha: float = 1.0) -> str:
+    """A texture input decoded and converted once, then repeated (the image is not read again every frame)."""
+    mix = f"colorchannelmixer=aa={alpha}," if alpha < 1 else ""
+    return f"[{i}:v]format=rgba,{mix}format=yuva420p,loop=loop=-1:size=1:start=0"
+
+
 def _graph(kind: str, w: int, h: int, seed: int) -> tuple:
     """(extra inputs, filter graph from [0:v] to [v]) for the program's own drawing of this kind."""
     s = seed % 7
     if kind == "grain":
-        return [], "[0:v]eq=saturation=0.75:contrast=1.06,noise=alls=16:allf=t,vignette=PI/4.5,format=yuv420p[v]"
+        return [], f"[0:v]{_tone(1.06, 0, 0.75)},noise=c0s=16:c0f=t,vignette=PI/4.5,format=yuv420p[v]"
     if kind == "fog":
         t = _texture("fog", w, h, 0)
-        return [t], (f"[0:v]eq=contrast=0.9:brightness=0.03:saturation=0.85[b];[1:v]format=rgba,colorchannelmixer=aa=0.85[f];"
-                     f"[b][f]overlay=x='-mod(t*{w / 40:.1f}+{s * w / 7:.0f},w/2)':y=0:shortest=1,format=yuv420p[v]")
+        return [t], (f"[0:v]{_tone(0.9, 0.03, 0.85)}[b];{_layer(1, 0.85)}[f];"
+                     f"[b][f]overlay=format=yuv420:x='-mod(t*{w / 40:.1f}+{s * w / 7:.0f},w/2)':y=0,format=yuv420p[v]")
     falls = {"rain": (h * 2.2, h * 3.4, 1), "storm": (h * 2.4, h * 3.8, 1), "snow": (h * 0.07, h * 0.14, 1),
              "dust": (h * 0.025, h * 0.05, -1), "embers": (h * 0.12, h * 0.22, -1)}
     v0, v1, sign = falls[kind]
@@ -172,17 +185,16 @@ def _graph(kind: str, w: int, h: int, seed: int) -> tuple:
             "dust": f"{w * 0.006:.0f}*sin(t*0.5+{s})"}.get(kind, "0")
     def y(v):
         return f"'-h/2+mod(t*{v:.1f}+{s * 97},h/2)'" if sign > 0 else f"'-mod(t*{v:.1f}+{s * 97},h/2)'"
-    base = {"rain": "eq=brightness=-0.05:saturation=0.8:contrast=1.04,colorbalance=bs=0.06:bm=0.04",
-            "storm": "eq=brightness=-0.09:saturation=0.75:contrast=1.08,colorbalance=bs=0.08:bm=0.05",
-            "snow": "eq=brightness=0.02:saturation=0.85,colorbalance=bs=0.05:bh=0.03",
-            "dust": "colorbalance=rh=0.04:gh=0.02",
-            "embers": "colorbalance=rs=0.06:rm=0.05:bh=-0.04,eq=saturation=1.08"}[kind]
+    base = {"rain": _tone(1.04, -0.05, 0.8, 5, -2), "storm": _tone(1.08, -0.09, 0.75, 6, -3),
+            "snow": _tone(1.0, 0.02, 0.85, 4, -1), "dust": _tone(1.0, 0, 1.0, -2, 3),
+            "embers": _tone(1.0, 0, 1.08, -4, 6)}[kind]
     if kind == "storm":  # flashes of lightning at the seed's own moments
         p = 5.3 + s * 0.7
         base += (f",eq=brightness='0.45*(lt(mod(t+{s * 1.3:.1f},{p:.1f}),0.06)+between(mod(t+{s * 1.3:.1f},{p:.1f}),0.14,0.2))'"
                  ":eval=frame")
-    g = (f"[0:v]{base}[b];[1:v]format=rgba[l0];[2:v]format=rgba[l1];"
-         f"[b][l0]overlay=x='{sway}':y={y(v0)}:shortest=1[m];[m][l1]overlay=x='{sway}':y={y(v1)}:shortest=1,format=yuv420p[v]")
+    g = (f"[0:v]{base}[b];{_layer(1)}[l0];{_layer(2)}[l1];"
+         f"[b][l0]overlay=format=yuv420:x='{sway}':y={y(v0)}[m];"
+         f"[m][l1]overlay=format=yuv420:x='{sway}':y={y(v1)},format=yuv420p[v]")
     return [t0, t1], g
 
 
@@ -202,7 +214,7 @@ def apply(clip: Path, kind: str, w: int, h: int, fps: int, seed: int = 0):
         extra, g = _graph(kind, w, h, seed)
         args = ["-i", clip]
         for t in extra:
-            args += ["-loop", 1, "-framerate", fps, "-i", t]
+            args += ["-i", t]
     media.run([*args, "-filter_complex", g, "-map", "[v]", "-map", "0:a?", "-t", f"{dur:.3f}", "-r", fps,
                "-c:v", "libx264", "-preset", "veryfast", "-crf", 20, "-pix_fmt", "yuv420p", "-c:a", "copy", tmp],
               f"Эффект «{RU[kind]}»")
