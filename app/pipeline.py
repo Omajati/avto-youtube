@@ -3463,21 +3463,24 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     c.check()
     c.log("Склеиваю фрагменты и накладываю звук…")
     joined = clips_dir / "joined.mp4"
-    media.concat_clips(clips, joined)
     blocked = {}  # caption places taken at some moments by an animation or the subscribe buttons
     opts = (db.get(c.id) or {}).get("options") or c.opts
+    parts = list(clips)
     if opts.get("graphics"):
         shown = _graphics_for(c, prefix, scenes, durations, total, height > width)
         if shown:
-            with_g = clips_dir / "joined_gfx.mp4"
             try:
-                n = graphics.overlay(joined, with_g, shown, width, height, clips_dir)
-                with_g.replace(joined)
-                c.log(f"Анимации данных: {n} ({', '.join(graphics.TEMPLATES[g['type']][0].lower() for g in shown)}).")
+                parts = _graphics_on_clips(clips, shown, bounds, width, height, fps, clips_dir)
+                c.log(f"Анимации данных: {len(shown)} ({', '.join(graphics.TEMPLATES[g['type']][0].lower() for g in shown)}).")
                 if height <= width:  # on a wide video the animations sit at the top, where captions could go
                     blocked["top"] = [(g["start"], g["start"] + graphics.DUR) for g in shown]
             except Exception as e:  # noqa: BLE001
+                parts = list(clips)
                 c.log(f"Анимации данных добавить не получилось: {e}")
+    media.concat_clips(parts, joined)
+    for p_ in parts:
+        if p_.name.startswith("gfx_"):
+            p_.unlink(missing_ok=True)
     if height > width:
         src = c.project if c.project.get("id") else c.settings
         mode = c.opts.get("cta_short") or src.get("cta_short") or "both"
@@ -3524,6 +3527,32 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     sfx_file.unlink(missing_ok=True)
     return {"file": str(out.relative_to(c.dir)), "duration": total, "music": music.name if music else "",
             "subtitles": subs}
+
+
+def _graphics_on_clips(clips: list, shown: list, bounds: list, width: int, height: int, fps: int,
+                       work: Path) -> list:
+    """Draws the data animations only over the scene clips they fall on, into copies, instead of re-encoding the
+    whole video for a few seconds of animation. Returns the clip list to join, with those copies in place."""
+    parts = list(clips)
+    drawn = work / "gfx_frames"
+    try:
+        for i, clip in enumerate(clips):
+            a, b = bounds[i][0] / fps, bounds[i][1] / fps  # the clip's own place in the joined video, in whole frames
+            here = []
+            for k, g in enumerate(shown):
+                if g["start"] < b and g["start"] + graphics.DUR > a and g.get("type") in graphics.TEMPLATES:
+                    folder = drawn / f"{k:02d}"
+                    if not folder.exists():
+                        graphics._frames(g, folder)
+                    here.append({**g, "start": round(g["start"] - a, 3), "_frames": folder / "f%03d.png"})
+            if not here:
+                continue
+            out = work / f"gfx_{i:03d}.mp4"
+            graphics.overlay(clip, out, here, width, height, work, fps=fps)
+            parts[i] = out
+    finally:
+        shutil.rmtree(drawn, ignore_errors=True)
+    return parts
 
 
 def _graphics_for(c: Ctx, prefix: str, scenes: list, durations: list, total: float, vertical: bool) -> list:

@@ -1,6 +1,6 @@
 {
- "version": 150,
- "label": "перевод не падает из-за потерянной строки",
- "notes": "Перевод не падает из-за потерянной строки",
+ "version": 151,
+ "label": "анимации цифр без пересчёта всего ролика",
+ "notes": "Анимации цифр накладываются только на свои сцены, монтаж быстрее",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

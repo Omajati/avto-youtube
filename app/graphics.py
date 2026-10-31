@@ -310,7 +310,7 @@ def _frames(g: dict, folder: Path) -> Path:
     return folder / "f%03d.png"
 
 
-def overlay(video: Path, out: Path, items: list, width: int, height: int, work: Path) -> int:
+def overlay(video: Path, out: Path, items: list, width: int, height: int, work: Path, fps: int = 0) -> int:
     """items: [{type, label, value, ..., start}] in seconds. Draws them over the silent picture-only video."""
     items = [g for g in items if g.get("type") in TEMPLATES]
     if not items:
@@ -323,12 +323,14 @@ def overlay(video: Path, out: Path, items: list, width: int, height: int, work: 
     args, fc, last = ["-i", video], [], "0:v"
     try:
         for i, g in enumerate(items):
-            args += ["-framerate", FPS, "-i", _frames(g, work / f"gfx_{i:02d}")]
-            fc.append(f"[{i + 1}:v]scale={ow}:{oh},format=rgba,setpts=PTS-STARTPTS+{g['start']:.2f}/TB[g{i}]")
+            # Frames already drawn (an animation that spans two scene clips) are reused.
+            args += ["-framerate", FPS, "-i", g.get("_frames") or _frames(g, work / f"gfx_{i:02d}")]
+            fc.append(f"[{i + 1}:v]scale={ow}:{oh},format=rgba,setpts=PTS-STARTPTS+{g['start']:.3f}/TB[g{i}]")
             fc.append(f"[{last}][g{i}]overlay={x}:{y}:eof_action=pass:format=auto[v{i}]")
             last = f"v{i}"
-        media.run([*args, "-filter_complex", ";".join(fc), "-map", f"[{last}]", "-c:v", "libx264", "-preset", "veryfast",
-                   "-crf", 18, "-pix_fmt", "yuv420p", "-an", out], "Анимации данных")
+        rate = ["-r", fps] if fps else []  # a scene clip keeps its frame rate, so it joins with the others
+        media.run([*args, "-filter_complex", ";".join(fc), "-map", f"[{last}]", *rate, "-c:v", "libx264",
+                   "-preset", "veryfast", "-crf", 18, "-pix_fmt", "yuv420p", "-an", out], "Анимации данных")
     finally:
         for i in range(len(items)):
             shutil.rmtree(work / f"gfx_{i:02d}", ignore_errors=True)
