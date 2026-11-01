@@ -10,7 +10,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, animate, atmos, captions, cta, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, thumb, tts, updater, uploader, worker, youtube
+from . import analytics, animate, atmos, motion, captions, cta, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, thumb, tts, updater, uploader, worker, youtube
 from .config import (DATA_DIR, DEFAULTS, MUSIC_DIR, PROMPTS_DEFAULT_DIR, PROMPTS_DIR, load_settings,
                      public_settings, save_settings)
 from .net import UserError
@@ -99,7 +99,7 @@ def meta():
                           "clip": round(animate.clip_seconds({"video_model": k}, 5) * v["price"], 2)}
                          for k, v in animate.VIDEO_MODELS.items()],
         "anim_modes": animate.MODES, "video_model": load_settings().get("video_model", "kling25"),
-        "atmos_kinds": atmos.RU, "atmos_modes": atmos.MODES, "fx_modes": effects.MODES, "subs_positions": captions.POSITIONS, "cta_modes": cta.MODES, "cta_langs": cta.LANGS, "thumb_fonts": {k: v[0] for k, v in thumb.STYLE_FONTS.items()}, "thumb_looks": thumb.LOOKS, "effect_ru": effects.EFFECT_RU, "sfx_ru": effects.SFX_RU,
+        "atmos_kinds": atmos.RU, "atmos_modes": atmos.MODES, "motion_modes": motion.MODES, "fx_modes": effects.MODES, "subs_positions": captions.POSITIONS, "cta_modes": cta.MODES, "cta_langs": cta.LANGS, "thumb_fonts": {k: v[0] for k, v in thumb.STYLE_FONTS.items()}, "thumb_looks": thumb.LOOKS, "effect_ru": effects.EFFECT_RU, "sfx_ru": effects.SFX_RU,
         "image_styles": projects.IMAGE_STYLES,
         "default_niches": {**{k: v.get("niche", "") for k, v in projects.PRESETS.items()}, "": DEFAULTS["niche"]},
         "presets": {k: {"name": v["name"], "icon": v["icon"], "language": v["language"]} for k, v in projects.PRESETS.items()},
@@ -219,6 +219,7 @@ def create_job(data: dict = Body(...)):
         "short_seconds": _short_seconds(data.get("short_seconds") or proj.get("short_seconds")),
         "music_mode": data.get("music_mode") if data.get("music_mode") in musiclib.MODES else proj.get("music_mode") or "library",
         **({"atmos_mode": data["atmos_mode"]} if data.get("atmos_mode") in atmos.MODES or data.get("atmos_mode") in atmos.KINDS else {}),
+        **({"motion_mode": data["motion_mode"]} if data.get("motion_mode") in motion.MODES else {}),
     }
     voice_up = _upload_path(data.get("own_voice_upload"))
     video_up = _upload_path(data.get("own_video_upload"))
@@ -449,6 +450,8 @@ def job_detail(jid: str):
         "format": j["options"].get("format", "long"),
         "fx_mode": pipeline.fx_mode(j),
         "atmos_mode": pipeline.atmos_mode(j),
+        "motion_mode": pipeline.motion_mode(j),
+        "motion": _motion_rows(jid, j),
         "project": projects.get(j["options"].get("project_id", "")) or None,
         "anim": {"mode": pipeline.anim_options(j)[0], "short": pipeline.anim_options(j)[1],
                  "waiting": pipeline.needs_anim_choice(j), "suggest": pipeline.anim_suggest(jid, j),
@@ -757,6 +760,42 @@ def job_effects(jid: str, data: dict = Body(...)):
         db.update(jid, status="queued", error="")
         worker.wake()
     return {"ok": True}
+
+
+def _motion_rows(jid: str, j: dict) -> list:
+    plan = pipeline.read_json(pipeline.job_dir(jid) / "motion.json") or {}
+    try:
+        active = pipeline.motion_active(pipeline.Ctx(j))
+    except Exception:  # noqa: BLE001
+        active = {}
+    return [{"index": g["index"], "type": g["type"], "kind": motion.KINDS.get(g["type"], ""), "title": g.get("title") or "",
+             "on": g["index"] in active} for g in plan.get("items") or []]
+
+
+@app.post("/api/jobs/{jid}/motion")
+def job_motion(jid: str, data: dict = Body(...)):
+    """Maps and timelines: the mode for the video, one scene on or off, or a new search on a made video."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Подождите, пока ролик доделается, или поставьте его на паузу.")
+    d = pipeline.job_dir(jid)
+    if "mode" in data:
+        if data["mode"] not in motion.MODES:
+            raise HTTPException(400, "Неизвестный режим")
+        db.update(jid, options=dict(j["options"], motion_mode=data["mode"]))
+        return {"ok": True}
+    if data.get("replan"):
+        if pipeline.motion_mode(j) == "off":
+            db.update(jid, options=dict(j["options"], motion_mode="auto"))
+        plan = pipeline.motion_replan(jid)
+        n = len(plan.get("items") or [])
+    else:
+        pipeline.motion_toggle(jid, int(data.get("scene", -1)), bool(data.get("on")))
+        n = None
+    if j["status"] in ("done", "error") and (d / "images").exists():
+        db.update(jid, status="queued", error="")
+        worker.wake()
+    return {"ok": True, "found": n}
 
 
 @app.post("/api/jobs/{jid}/atmos")

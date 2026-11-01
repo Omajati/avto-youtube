@@ -1443,15 +1443,16 @@ function renderStages(d) {
       catch (e) { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); }
       if (btn) { btn.textContent = "✓ Скопировано"; setTimeout(() => btn.textContent = "Скопировать", 1500); }
     };
-    const all = [...r.video.map((p, i) => `Сцена ${i + 1}: ${p}`), ...r.short.map((p, i) => `Шортс, сцена ${i + 1}: ${p}`)].join("\n\n");
-    const rows = (list, label) => list.map((p, i) => `<div class="card" style="padding:10px;margin:6px 0"><div class="row"><b>${label} ${i + 1}</b><span class="grow"></span><button class="sm" data-cp="${esc(p)}">Скопировать</button></div><div class="small" style="margin-top:4px">${esc(p)}</div></div>`).join("");
+    const mo = new Set(r.motion || []);
+    const all = [...r.video.map((p, i) => mo.has(i) ? "" : `Сцена ${i + 1}: ${p}`).filter(Boolean), ...r.short.map((p, i) => `Шортс, сцена ${i + 1}: ${p}`)].join("\n\n");
+    const rows = (list, label, motionSet) => list.map((p, i) => motionSet && motionSet.has(i) ? `<div class="card" style="padding:10px;margin:6px 0"><b>${label} ${i + 1}</b> <span class="muted small">🗺 моушен: картинка не нужна</span></div>` : `<div class="card" style="padding:10px;margin:6px 0"><div class="row"><b>${label} ${i + 1}</b><span class="grow"></span><button class="sm" data-cp="${esc(p)}">Скопировать</button></div><div class="small" style="margin-top:4px">${esc(p)}</div></div>`).join("");
     const wrap = document.createElement("div");
     wrap.className = "vlib"; wrap.dataset.nodraft = 1;
     wrap.innerHTML = `<div class="box"><button class="x" title="Закрыть">×</button>
       <h2>Описания картинок для другого сервиса</h2>
       <p class="muted small">Только то, что нарисовать: стиль, сцена и запрет на надписи. Сгенерируйте картинку, сохраните её с номером сцены в имени (1.png, 2.png…) и загрузите кнопкой «📤 Загрузить свои картинки пачкой».</p>
       <div class="row" style="margin:8px 0"><button class="primary sm" data-cpall>Скопировать все</button></div>
-      ${rows(r.video, "Сцена")}${r.short.length ? `<h3>Шортс</h3>${rows(r.short, "Шортс, сцена")}` : ""}</div>`;
+      ${rows(r.video, "Сцена", mo)}${r.short.length ? `<h3>Шортс</h3>${rows(r.short, "Шортс, сцена")}` : ""}</div>`;
     document.body.appendChild(wrap);
     const close = () => wrap.remove();
     wrap.querySelector(".x").onclick = close;
@@ -1609,6 +1610,27 @@ function renderStages(d) {
     await api(`/api/jobs/${j.id}/atmos`, { json: { mode: b.parentElement.querySelector(".atm-mode").value } })
       .then(() => toast("Атмосфера изменена, видео пересобирается")).catch(e => { toast(e.message, true); b.disabled = false; });
     lastStagesKey = "";
+  });
+  el.querySelectorAll("[data-motion]").forEach(b => b.onclick = async () => {
+    const [i, on] = b.dataset.motion.split(":");
+    b.disabled = true;
+    await api(`/api/jobs/${j.id}/motion`, { json: { scene: +i, on: on === "1" } })
+      .then(() => toast(on === "1" ? `В сцене ${+i + 1} снова моушен` : `В сцене ${+i + 1} будет картинка` + (d.images_manual ? ": загрузите её кнопкой «📤 Своя»" : ""))).catch(e => toast(e.message, true));
+    b.disabled = false; lastStagesKey = "";
+  });
+  const replan = el.querySelector("#motion-replan");
+  if (replan) replan.onclick = async () => {
+    replan.disabled = true; replan.textContent = "⏳ Ищу места для карт и дат…";
+    await api(`/api/jobs/${j.id}/motion`, { json: { replan: true } })
+      .then(r => toast(r.found ? `Моушен в ${r.found} сценах${d.files.video ? ", видео пересобирается" : ""}` : "Подходящих мест для карт и дат не нашлось"))
+      .catch(e => toast(e.message, true));
+    replan.disabled = false; lastStagesKey = "";
+  };
+  el.querySelectorAll(".mot-apply").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    await api(`/api/jobs/${j.id}/motion`, { json: { mode: b.parentElement.querySelector(".mot-mode").value } })
+      .then(() => toast("Сохранено")).catch(e => toast(e.message, true));
+    b.disabled = false; lastStagesKey = "";
   });
   el.querySelectorAll(".atm-sel").forEach(sel => sel.onchange = async () => {
     sel.disabled = true;
@@ -1870,12 +1892,13 @@ const RENDER = {
     const durs = d.stages.voice?.durations;
     const own = new Set(d.own_images || []);
     return vidBox + `<p class="muted">${r.scenes.length} сцен, по одной картинке на каждую. ${d.images_manual ? "Картинки вы делаете сами в другом сервисе: «📋 Описания картинок» даст описание для каждой сцены, загрузите готовые картинки пачкой или по одной кнопкой «📤 Своя» (картинка обрежется под кадр)." : "«Перерисовать» нарисует картинку заново, «📤 Своя» поставит вашу картинку (она обрежется под кадр)."}</p>
+    ${d.format !== "short" ? `<div class="row" style="margin-bottom:8px"><button class="sm" id="motion-replan" ${busy ? "disabled" : ""}>🗺 ${(d.motion || []).length ? "Найти карты и даты заново" : "Добавить карты и линии времени"}</button><span class="muted small">${(d.motion || []).length ? `Моушен в сценах: ${d.motion.filter(m => m.on).map(m => m.index + 1).join(", ") || "выключен"}.` : "Программа найдёт в сценарии места, где лучше показать карту или хронологию, и заменит там картинку анимацией. Бесплатно, кроме одного короткого запроса к нейросети."}</span></div>` : ""}
     <div class="row" style="margin-bottom:8px"><button class="sm" id="own-prompts">📋 Описания картинок для другого сервиса</button>
       <label class="btn sm" style="cursor:pointer">📤 Загрузить свои картинки пачкой<input type="file" accept="image/*" multiple id="own-bulk" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label><label class="btn sm" style="cursor:pointer">📁 Папкой<input type="file" accept="image/*" multiple webkitdirectory id="own-bulk-dir" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label>
       <span class="muted small">Номер сцены берётся из имени файла (1.png, scene_12.jpg, 03.webp); без номера по порядку.</span></div>
     <table><tr><th>#</th><th>Картинка</th><th>Текст сцены и что на картинке</th><th></th></tr>
     ${r.scenes.map((s, i) => `<tr><td>${i + 1}${durs ? `<div class="muted small">${durs[i].toFixed(1)}с</div>` : ""}</td><td>${img(d, `scene_${String(i).padStart(3, "0")}.png`, d.format === "short" ? "vsc" : "sc")}</td>
-      <td><div>${esc(s.prompt_ru)}</div>${s.location || s.shot ? `<div class="muted small">${s.location ? `📍 ${esc(s.location)}` : ""}${s.shot ? ` 🎥 ${esc(({ wide: "общий план", medium: "средний план", pov: "от первого лица", closeup: "крупный план", ots: "из-за плеча", detail: "деталь крупно", low: "снизу", high: "сверху", profile: "в профиль" })[s.shot] || s.shot)}` : ""}</div>` : ""}<div class="en">${esc(s.text)}</div>${fxTag(s)}${atmSel(s, i, busy)}</td>
+      <td><div>${esc(s.prompt_ru)}</div>${s.location || s.shot ? `<div class="muted small">${s.location ? `📍 ${esc(s.location)}` : ""}${s.shot ? ` 🎥 ${esc(({ wide: "общий план", medium: "средний план", pov: "от первого лица", closeup: "крупный план", ots: "из-за плеча", detail: "деталь крупно", low: "снизу", high: "сверху", profile: "в профиль" })[s.shot] || s.shot)}` : ""}</div>` : ""}<div class="en">${esc(s.text)}</div>${fxTag(s)}${motionTag(d, i, busy)}${atmSel(s, i, busy)}</td>
       <td>${d.images_manual ? "" : `<button class="sm" data-regen="scene:${i}">Перерисовать</button>`}<label class="btn sm" style="cursor:pointer;margin-top:4px">📤 Своя<input type="file" accept="image/*" data-own="scene:${i}" style="display:none" ${busy ? "disabled" : ""}></label>${own.has(`scene:${i}`) ? `<div class="muted small">🖼 ваша</div>` : ""}</td></tr>`).join("")}</table>`;
   },
   extras(r, d) {
@@ -2020,6 +2043,12 @@ const RENDER = {
   },
 };
 
+function motionTag(d, i, busy) {
+  const m = (d.motion || []).find(x => x.index === i);
+  if (!m) return "";
+  return `<div class="row small" style="margin-top:4px;gap:6px"><span class="tag" style="background:${m.on ? "rgba(250,204,21,.22)" : "transparent"};border:1px solid #b8901a;border-radius:6px;padding:1px 6px">${esc(m.kind)}${m.title ? `: ${esc(m.title)}` : ""}</span>${m.on ? `<span class="muted">вместо картинки</span><button class="sm" data-motion="${i}:0" ${busy ? "disabled" : ""}>Вернуть картинку</button>` : `<span class="muted">выключен</span><button class="sm" data-motion="${i}:1" ${busy ? "disabled" : ""}>Включить моушен</button>`}</div>`;
+}
+
 function atmSel(s, i, busy) {
   const cur = s.atmosphere || "none";
   return `<div class="row small" style="margin-top:4px;gap:6px"><span class="muted">🌫 Атмосфера:</span><select class="atm-sel sm" data-i="${i}" style="width:auto;padding:2px 6px" ${busy ? "disabled" : ""}>${Object.entries(META.atmos_kinds).map(([k, n]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>`;
@@ -2119,7 +2148,10 @@ function fxRow(d) {
     <button class="sm fx-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">видео пересоберётся бесплатно</span></div>
   <div class="row" style="margin-top:8px"><span>Атмосфера:</span>
     <select class="atm-mode" style="max-width:420px" ${busy ? "disabled" : ""}>${[...Object.entries(META.atmos_modes), ...Object.entries(META.atmos_kinds).filter(([k]) => k !== "none").map(([k, n]) => [k, `${n}: на весь ролик`])].map(([k, n]) => `<option value="${k}" ${k === d.atmos_mode ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
-    <button class="sm atm-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">туман, дождь, снег поверх картинок; у каждой сцены можно поменять на шаге «Сцены»</span></div>`;
+    <button class="sm atm-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">туман, дождь, снег поверх картинок; у каждой сцены можно поменять на шаге «Сцены»</span></div>
+  ${d.format !== "short" ? `<div class="row" style="margin-top:8px"><span>Моушен:</span>
+    <select class="mot-mode" style="max-width:420px" ${busy ? "disabled" : ""}>${Object.entries(META.motion_modes).map(([k, n]) => `<option value="${k}" ${k === d.motion_mode ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+    <button class="sm mot-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">карты и линии времени вместо некоторых картинок; включить или выключить у сцены можно на шаге «Сцены»</span></div>` : ""}`;
 }
 
 function subsRow(d, kind, fileKey, fileName) {
@@ -2290,6 +2322,11 @@ async function viewSettings(id) {
     </div><div>
       ${field("sfx_volume", "Громкость звуковых эффектов", s, { type: "range", min: 0, max: 1, step: 0.05 })}
     </div></div>
+    <h3>Моушен: карты и линии времени</h3>
+    <p class="muted small">Там, где в сценарии важны места или даты, программа вместо картинки показывает анимацию: карта подлетает к региону, прорисовывает границы стран, маршрут и метки, или линия времени с датами. Картинки для этих сцен не нужны. Рисуется бесплатно, нужен один короткий запрос к нейросети на ролик.</p>
+    <div class="grid2"><div>
+      ${field("motion_mode", "Моушен по умолчанию", s, { type: "select", options: Object.entries(META.motion_modes) })}
+    </div><div></div></div>
     <h3>Атмосфера: туман, дождь, снег</h3>
     <p class="muted small">ИИ при описании сцен отмечает погоду и настроение по сценарию, и программа рисует их поверх картинки: туман, дождь, грозу с молниями, снег, пыль, искры от огня, зерно старой плёнки. Под такими сценами тихо звучит дождь, ветер или треск огня. Это бесплатно. Эффект любой сцены можно поменять на шаге «Сцены».</p>
     <div class="grid2"><div>

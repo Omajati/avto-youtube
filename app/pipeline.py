@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import animate, atmos, balance, captions, cta, db, effects, graphics, images, llm, media, music as musiclib, take, thumb, tts
+from . import animate, atmos, balance, captions, cta, db, effects, graphics, images, llm, media, motion, music as musiclib, take, thumb, tts
 from .config import JOBS_DIR, MUSIC_DIR, PROMPTS_DIR, PROMPTS_DEFAULT_DIR, load_settings
 from .net import Cancelled, UserError
 
@@ -3060,6 +3060,13 @@ def st_images(c: Ctx):
     img = c.dir / "images"
     img.mkdir(exist_ok=True)
     scenes = c.data("scenes")["scenes"]
+    if _motion_fits(c):
+        try:
+            motion_plan(c, scenes, (c.data("voice") or {}).get("durations"))
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001 - motion is an extra, never a reason to stop the pictures
+            c.log(f"Моушен пропущен: {e}")
     manual = images_manual(job, c.settings) and not c.demo
     if manual:
         return _images_manual(c, job, scenes)
@@ -3245,6 +3252,140 @@ def atmos_mode(job_or_opts, settings=None) -> str:
     opts = job_or_opts.get("options", job_or_opts)
     m = opts.get("atmos_mode") or (settings or load_settings()).get("atmos_mode", "auto")
     return m if m in atmos.MODES or m in atmos.KINDS else "auto"
+
+
+def motion_mode(job_or_opts, settings=None) -> str:
+    opts = job_or_opts.get("options", job_or_opts)
+    m = opts.get("motion_mode") or (settings or load_settings()).get("motion_mode", "auto")
+    return m if m in motion.MODES else "auto"
+
+
+def _motion_fits(c: Ctx) -> bool:
+    """Maps and timelines are drawn for wide videos made from scenes (not one take, not the owner's own video)."""
+    return (not c.demo and not c.vertical and not c.short_format and not c.one_take and not c.opts.get("translate_from")
+            and own_video_file(c.dir) is None and motion_mode(db.get(c.id) or c.opts, c.settings) != "off")
+
+
+def motion_plan(c: Ctx, scenes: list, durations: list = None, take_pictures: bool = False) -> dict:
+    """Asks once which scenes become a map or a timeline and draws their pictures (the last frame), so no picture is
+    paid for or asked from the owner there. take_pictures: the pictures exist already (a finished video); the motion
+    scenes are used in their place."""
+    path = c.dir / "motion.json"
+    plan = read_json(path)
+    if plan is not None:
+        return plan
+    plan = {"items": [], "posters": {}}
+    if not llm.has_key(_helper_settings(c.settings)):
+        write_json(path, plan)
+        return plan
+    c.log("Ищу места для моушена: карты и линии времени…")
+    total = sum(durations) if durations else word_count(" ".join(sc.get("text", "") for sc in scenes)) / max(1, c.wpm) * 60
+    try:
+        r = llm.call_json(_helper_settings(c.settings), "You plan motion design scenes. Answer only with JSON.",
+                          motion.plan_prompt(scenes, LANG_NAMES.get(c.lang, c.lang), total), motion.SCHEMA, c.usage, 8000)
+        c.save_usage()
+        items = motion.clean_plan(r.get("items") or [], len(scenes))
+    except UserError as e:
+        c.log(f"Подобрать моушен не получилось ({e}), все сцены будут картинками.")
+        items = []
+    img = c.dir / "images"
+    img.mkdir(exist_ok=True)
+    kept = []
+    for g in items:
+        pic = img / f"scene_{g['index']:03d}.png"
+        try:
+            if pic.exists() and not take_pictures:
+                continue  # the owner's own picture is already there: it stays a picture
+            _motion_poster(c, g, pic)
+            plan["posters"][str(g["index"])] = pic.stat().st_mtime
+            kept.append(g)
+        except Exception as e:  # noqa: BLE001 - a motion scene is an extra, never a reason to lose the video
+            c.log(f"Моушен для сцены {g['index'] + 1} не нарисовался ({e}), там будет картинка.")
+    plan["items"] = kept
+    write_json(path, plan)
+    if kept:
+        c.log("Моушен вместо картинки: " + ", ".join(f"сцена {g['index'] + 1} ({motion.KINDS[g['type']].split(' ', 1)[1].lower()})"
+                                                    for g in kept) + ". Картинки для этих сцен не нужны.")
+    return plan
+
+
+def _motion_poster(c: Ctx, g: dict, pic: Path):
+    """Draws the scene's last frame as its picture; a picture already there is put aside, to come back if the owner
+    turns the motion off."""
+    if pic.exists():
+        keep = pic.parent / "motion_backup" / pic.name
+        keep.parent.mkdir(exist_ok=True)
+        shutil.move(str(pic), keep)
+    motion.poster(g, pic, 1920, 1080, c.lang)
+
+
+def motion_toggle(jid: str, index: int, on: bool):
+    """The owner turns one motion scene off (its picture comes back, or is made in the pictures step) or on again."""
+    job = db.get(jid)
+    c = Ctx(job)
+    path = c.dir / "motion.json"
+    plan = read_json(path) or {}
+    g = next((x for x in plan.get("items") or [] if x["index"] == index), None)
+    if not g:
+        raise UserError("В этой сцене нет моушена.")
+    pic = c.dir / "images" / f"scene_{index:03d}.png"
+    keep = c.dir / "images" / "motion_backup" / pic.name
+    if on:
+        _motion_poster(c, g, pic)
+        plan.setdefault("posters", {})[str(index)] = pic.stat().st_mtime
+        g["off"] = False
+    else:
+        if keep.exists():
+            shutil.move(str(keep), pic)
+        else:
+            pic.unlink(missing_ok=True)  # the pictures step makes it (or asks for the owner's one)
+            (c.dir / "images.json").unlink(missing_ok=True)
+        g["off"] = True
+    write_json(path, plan)
+    for rel in (f"clips/scene_{index:03d}.mp4", "video.json", "output/video.mp4"):
+        _remove(c.dir, rel)
+
+
+def motion_replan(jid: str) -> dict:
+    """Finds motion scenes again for a video whose pictures are made: they take the place of those pictures."""
+    job = db.get(jid)
+    c = Ctx(job)
+    scenes = (c.data("scenes") or {}).get("scenes") or []
+    if not scenes:
+        raise UserError("Сначала дождитесь шага «Сцены и описания картинок».")
+    old = read_json(c.dir / "motion.json") or {}
+    for g in old.get("items") or []:  # earlier motion scenes get their pictures back first
+        keep = c.dir / "images" / "motion_backup" / f"scene_{g['index']:03d}.png"
+        pic = c.dir / "images" / keep.name
+        mark = (old.get("posters") or {}).get(str(g["index"]))
+        if keep.exists():
+            shutil.move(str(keep), pic)
+        elif pic.exists() and mark is not None and abs(pic.stat().st_mtime - mark) <= 1:
+            pic.unlink()  # only the drawn frame was there: a real picture is made again if this scene stays a picture
+        _remove(c.dir, f"clips/scene_{g['index']:03d}.mp4")
+    (c.dir / "motion.json").unlink(missing_ok=True)
+    plan = motion_plan(c, scenes, (c.data("voice") or {}).get("durations"), take_pictures=True)
+    for g in plan.get("items") or []:
+        _remove(c.dir, f"clips/scene_{g['index']:03d}.mp4")
+    if any(not (c.dir / "images" / f"scene_{i:03d}.png").exists() for i in range(len(scenes))):
+        (c.dir / "images.json").unlink(missing_ok=True)  # the pictures step makes the missing ones
+    for rel in ("video.json", "output/video.mp4"):
+        _remove(c.dir, rel)
+    return plan
+
+
+def motion_active(c: Ctx) -> dict:
+    """{scene index: spec} of the scenes drawn as motion now: not turned off, and the picture is still the program's
+    own frame (a picture the owner uploaded later wins)."""
+    plan = read_json(c.dir / "motion.json") or {}
+    out = {}
+    for g in plan.get("items") or []:
+        pic = c.dir / "images" / f"scene_{g['index']:03d}.png"
+        mark = (plan.get("posters") or {}).get(str(g["index"]))
+        if g.get("off") or (pic.exists() and mark is not None and abs(pic.stat().st_mtime - mark) > 1):
+            continue
+        out[g["index"]] = g
+    return out
 
 
 def fx_mode(job_or_opts) -> str:
@@ -3486,7 +3627,11 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
 
     whole_video = own_video_file(c.dir) is not None and prefix == "scene"
 
+    moving = motion_active(c) if prefix == "scene" and width > height and not tk else {}
     kinds = atmos.kinds_of(scenes, atmos_mode(db.get(c.id) or c.opts, c.settings)) if not tk else ["none"] * len(scenes)
+    for i in moving:
+        if i < len(kinds):
+            kinds[i] = "none"  # a map or a timeline gets no fog or rain
     if any(k != "none" for k in kinds):
         c.log("Атмосфера по сценарию: " + ", ".join(f"{atmos.RU[k].lower()} ({kinds.count(k)})"
                                                      for k in atmos.KINDS if k != "none" and k in kinds) + ".")
@@ -3502,6 +3647,12 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     def _make(i):
         c.check()
         a, b = bounds[i]
+        if i in moving:
+            try:
+                motion.render(moving[i], clips[i], (b - a) / fps, width, height, fps, c.lang)
+                return
+            except UserError as e:
+                c.log(f"Моушен в сцене {i + 1} не собрался ({e}), там будет картинка.")
         orbit = c.dir / "anim" / f"{prefix}_{i:03d}.mp4"
         if tk and i in orbits and orbit.exists():
             media.render_anim_clip(orbit, clips[i], b - a, width, height, fps,
@@ -3537,7 +3688,8 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     opts = (db.get(c.id) or {}).get("options") or c.opts
     parts = list(clips)
     if opts.get("graphics"):
-        shown = _graphics_for(c, prefix, scenes, durations, total, height > width)
+        shown = [g for g in _graphics_for(c, prefix, scenes, durations, total, height > width)
+                 if int(g.get("index", -1)) not in moving]  # a map or a timeline already shows its own data
         if shown:
             try:
                 parts = _graphics_on_clips(clips, shown, bounds, width, height, fps, clips_dir)
@@ -4261,6 +4413,7 @@ def scene_prompts(jid: str) -> dict:
                      + ("Vertical 9:16 picture" if vertical else "Horizontal 16:9 picture")
                      + ", full-bleed scene filling the whole frame. No text, no letters, no captions, no watermark."
                      for x in scenes]
+    out["motion"] = sorted(motion_active(c))  # these scenes are maps or timelines: no picture needed
     return out
 
 

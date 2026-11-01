@@ -43,6 +43,7 @@ DEFAULTS = {
     "anthropic_model": "claude-opus-5-5",
     "opus_script_only": True,
     "step_effort": True,  # only the script is thought through at full depth; the other text steps think less
+    "motion_mode": "auto",  # maps and timelines drawn in place of some pictures (see motion.py)
     "atmos_mode": "auto",  # fog, rain, snow… drawn over the scenes where the script has them (see atmos.py)
     "atmos_volume": 0.35,  # loudness of the rain, wind and fire sounds under those scenes  # Opus/Fable write only the script and its editing; the other text steps use Sonnet
     "anthropic_effort": "high",

@@ -1,0 +1,1 @@
+Country shapes: Natural Earth 1:50m Admin 0 Countries (public domain), naturalearthdata.com. Coordinates rounded to 0.01 degree.
