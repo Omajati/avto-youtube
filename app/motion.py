@@ -447,15 +447,13 @@ def render_map(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int, 
                     gdraw.line([(x / 2, y / 2) for x, y in seg], fill=255, width=8, joint="curve")
                     hx, hy = to(head)
                     d.ellipse([hx - 9, hy - 9, hx + 9, hy + 9], fill=(*WHITE, 255), outline=(*RED, 255), width=4)
-                stops_done = 0
-                acc = 0.0
-                for k, rpt in enumerate(route):
-                    at = k / max(1, len(route) - 1) * curve_len
-                    if rp + 1 >= at:
-                        stops_done += 1
-                for k in range(min(stops_done, len(route))):
+                for k in range(len(route)):
+                    # Each stop pops in when the head passes it (the first one as the route starts).
+                    reach = t_r0 + (t_r1 - t_r0) * k / max(1, len(route) - 1)
+                    s = _back(_phase(t, reach - 0.02, reach + 0.08))
+                    if s <= 0:
+                        continue
                     x, y = to(route[k])
-                    s = _back(min(1.0, (rp - k / max(1, len(route) - 1) * curve_len) / (curve_len * 0.08) + 0.0001))
                     r_ = 8 * s
                     d.ellipse([x - r_, y - r_, x + r_, y + r_], fill=(*RED, 255), outline=(*WHITE, 255), width=3)
                     if stop_labels[k]:
