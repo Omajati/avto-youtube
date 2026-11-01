@@ -1892,7 +1892,7 @@ const RENDER = {
     const durs = d.stages.voice?.durations;
     const own = new Set(d.own_images || []);
     return vidBox + `<p class="muted">${r.scenes.length} сцен, по одной картинке на каждую. ${d.images_manual ? "Картинки вы делаете сами в другом сервисе: «📋 Описания картинок» даст описание для каждой сцены, загрузите готовые картинки пачкой или по одной кнопкой «📤 Своя» (картинка обрежется под кадр)." : "«Перерисовать» нарисует картинку заново, «📤 Своя» поставит вашу картинку (она обрежется под кадр)."}</p>
-    ${d.format !== "short" ? `<div class="row" style="margin-bottom:8px"><button class="sm" id="motion-replan" ${busy ? "disabled" : ""}>🗺 ${(d.motion || []).length ? "Найти карты и даты заново" : "Добавить карты и линии времени"}</button><span class="muted small">${(d.motion || []).length ? `Моушен в сценах: ${d.motion.filter(m => m.on).map(m => m.index + 1).join(", ") || "выключен"}.` : "Программа найдёт в сценарии места, где лучше показать карту или хронологию, и заменит там картинку анимацией. Бесплатно, кроме одного короткого запроса к нейросети."}</span></div>` : ""}
+    ${d.format !== "short" ? `<div class="row" style="margin-bottom:8px"><button class="sm" id="motion-replan" ${busy ? "disabled" : ""}>🗺 ${(d.motion || []).length ? "Найти моушен заново" : "Добавить моушен"}</button><span class="muted small">${(d.motion || []).length ? `Моушен в сценах: ${d.motion.filter(m => m.on).map(m => m.index + 1).join(", ") || "выключен"}.` : "Программа найдёт в сценарии места, где лучше показать карту, хронологию, график, сравнение, цитату или список, и заменит там картинку анимацией. Бесплатно, кроме одного короткого запроса к нейросети."}</span></div>` : ""}
     <div class="row" style="margin-bottom:8px"><button class="sm" id="own-prompts">📋 Описания картинок для другого сервиса</button>
       <label class="btn sm" style="cursor:pointer">📤 Загрузить свои картинки пачкой<input type="file" accept="image/*" multiple id="own-bulk" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label><label class="btn sm" style="cursor:pointer">📁 Папкой<input type="file" accept="image/*" multiple webkitdirectory id="own-bulk-dir" data-kind="scene" style="display:none" ${busy ? "disabled" : ""}></label>
       <span class="muted small">Номер сцены берётся из имени файла (1.png, scene_12.jpg, 03.webp); без номера по порядку.</span></div>
@@ -2151,7 +2151,7 @@ function fxRow(d) {
     <button class="sm atm-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">туман, дождь, снег поверх картинок; у каждой сцены можно поменять на шаге «Сцены»</span></div>
   ${d.format !== "short" ? `<div class="row" style="margin-top:8px"><span>Моушен:</span>
     <select class="mot-mode" style="max-width:420px" ${busy ? "disabled" : ""}>${Object.entries(META.motion_modes).map(([k, n]) => `<option value="${k}" ${k === d.motion_mode ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
-    <button class="sm mot-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">карты и линии времени вместо некоторых картинок; включить или выключить у сцены можно на шаге «Сцены»</span></div>` : ""}`;
+    <button class="sm mot-apply" ${busy ? "disabled" : ""}>Применить</button><span class="muted small">карты, даты, графики, сравнения, цитаты и списки вместо некоторых картинок; включить или выключить у сцены можно на шаге «Сцены»</span></div>` : ""}`;
 }
 
 function subsRow(d, kind, fileKey, fileName) {
@@ -2322,8 +2322,8 @@ async function viewSettings(id) {
     </div><div>
       ${field("sfx_volume", "Громкость звуковых эффектов", s, { type: "range", min: 0, max: 1, step: 0.05 })}
     </div></div>
-    <h3>Моушен: карты и линии времени</h3>
-    <p class="muted small">Там, где в сценарии важны места или даты, программа вместо картинки показывает анимацию: карта подлетает к региону, прорисовывает границы стран, маршрут и метки, или линия времени с датами. Картинки для этих сцен не нужны. Рисуется бесплатно, нужен один короткий запрос к нейросети на ролик.</p>
+    <h3>Моушен: карты, даты, графики, цитаты</h3>
+    <p class="muted small">Там, где в сценарии важны места или даты, программа вместо картинки показывает анимацию: карта подлетает к региону, прорисовывает границы стран, маршрут и метки, линия времени с датами, график, сравнение двух сторон, цитата или список причин. Переход с предыдущей картинки плавный, появление элементов озвучено мягкими щелчками. Цифры берутся только из сценария. Картинки для этих сцен не нужны. Рисуется бесплатно, нужен один короткий запрос к нейросети на ролик.</p>
     <div class="grid2"><div>
       ${field("motion_mode", "Моушен по умолчанию", s, { type: "select", options: Object.entries(META.motion_modes) })}
     </div><div></div></div>

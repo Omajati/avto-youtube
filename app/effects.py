@@ -46,9 +46,13 @@ _SYNTH = {
               "afade=t=in:d=0.12:curve=exp,afade=t=out:st=0.12:d=0.2,volume=0.9",
     "impact": "aevalsrc='0.9*sin(2*PI*(70-40*t)*t)*exp(-5*t)+0.35*(random(0)*2-1)*exp(-35*t)':d=0.9:s=44100,"
               "lowpass=f=3000,volume=1.4",
+    # Motion scenes: a soft pop for a pin, a date or a point, a light tick for a bar or a row.
+    "pop": "aevalsrc='0.6*sin(2*PI*(520+900*t)*t)*exp(-28*t)':d=0.18:s=44100,lowpass=f=4000,volume=1.2",
+    "tick": "aevalsrc='0.5*sin(2*PI*1500*t)*exp(-60*t)+0.2*(random(0)*2-1)*exp(-120*t)':d=0.08:s=44100,"
+            "highpass=f=600,volume=1.0",
 }
 # How long before the cut the sound starts (a whoosh leads into the new picture).
-_LEAD = {"whoosh": 0.3, "swoosh": 0.12, "impact": 0.0}
+_LEAD = {"whoosh": 0.3, "swoosh": 0.12, "impact": 0.0, "pop": 0.0, "tick": 0.0}
 
 
 def _sample(name: str) -> Path:
@@ -95,8 +99,9 @@ def plan(scenes: list, mode: str, short: bool) -> list:
     return out
 
 
-def build_track(fx_plan: list, durations: list, out: Path, volume: float) -> bool:
-    """Writes a mono wav with all sound effects at the right times. Returns False if there are none."""
+def build_track(fx_plan: list, durations: list, out: Path, volume: float, extra: list = ()) -> bool:
+    """Writes a mono wav with all sound effects at the right times. Returns False if there are none.
+    extra: [(seconds from the start, sound)] more sounds at exact moments (the pops of the motion scenes)."""
     events, t = [], 0.0
     starts = []
     for d in durations:
@@ -106,6 +111,7 @@ def build_track(fx_plan: list, durations: list, out: Path, volume: float) -> boo
     for i, _eff, sfx in fx_plan:
         if sfx != "none" and i < len(starts):
             events.append((max(starts[i] - _LEAD[sfx], 0.0), sfx))
+    events += [(max(0.0, at), name) for at, name in extra if name in _SYNTH and at < total]
     if not events:
         return False
     rate = 44100

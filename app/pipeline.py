@@ -3278,7 +3278,7 @@ def motion_plan(c: Ctx, scenes: list, durations: list = None, take_pictures: boo
     if not llm.has_key(_helper_settings(c.settings)):
         write_json(path, plan)
         return plan
-    c.log("Ищу места для моушена: карты и линии времени…")
+    c.log("Ищу места для моушена: карты, даты, графики, сравнения, цитаты, списки…")
     total = sum(durations) if durations else word_count(" ".join(sc.get("text", "") for sc in scenes)) / max(1, c.wpm) * 60
     try:
         r = llm.call_json(_helper_settings(c.settings), "You plan motion design scenes. Answer only with JSON.",
@@ -3632,6 +3632,8 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     for i in moving:
         if i < len(kinds):
             kinds[i] = "none"  # a map or a timeline gets no fog or rain
+        if i < len(fx):
+            fx[i] = (i, "none", "whoosh")  # the motion scene comes in with a whoosh, whatever the effects mode
     if any(k != "none" for k in kinds):
         c.log("Атмосфера по сценарию: " + ", ".join(f"{atmos.RU[k].lower()} ({kinds.count(k)})"
                                                      for k in atmos.KINDS if k != "none" and k in kinds) + ".")
@@ -3649,7 +3651,9 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
         a, b = bounds[i]
         if i in moving:
             try:
-                motion.render(moving[i], clips[i], (b - a) / fps, width, height, fps, c.lang)
+                prev = c.dir / "images" / f"{prefix}_{i - 1:03d}.png"
+                motion.render(moving[i], clips[i], (b - a) / fps, width, height, fps, c.lang,
+                              prev=prev if i and prev.exists() else None)
                 return
             except UserError as e:
                 c.log(f"Моушен в сцене {i + 1} не собрался ({e}), там будет картинка.")
@@ -3724,7 +3728,9 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     if subs and cap.get("moved"):
         c.log(f"Субтитры: {cap['moved']} строк перенесено в свободное место кадра.")
     sfx_file = clips_dir / "sfx.wav"
-    has_sfx = effects.build_track(fx, durations, sfx_file, float(c.settings.get("sfx_volume", 0.5)))
+    cues = [(bounds[i][0] / fps + at, name) for i, g in moving.items() if i < len(bounds)
+            for at, name in motion.cues(g, (bounds[i][1] - bounds[i][0]) / fps)]
+    has_sfx = effects.build_track(fx, durations, sfx_file, float(c.settings.get("sfx_volume", 0.5)), cues)
     if any(k in atmos.SOUND_RU for k in kinds) and float(c.settings.get("atmos_volume", 0.35)) > 0:
         try:
             has_sfx = atmos.ambient(kinds, durations, sfx_file, has_sfx, float(c.settings.get("atmos_volume", 0.35)))
