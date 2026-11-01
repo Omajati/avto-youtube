@@ -1,6 +1,6 @@
 {
- "version": 151,
- "label": "анимации цифр без пересчёта всего ролика",
- "notes": "Анимации цифр накладываются только на свои сцены, монтаж быстрее",
+ "version": 152,
+ "label": "сценарий добирает нужную длину",
+ "notes": "Сценарий добирает нужную длину, редактор больше не сокращает",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

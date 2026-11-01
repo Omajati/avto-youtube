@@ -1289,6 +1289,67 @@ def _outline_text(c: Ctx) -> str:
     return "\n".join(lines)
 
 
+SCHEMA_EXPAND = {"type": "object", "properties": {
+    "inserts": {"type": "array", "items": {"type": "object", "properties": {
+        "after": {"type": "integer"}, "text": {"type": "string"}}, "required": ["after", "text"]}}},
+    "required": ["inserts"]}
+
+EXPAND_PROMPT = """The narration below is too short: {now} words, the video needs about {target} words ({minutes} minutes). Some models write shorter than asked and editors tend to cut, so the length is added here without touching what is already written.
+
+Write NEW paragraphs that together add about {deficit} words: {count} paragraphs of about {each} words each. Put each one where the story is thin: a plan beat that is rushed or missing, a chapter that jumps ahead, a moment that deserves a scene, a fact the viewer would want explained. Each new paragraph must earn its place: a vivid real scene, a concrete well-known fact, a turn, a consequence the viewer feels, an open question carried to the next part. No recaps, no water, nothing that repeats the text, no invented numbers, quotes or studies. Same language, same voice and rhythm as the script, short spoken sentences, numbers in words.
+
+after = the number of the paragraph the new one goes after (0 = before the first paragraph; never after the last paragraph, the ending stays the ending).
+
+THE PLAN OF THE VIDEO:
+{outline}
+
+THE NARRATION:
+{paragraphs}"""
+
+
+def _expand(c: Ctx, script: str) -> str:
+    """Adds new paragraphs until the text is close to the target length. The written text stays as it is: only
+    new paragraphs are inserted, so a model that writes short (or an editor that cut) cannot shrink the video."""
+    if c.demo or c.short_format or c.one_take:
+        return script
+    system = ("You are the head writer of a YouTube channel. Channel niche: " + c.niche + c.char_block()
+              + c.lessons_block() + c.library_block("03_script.txt") + "\nAnswer only with JSON.")
+    for _ in range(3):
+        now = word_count(script)
+        if now >= c.words * 0.9:
+            break
+        c.check()
+        paras = [x.strip() for x in re.split(r"\n\s*\n", script) if x.strip()]
+        deficit = int(c.words - now)
+        count = max(2, min(25, round(deficit / 110)))
+        c.log(f"Текст короче нужного ({now} слов из ~{c.words}), дописываю {count} новых абзацев…")
+        try:
+            r = llm.call_json(c.settings, system, EXPAND_PROMPT.format(
+                now=now, target=c.words, minutes=max(1, int(c.minutes)), deficit=deficit, count=count,
+                each=max(60, deficit // count), outline=_outline_text(c),
+                paragraphs="\n\n".join(f"[{i + 1}] {x}" for i, x in enumerate(paras))),
+                SCHEMA_EXPAND, c.usage, 32000)
+            c.save_usage()
+        except UserError as e:
+            c.log(f"Дописать текст не получилось ({e}), оставляю как есть.")
+            break
+        add = {}
+        for x in r.get("inserts") or []:
+            try:
+                k, t = int(x.get("after")), str(x.get("text") or "").strip()
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if t and 0 <= k < len(paras):
+                add.setdefault(k, []).append(t)
+        if not add:
+            break
+        out = add.get(0, [])
+        for i, x in enumerate(paras, 1):
+            out += [x] + add.get(i, [])
+        script = "\n\n".join(out)
+    return script
+
+
 def st_script(c: Ctx):
     if c.demo:
         r = _demo("script")
@@ -1296,6 +1357,9 @@ def st_script(c: Ctx):
         c.log(f"Пишу текст сценария (~{c.words} слов)…")
         r = c.ask("03_script.txt", SCHEMA_SCRIPT, 32000, outline=_outline_text(c))
     script = r["script"].strip()
+    if word_count(script) < c.words * 0.9:
+        script = _expand(c, script)
+        r["script"] = script
     r["checks"] = script_checks(script, c.words, c.wpm)
     c.log(f"Текст готов: {r['checks']['word_count']} слов (~{r['checks']['minutes']} мин)")
     write_json(c.out("script"), r)
@@ -1356,7 +1420,8 @@ def _evaluate(c: Ctx, script: str, round_no: int, history: list = None, score_on
         extra = (_review_history(history or []) + EDITOR_GATES
                  + ("\n\nAUTOMATIC CHECKS FAILED ON THIS TEXT (each one caps the matching score at 4 and must be fixed "
                     "in revised_script):\n- " + "\n- ".join(failed) if failed else "")
-                 + (SCORE_ONLY if score_only else REVIEW_FOCUS))
+                 + (SCORE_ONLY if score_only else REVIEW_FOCUS
+                    + f" Never make the text shorter: revised_script keeps at least {int(c.words * 0.95)} words."))
         r = c.ask("04_review.txt", SCHEMA_REVIEW, 8000 if score_only else 32000, extra=extra,
                   outline=_outline_text(c), script=script, word_count=word_count(script))
         if score_only:
@@ -1397,6 +1462,8 @@ def st_review(c: Ctx):
             break
         r = _evaluate(c, current, len(rounds) + 1, rounds)
         r["revised_script"] = (r.get("revised_script") or "").strip() or current
+        if word_count(r["revised_script"]) < c.words * 0.9 and not r["passed"]:
+            r["revised_script"] = _expand(c, r["revised_script"])  # an editor that cut gets its length back
         rounds.append(r)
         write_json(c.dir / "review_progress.json", {"rounds": rounds})
         c.log(f"Оценка раунда {len(rounds)}: {r['overall']} из 10 (минимум {r['min_score']}), "
@@ -1469,7 +1536,7 @@ SCHEMA_IMPROVE = {"type": "object", "properties": {
 
 IMPROVE_PROMPT = """Below is the finished narration of a video, split into numbered paragraphs. It is already good: most of it must stay exactly as it is, because every changed paragraph means new paid pictures. Find ONLY its weak spots against the rules of this niche and the analyses of videos that worked (in the system prompt), and fix just those.
 
-Weak spots worth fixing: a hook that does not open with the viewer's own situation and stakes; a question or promise opened and never answered; a myth that is stated but not overturned with a reveal; a chapter without a "wow" fact or without an open loop to the next one; numbers that are not translated into something the viewer feels; a payoff that is announced ("rewrites the whole story") but not delivered; an ending that does not close the loop or ends on a weak call to action instead of a question for the comments; parts that drag. If the text is shorter than the target, you may add 1-3 new paragraphs (insert_after) where they make the video stronger.
+Weak spots worth fixing: a hook that does not open with the viewer's own situation and stakes; a question or promise opened and never answered; a myth that is stated but not overturned with a reveal; a chapter without a "wow" fact or without an open loop to the next one; numbers that are not translated into something the viewer feels; a payoff that is announced ("rewrites the whole story") but not delivered; an ending that does not close the loop or ends on a weak call to action instead of a question for the comments; parts that drag. If the text is shorter than the target, add new paragraphs (insert_after) where the story is thin, as many as the target length needs (see below); new paragraphs do not count toward the third.
 
 Rules:
 - Change at most a third of the paragraphs. Do not touch paragraphs that already work, do not polish wording for its own sake.
@@ -1480,7 +1547,7 @@ Rules:
 - summary_ru: in Russian, 2-3 sentences: the overall verdict and what the edits change.
 - titles: 3 title ideas in the script's language that follow the niche rules, with Russian translations. thumbnail_texts: 3 thumbnail texts of 2-3 words in the script's language.
 {owner}
-Target length: about {target} words, now {now} words.
+Target length: about {target} words, now {now} words.{grow}
 Current title: {title}
 Current thumbnail text: {thumb}
 
@@ -1503,7 +1570,10 @@ def improve_script(jid: str, note: str = "") -> dict:
     system = ("You are the head writer of a YouTube channel who edits finished scripts with a light hand. "
               f"Channel niche: {c.niche}" + c.lessons_block() + c.library_block("03_script.txt"))
     owner = f"\nTHE OWNER'S NOTES (follow them first; they may be in Russian):\n{note.strip()[:4000]}\n" if note.strip() else ""
-    user = IMPROVE_PROMPT.format(owner=owner, target=c.words, now=word_count(review["final_script"]),
+    now = word_count(review["final_script"])
+    grow = (f" The text is too short: add new paragraphs (insert_after) that together give about {c.words - now} more "
+            "words, real scenes and facts, no water." if now < c.words * 0.9 else "")
+    user = IMPROVE_PROMPT.format(owner=owner, target=c.words, now=now, grow=grow,
                                  title=extras.get("youtube_title") or (c.data("outline") or {}).get("title", ""),
                                  thumb=thumb or "-", paragraphs="\n\n".join(f"[{i + 1}] {p}" for i, p in enumerate(paras)))
     r = llm.call_json(c.settings, system + "\nAnswer only with JSON.", user, SCHEMA_IMPROVE, c.usage, 16000)
