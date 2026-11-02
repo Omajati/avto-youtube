@@ -1,6 +1,6 @@
 {
- "version": 157,
- "label": "анимация через RoyalTechno",
- "notes": "анимация сцен через RoyalTechno (Veo 3.1, Grok Imagine, Omni Flash)",
+ "version": 158,
+ "label": "RoyalTechno — картинки, анимация, озвучка",
+ "notes": "картинки и озвучка ElevenLabs через RoyalTechno",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

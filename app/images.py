@@ -60,7 +60,21 @@ PROVIDERS = {
             ("gpt-image-2.5-sunburst", "GPT Image 2.5 Sunburst — тщательнее, медленнее, ~$0.01–0.02", 0.015),
         ],
     },
+    "royal": {
+        "name": "RoyalTechno (Nano Banana, Seedream, GPT Image — сторонний перепродавец, дёшево)",
+        "key_field": "royal_key",
+        "model_field": "royal_image_model",
+        "signup": "https://t.me/royaltechno_ai_bot",
+        "models": [
+            ("nano-banana-2", "Nano Banana 2 — лучше всего держит лица персонажей (рекомендую)", 0.03),
+            ("nano-banana-pro", "Nano Banana Pro — самое качественное", 0.06),
+            ("seedream-4.6", "Seedream 4.6 — как в Dreamina", 0.03),
+            ("gpt-image-2.5", "GPT Image 2.5", 0.03),
+        ],
+    },
 }
+# Royal models that draw by reference pictures (characters, items, places), and how many pictures each takes.
+ROYAL_REF = {"nano-banana-2": 10, "nano-banana-pro": 10, "seedream-4.6": 6}
 
 
 def price_per_image(settings) -> float:
@@ -83,8 +97,29 @@ def generate(settings, prompt: str, vertical: bool = False) -> bytes:
     model = settings.get(p["model_field"]) or p["models"][0][0]
     if provider == "openai":
         return _openai(key, model, prompt, vertical, settings.get("openai_image_quality") or "medium")
+    if provider == "royal":
+        return _royal(settings, model, prompt, vertical)
     fn = {"fal": _fal, "replicate": _replicate, "runware": _runware, "together": _together, "openai": _openai}[provider]
     return fn(key, model, prompt, vertical)
+
+
+def _royal(settings, model, prompt, vertical, refs: list = None, square: bool = False):
+    from . import royal
+    inp = {"prompt": prompt, "aspect_ratio": "1:1" if square else "9:16" if vertical else "16:9"}
+    if refs:
+        inp["reference_image_urls"] = refs
+    out = royal.run(settings, model, inp, poll=4, limit=5 * 60, optional=("aspect_ratio",) if square else ())
+    return royal.fetch(out["url"])
+
+
+def royal_refs(settings) -> bool:
+    """Pictures by reference go to RoyalTechno when it is the chosen picture service."""
+    return settings.get("image_provider") == "royal" and bool(settings.get("royal_key"))
+
+
+def can_reference(settings) -> bool:
+    """Characters, items and places can be drawn from reference pictures (fal.ai or RoyalTechno)."""
+    return bool(settings.get("fal_key")) or royal_refs(settings)
 
 
 def _download(service, url) -> bytes:
@@ -225,9 +260,16 @@ def _use_flux2(settings, refs, place, items) -> bool:
 
 def reference_price(settings, refs: list = None, place=None, items: list = None) -> float:
     """Approximate USD for one picture drawn by reference."""
+    if royal_refs(settings):
+        return price_per_image({**settings, "royal_image_model": _royal_ref_model(settings)})
     if not _use_flux2(settings, refs, place, items):
         return REFERENCE_PRICE
     return round((_inputs(refs, place, items) + 1.03) * FLUX2_PER_MP, 4)  # every input is resized to 1 MP
+
+
+def _royal_ref_model(settings) -> str:
+    m = settings.get("royal_image_model")
+    return m if m in ROYAL_REF else "nano-banana-2"
 
 
 def _sheet(paths: list):
@@ -254,12 +296,13 @@ def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = 
     keep_view: the place picture is an enlarged crop to redraw sharp with exactly its framing."""
     from PIL import Image
     import io
+    royal = royal_refs(settings)
     key = settings.get("fal_key")
-    if not key:
-        raise UserError("Для картинок по портрету нужен ключ fal.ai (Настройки → Картинки).")
+    if not key and not royal:
+        raise UserError("Для картинок по портрету нужен ключ fal.ai или RoyalTechno (Настройки → Картинки).")
     refs = list(refs[:MAX_REFERENCE_IMAGES])
     items = list((items or [])[:MAX_ITEM_IMAGES])
-    flux2 = _use_flux2(settings, refs, place, items)
+    flux2 = _use_flux2(settings, refs, place, items) and not royal
     pics = ([place] if place else []) + refs + items
     urls = []
     for pic in pics:
@@ -313,6 +356,8 @@ def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = 
                      "photos of one item from different sides. Draw each item only once and do not copy the photo's "
                      "background.")
     parts.append("No text, no letters, no watermark" + (" apart from what is printed on the items themselves." if items else "."))
+    if royal:
+        return _royal(settings, _royal_ref_model(settings), " ".join(parts), vertical, urls, square)
     body = {
         "prompt": " ".join(parts),
         "image_urls": urls,

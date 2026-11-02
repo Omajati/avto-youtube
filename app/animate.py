@@ -3,7 +3,6 @@ import base64
 import io
 import math
 import time
-import uuid
 from pathlib import Path
 
 from . import net
@@ -55,7 +54,6 @@ VIDEO_MODELS = {
         "price": 0.01,
     },
 }
-ROYAL = "https://api.royaltechno.cc/v1"
 
 MODES = {
     "off": "Выключена",
@@ -253,54 +251,13 @@ def generate(settings, img: Path, prompt: str, need: float, vertical: bool, chec
 
 def _royal(settings, img: Path, prompt: str, need: float, vertical: bool, check=None, motion=None) -> bytes:
     """RoyalTechno: one job with the scene picture as the first frame; polled until the mp4 is ready."""
-    key = settings.get("royal_key")
-    if not key:
-        raise UserError("Для анимации через RoyalTechno нужен ключ: создайте его в их Телеграм-боте @royaltechno_ai_bot "
-                        "командой /api_key_new и вставьте в Настройках, раздел «Анимация сцен».")
-    m = VIDEO_MODELS[settings["video_model"]]
-    headers = {"Authorization": f"Bearer {key}"}
-    inp = {"prompt": f"{prompt.strip().rstrip('.')}. {motion or MOTION_PROMPT}", "start_image_url": _data_uri(img),
+    from . import royal
+    inp = {"prompt": f"{prompt.strip().rstrip('.')}. {motion or MOTION_PROMPT}", "start_image_url": royal.data_uri(img),
            "aspect_ratio": "9:16" if vertical else "16:9", "duration_sec": int(clip_seconds(settings, need))}
-    # One id per clip: a retried request after a network hiccup is not charged twice.
-    idem = str(uuid.uuid4())
-    try:
-        job = net.request("RoyalTechno", "POST", f"{ROYAL}/jobs", json={"model": m["model"], "input": inp},
-                          headers={**headers, "Idempotency-Key": idem}, timeout=120, tries=3).json()
-    except UserError as e:
-        if "invalid" not in str(e).lower():
-            raise
-        inp.pop("duration_sec")  # the model has its own fixed length: take it, the assembly fits it to the scene
-        job = net.request("RoyalTechno", "POST", f"{ROYAL}/jobs", json={"model": m["model"], "input": inp},
-                          headers={**headers, "Idempotency-Key": str(uuid.uuid4())}, timeout=120, tries=3).json()
-    jid = job.get("id")
-    if not jid:
-        raise UserError(f"RoyalTechno не принял сцену: {str(job.get('error') or job)[:300]}")
-    started = time.time()
-    while True:
-        if check:
-            check()
-        st = net.request("RoyalTechno", "GET", f"{ROYAL}/jobs/{jid}", headers=headers, timeout=30, tries=3).json()
-        status = st.get("status")
-        if status == "succeeded":
-            break
-        if status in ("failed", "canceled"):
-            err = st.get("error") or {}
-            raise UserError(f"RoyalTechno: анимация не получилась ({err.get('message') or err or status}). "
-                            "Деньги за неё они возвращают сами.")
-        if time.time() - started > 8 * 60:
-            try:
-                net.request("RoyalTechno", "POST", f"{ROYAL}/jobs/{jid}/cancel", headers=headers, timeout=20, tries=1)
-            except UserError:
-                pass
-            raise UserError("RoyalTechno делал сцену дольше 8 минут, запрос отменён")
-        time.sleep(8)
-    url = ((st.get("output") or {}).get("url")) or ""
-    if not url:
-        raise UserError(f"RoyalTechno не вернул видео: {str(st)[:300]}")
-    data = net.request("RoyalTechno", "GET", url, timeout=300).content
-    if len(data) < 1000:
-        raise UserError("RoyalTechno вернул пустое видео. Попробуйте ещё раз.")
-    return data
+    # A model with its own fixed length refuses duration_sec: then its length is taken, the assembly fits the clip.
+    out = royal.run(settings, VIDEO_MODELS[settings["video_model"]]["model"], inp, check, poll=8,
+                    optional=("duration_sec",))
+    return royal.fetch(out["url"])
 
 
 def provider(settings) -> str:

@@ -202,6 +202,8 @@ def synthesize(settings, text: str, out_path: Path, previous_text: str = "", nex
     to that account by itself."""
     from . import elkeys
     voice = settings.get("elevenlabs_voice_id") or "JBFqnCBsd6RMkjVDRZzb"
+    if settings.get("voice_provider") == "royal":
+        return _royal(settings, text, out_path, language)
     readded = set()
     for _ in range(len(elkeys.all_keys()) + 3):
         key = _key(settings)
@@ -232,6 +234,50 @@ def synthesize(settings, text: str, out_path: Path, previous_text: str = "", nex
                                 "голосов»: программа запомнит его и сама добавит в другие аккаунты.")
             raise
     raise UserError("ElevenLabs: не получилось озвучить ни с одним ключом.")
+
+
+# ElevenLabs model names at RoyalTechno, and the voice settings each one takes there.
+ROYAL_MODELS = {"eleven_multilingual_v2": "eleven-multilingual-v2", "eleven_v3": "eleven-v3",
+                "eleven_v4": "eleven-v4", "eleven_flash_v2_5": "eleven-flash-v2.5", "eleven_turbo_v2_5": "eleven-flash-v2.5"}
+
+
+def _royal(settings, text: str, out_path: Path, language: str = "") -> int:
+    """The same ElevenLabs voices through RoyalTechno (much cheaper per character). It gives no word timings, so the
+    subtitles are spread over the speech by word length."""
+    from . import elkeys, royal
+    voice = settings.get("elevenlabs_voice_id") or "JBFqnCBsd6RMkjVDRZzb"
+    info = elkeys.known_voice(voice) or {}
+    voice = info.get("public_id") or voice  # a library voice added to an account: its original id
+    model = ROYAL_MODELS.get(settings.get("elevenlabs_model") or "eleven_multilingual_v2", "eleven-multilingual-v2")
+    stability = _unit(settings.get("voice_stability", 0.5), 0.5)
+    if model in ("eleven-v3", "eleven-v4"):
+        vs = {"stability": min((0.0, 0.5, 1.0), key=lambda x: abs(x - stability))}
+    elif model == "eleven-flash-v2.5":
+        vs = {"stability": stability, "similarity_boost": _unit(settings.get("voice_similarity", 0.75), 0.75),
+              "speed": min(1.2, max(0.7, float(settings.get("voice_speed", 1.0))))}
+    else:
+        vs = {"stability": stability, "similarity_boost": _unit(settings.get("voice_similarity", 0.75), 0.75),
+              "style": _unit(settings.get("voice_style", 0.0), 0.0), "use_speaker_boost": True,
+              "speed": float(settings.get("voice_speed", 1.0))}
+    inp = {"prompt": text, "voice": voice, "voice_settings": vs}
+    if language:
+        inp["language"] = language
+    try:
+        out = royal.run(settings, model, inp, poll=3, limit=5 * 60)
+    except UserError as e:
+        if "voice_not_available" in str(e) or "voice" in str(e).lower() and "(400)" in str(e):
+            raise UserError("RoyalTechno не даёт этот голос (у них доступны не все голоса ElevenLabs). Выберите в "
+                            "Настройках → «Озвучка» другой голос, например стандартный George, или переключите "
+                            "озвучку обратно на ElevenLabs напрямую.")
+        raise
+    audio = royal.fetch(out["url"], 500)
+    if not is_audio(audio[:16]):
+        raise UserError("RoyalTechno вернул вместо звука что-то другое. Попробуйте ещё раз.")
+    royal.save(audio, out_path)
+    out_path.with_suffix(".json").unlink(missing_ok=True)
+    from . import balance
+    balance.record("royaltechno", round(len(text) / 1000 * 0.03, 4))
+    return len(text)
 
 
 def _learn_voice(voice: str) -> dict:

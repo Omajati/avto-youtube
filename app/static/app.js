@@ -249,7 +249,7 @@ async function viewNew() {
   if (!projs.find(p => p.id === curProj)) curProj = "";
   const missing = [];
   if (s.llm_provider === "anthropic" ? !s.anthropic_key : !s.openai_key) missing.push("нейросети для сценария");
-  if (!s.elevenlabs_key) missing.push("ElevenLabs (озвучка)");
+  if (s.voice_provider === "royal" ? !s.royal_key : !s.elevenlabs_key) missing.push(s.voice_provider === "royal" ? "RoyalTechno (озвучка)" : "ElevenLabs (озвучка)");
   const prov = META.providers[s.image_provider];
   if (prov && !s[prov.key_field]) missing.push(`${prov.name} (картинки)`);
   main.innerHTML = `
@@ -2259,6 +2259,8 @@ async function viewSettings(id) {
     <label class="f">…или ID голоса вручную <span class="hint">Если список голосов не загружается: на elevenlabs.io откройте голос, нажмите «…» → Copy voice ID и вставьте сюда. Если ошибка про разрешение (permission), откройте на сайте ElevenLabs ваш API-ключ → Edit и включите доступ «Voices: Read» и «User: Read», либо создайте новый ключ без ограничений.</span></label>
     <input type="text" id="voice-id" placeholder="например JBFqnCBsd6RMkjVDRZzb">
     <div id="voice-marks"></div>
+    ${field("voice_provider", "Через что озвучивать", s, { type: "select", options: [["elevenlabs", "ElevenLabs напрямую, по вашему ключу"], ["royal", "Через RoyalTechno: те же голоса ElevenLabs в 5–10 раз дешевле ($0.03 за 1000 символов), ключ RoyalTechno"]], hint: "Через RoyalTechno доступны стандартные голоса и голоса из библиотеки ElevenLabs, но не все: если голос не подойдёт, программа скажет. Ваших личных клонов голоса там нет. Субтитры ложатся по паузам в речи" })}
+    ${s.voice_provider === "royal" ? field("royal_key", "Ключ RoyalTechno", s, { type: "secret", hint: `Создаётся в Телеграм-боте <a href="https://t.me/royaltechno_ai_bot" target="_blank">@royaltechno_ai_bot</a> командой /api_key_new` }) : ""}
     ${field("elevenlabs_model", "Модель озвучки", s, { type: "select", options: META.tts_models.map(m => [m.id, m.name]) })}
     ${field("voice_tags", "Интонации по сюжету (только для модели v3)", s, { type: "select", options: [["true", "Да: ИИ расставляет в тексте пометки шёпот, удивление, грусть и т. п. там, где этого требует сюжет (центы за ролик)"], ["false", "Нет: голос читает текст как есть"]] })}
     <div class="grid2"><div>
@@ -2287,7 +2289,7 @@ async function viewSettings(id) {
     ${field("images_manual", "Кто делает картинки", s, { type: "select", options: [["true", "Я сам в другом сервисе: программа останавливается после озвучки и ждёт мои картинки, сама ничего не рисует"], ["false", "Программа рисует сама через сервис выше"]] })}
     ${field("auto_check", "Автоконтроль логики и картинок", s, { type: "select", options: [["true", "Включён: ИИ проверяет описания всех сцен и каждую готовую картинку, явные ошибки перерисовывает сам (~$0.05–0.15 на шортс, ~$0.3–0.7 на длинный)"], ["false", "Выключен: дешевле, ошибки придётся ловить самому"]] })}
     ${field("ref_model", "Модель для картинок по образцу (персонажи, предметы, одинаковые места)", s, { type: "select", options: [["nano", "Nano Banana: лучше всего держит лица и места, ~$0.04 за картинку"], ["flux2", "Экономно: FLUX.2 Dev Edit, когда образцов 1–2 (место ~$0.025, место и персонаж ~$0.036), иначе Nano Banana; крупные планы и детали без персонажей без образца"]] })}
-    ${field("char_reference", "Персонажи на картинках по портрету", s, { type: "select", options: [["true", "Да, как на портрете (fal.ai, ~$0.04 за картинку с персонажем)"], ["false", "Нет, только по текстовому описанию (дешевле, но похожесть хуже)"]] })}
+    ${field("char_reference", "Персонажи на картинках по портрету", s, { type: "select", options: [["true", "Да, как на портрете (fal.ai ~$0.04, а если выбран RoyalTechno, то через него)"], ["false", "Нет, только по текстовому описанию (дешевле, но похожесть хуже)"]] })}
     <div id="t-img-r" style="margin-top:10px"></div>
   </div>
 
@@ -2306,7 +2308,7 @@ async function viewSettings(id) {
       ${field("jobs_parallel", "Роликов одновременно", s, { type: "number", hint: "Сколько роликов делается сразу: темы, текст, озвучка, картинки, анимация. Монтаж всё равно идёт по одному. От 1 до 5, обычно 3" })}
     </div></div>
     <h3>Анимация сцен</h3>
-    <p class="muted small">Нейросеть превращает картинку сцены в короткий клип с движением (люди, огонь, вода, камера). Работает через fal.ai (нужен ключ fal.ai из раздела «Картинки») или через RoyalTechno (свой ключ ниже). Стоит денег за каждую секунду, поэтому выгоднее оживлять только начало ролика и ключевые моменты. Здесь значения по умолчанию, у каждого ролика можно выбрать своё.</p>
+    <p class="muted small">Нейросеть превращает картинку сцены в короткий клип с движением (люди, огонь, вода, камера). Работает через fal.ai (нужен ключ fal.ai из раздела «Картинки») или через RoyalTechno (ключ ниже, тот же, что для картинок и озвучки). Стоит денег за каждую секунду, поэтому выгоднее оживлять только начало ролика и ключевые моменты. Здесь значения по умолчанию, у каждого ролика можно выбрать своё.</p>
     <div class="grid2"><div>
       ${field("video_model", "Модель анимации", s, { type: "select", options: META.video_models.map(m => [m.id, `${m.name}: ~$${m.clip} за одну сцену ($${m.price} за секунду клипа)`]) })}
       ${field("anim_mode", "Что оживлять по умолчанию", s, { type: "select", options: animModes(), hint: "Для роликов без проекта. У проекта своя настройка в его карточке" })}

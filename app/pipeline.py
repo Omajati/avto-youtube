@@ -2296,6 +2296,8 @@ def _voice_list(c: Ctx, scenes: list, prefix: str):
             key = settings.get("elevenlabs_key")
             chars = tts.synthesize(settings, sc.get("tts_text") or sc["text"], mp3, prev_t, next_t, c.lang)
             c.add_usage("tts_chars", chars)
+            if settings.get("voice_provider") == "royal" and not mp3.with_suffix(".json").exists():
+                _guess_alignment(mp3, sc["text"])  # RoyalTechno gives no word timings: found from the pauses
             if settings.get("elevenlabs_key") != key:
                 from . import elkeys
                 c.settings["elevenlabs_key"] = settings["elevenlabs_key"]
@@ -2590,6 +2592,28 @@ def _own_voice_words(c: Ctx, text: str) -> list:
     return words
 
 
+def _guess_alignment(mp3: Path, text: str):
+    """Word timings for subtitles when the voice service gave none, in the ElevenLabs alignment format."""
+    try:
+        words = estimate_word_times(mp3, text)
+    except Exception:  # noqa: BLE001 - the subtitles then fall back to an even spread
+        return
+    chars, st, en = [], [], []
+    for k, (w, a, b) in enumerate(words):
+        if k:
+            chars.append(" ")
+            st.append(a)
+            en.append(a)
+        step = (b - a) / max(1, len(w))
+        for j, ch in enumerate(w):
+            chars.append(ch)
+            st.append(round(a + j * step, 3))
+            en.append(round(a + (j + 1) * step, 3))
+    if chars:
+        write_json(mp3.with_suffix(".json"), {"characters": chars, "character_start_times_seconds": st,
+                                              "character_end_times_seconds": en})
+
+
 def estimate_word_times(audio: Path, text: str) -> list:
     """[(word, start, end)] without any service: each sentence is placed so it ends in the pause nearest to where its
     length says it should, and its words are spread over the speech inside, each by its length."""
@@ -2784,7 +2808,7 @@ def st_voice(c: Ctx):
 
 def _refs_for(c: Ctx, scene: dict) -> list:
     """Portraits of the recurring characters visible in this scene."""
-    if not c.characters or not c.settings.get("char_reference", True) or not c.settings.get("fal_key"):
+    if not c.characters or not c.settings.get("char_reference", True) or not images.can_reference(c.settings):
         return []
     names = {n.strip().lower() for n in scene.get("characters") or []}
     visible = [ch for ch in c.characters if {ch.get("name", "").lower(), ch.get("name_en", "").lower()} & names]
@@ -2802,7 +2826,7 @@ def _refs_for(c: Ctx, scene: dict) -> list:
 
 def _item_refs_for(c: Ctx, scene: dict) -> list:
     """Photos of the chosen items visible in this scene: one reference sheet per item."""
-    if not c.items or not c.settings.get("fal_key"):
+    if not c.items or not images.can_reference(c.settings):
         return []
     names = {n.strip().lower() for n in scene.get("items") or []}
     out = []
@@ -2837,7 +2861,7 @@ def _thumb_refs(c: Ctx, prompt: str) -> list:
 
 def _same_place(c: Ctx) -> bool:
     """Draw one picture of every location first and use it as a reference, so all scenes there show the same place."""
-    return bool(c.project.get("same_place", True)) and bool(c.settings.get("fal_key")) and not c.demo
+    return bool(c.project.get("same_place", True)) and images.can_reference(c.settings) and not c.demo
 
 
 def _location_plates(c: Ctx, scenes_by_kind: list) -> dict:
@@ -2915,7 +2939,7 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
                 # picture is cropped to fill the frame.
                 c.log(f"Картинка {idx + 1}: получилась не той формы, рисую ещё раз…")
                 c.add_usage("image_cost", price)
-                balance.record("fal", price)
+                balance.record("royaltechno" if images.royal_refs(c.settings) else "fal", price)
                 raw = images.generate_with_reference(c.settings, ("Tall vertical 9:16 portrait composition. " if vertical
                                                                   else "Wide horizontal 16:9 landscape composition. ") + full,
                                                      refs or [], vertical, place=place, items=items, example=example)
@@ -2923,7 +2947,7 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
                 media.trim_borders(out)
             c.add_usage("images", 1)
             c.add_usage("image_cost", price)
-            balance.record("fal", price)
+            balance.record("royaltechno" if images.royal_refs(c.settings) else "fal", price)
             return
         except UserError as e:
             if "ключ" in str(e) or "денег" in str(e) or "лимит" in str(e):
@@ -2947,7 +2971,7 @@ def _make_image(c: Ctx, prompt: str, out: Path, vertical: bool, idx: int, fallba
     media.trim_borders(out)
     c.add_usage("images", 1)
     c.add_usage("image_cost", images.price_per_image(c.settings))
-    balance.record(c.settings.get("image_provider") or "fal", images.price_per_image(c.settings))
+    balance.record({"royal": "royaltechno"}.get(c.settings.get("image_provider"), c.settings.get("image_provider") or "fal"), images.price_per_image(c.settings))
 
 
 def make_package(jid: str, text: str = None, side: str = None, font: str = None, look: str = None):

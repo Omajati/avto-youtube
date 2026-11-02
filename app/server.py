@@ -1388,7 +1388,7 @@ def char_portrait(cid: str):
     prompt = (f"Character portrait, head and shoulders, looking at the viewer, neutral simple background, "
               f"even soft light. {c.get('appearance') or c.get('description_ru')}. {style}")
     photos = ([projects.portrait_path(cid)] if projects.portrait_path(cid).exists() else []) + projects.list_refs(cid)
-    if photos and s.get("fal_key"):
+    if photos and images.can_reference(s):
         # Draw the portrait in the chosen style but from the owner's photos, so the face stays the same.
         raw = images.generate_with_reference(s, prompt, [photos], False, square=True)
     else:

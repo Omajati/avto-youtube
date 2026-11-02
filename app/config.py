@@ -43,6 +43,7 @@ DEFAULTS = {
     "anthropic_model": "claude-opus-5-5",
     "opus_script_only": True,
     "step_effort": True,  # only the script is thought through at full depth; the other text steps think less
+    "voice_provider": "elevenlabs",  # or "royal": the same ElevenLabs voices through RoyalTechno
     "subscribe_ask": True,  # long voiced videos ask to subscribe and like at 30-40 seconds
     "motion_mode": "auto",  # maps and timelines drawn in place of some pictures (see motion.py)
     "atmos_mode": "auto",  # fog, rain, snow… drawn over the scenes where the script has them (see atmos.py)
@@ -71,6 +72,7 @@ DEFAULTS = {
     "openai_image_quality": "medium",
     "together_model": "black-forest-labs/FLUX.1-schnell",
     "runware_model": "runware:101@1",
+    "royal_image_model": "nano-banana-2",
     "image_style": (
         "cinematic digital oil painting, dramatic chiaroscuro lighting, muted earthy "
         "color palette, rich texture, highly detailed, "
