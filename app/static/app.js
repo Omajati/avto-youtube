@@ -2226,6 +2226,7 @@ async function viewSettings(id) {
       ${field("anthropic_key", "Ключ Anthropic", s, { type: "secret", hint: `Получить: <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>` })}
       ${field("anthropic_model", "Модель Claude", s, { type: "select", options: withCurrent(s.anthropic_model, [["claude-opus-5-5", "Claude Opus 5.5 — лучшее качество (дороже)"], ["claude-sonnet-5-5", "Claude Sonnet 5.5 — почти так же хорошо, вдвое дешевле (рекомендую)"], ["claude-haiku-5-5", "Claude Haiku 5.5 — очень дёшево, тексты проще"]]) })}
       ${field("opus_script_only", "Где работает Opus", s, { type: "select", options: [["true", "Только сам сценарий и его редактура, остальное (темы, план, описания картинок, тексты для YouTube) делает Sonnet: вдвое дешевле (рекомендую)"], ["false", "Везде, на всех шагах (дороже)"]], hint: "Действует, если выше выбран Opus" })}
+      ${field("subscribe_ask", "Просьба подписаться в длинных роликах", s, { type: "select", options: [["true", "Да: на 30–40 секунде диктор просит подписаться и поставить лайк, чтобы поддержать новый канал"], ["false", "Нет"]] })}
       ${field("anthropic_effort", "Насколько глубоко думать", s, { type: "select", options: [["medium", "Средне (дешевле)"], ["high", "Глубоко (рекомендую)"], ["xhigh", "Очень глубоко (дороже)"]] })}
     </div><div>
       ${field("openai_key", "Ключ OpenAI", s, { type: "secret", hint: `Получить: <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>. Этот же ключ подходит для картинок OpenAI.` })}

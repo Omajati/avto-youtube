@@ -368,6 +368,14 @@ NO VOICE (this beats every rule above and below about the narrator, speech, voic
 - The lines still follow the structure above (hook, desire, reveal, benefits the camera shows, final hero shot), one line per shot."""
 
 
+SUBSCRIBE_RULE = """
+
+ASK TO SUBSCRIBE (the owner's rule for every long video, beats any rule above that forbids a call to action):
+- At 30-40 seconds into the video, that is between about word {a} and word {b} of the narration, right after the hook and the first real payoff, the narrator briefly asks the viewer to subscribe to the channel and like the video to support a new author. One or two short spoken sentences, warm and natural, in the video's language and in the narrator's own voice (a character narrator says it in character).
+- Give it its own short paragraph. Never in the first sentences and never at the end; it is the only call to subscribe in the video, and the ending stays a sharp final thought.
+- Do not beg and do not break the tension: tie it to what is coming ("если тебе такие истории интересны, подпишись и поставь лайк, так ты очень поддержишь новый канал. А теперь самое странное."), then go straight back into the story. Word it freshly each time, never the same stock phrase.
+- The editor keeps this paragraph (it may polish the wording) and never moves it or counts it as a weak ending."""
+
 SPOKEN_RULES = """
 
 SPOKEN TEXT ONLY (very important): every word of the script is read aloud by a voice; the viewer may not even look at the screen.
@@ -642,6 +650,17 @@ class Ctx:
         """One take: how many shots fit the video when every clip lasts its full 5 seconds."""
         seconds = self.short_seconds if self.short_format else self.minutes * 60
         return max(2, round(seconds / TAKE_CLIP))
+
+    def asks_subscribe(self) -> bool:
+        """Long voiced videos ask to subscribe and like at 30-40 seconds (the owner's rule, any niche)."""
+        return (not self.demo and not self.short_format and not self.mute and not self.one_take
+                and not self.project.get("ad_mode") and not self.opts.get("translate_from")
+                and own_video_file(self.dir) is None and bool(self.settings.get("subscribe_ask", True)))
+
+    def subscribe_rule(self) -> str:
+        if not self.asks_subscribe():
+            return ""
+        return SUBSCRIBE_RULE.format(a=round(30 * self.wpm / 60), b=round(40 * self.wpm / 60))
 
     @property
     def mute(self) -> bool:
@@ -1012,6 +1031,7 @@ class Ctx:
                   + self.char_block() + self.item_block() + self.dialogue_block() + self.series_block() + self.examples_block()
                   + self.lessons_block() + self.golden_block(prompt_file) + self.library_block(prompt_file)
                   + (SCRIPT_CRAFT if prompt_file in GOLDEN_STAGES else "")
+                  + (self.subscribe_rule() if prompt_file in ("03_script.txt", "04_review.txt") else "")
                   + (SHORT_FIX_EXAMPLE if (self.short_format and prompt_file in GOLDEN_STAGES) or prompt_file == "07_short.txt" else "") + OWNER_FIRST
                   + (OWNER_TOPIC.format(topic=own_topic(self).replace("{", "(").replace("}", ")"))
                      if prompt_file in GOLDEN_STAGES and own_topic(self) else ""))
@@ -1350,6 +1370,60 @@ def _expand(c: Ctx, script: str) -> str:
     return script
 
 
+SUBSCRIBE_WORDS = ("подпиш", "подписк", "subscrib", "abonn", "suscr", "inscr", "лайк")
+SCHEMA_SUBSCRIBE = {"type": "object", "additionalProperties": False, "required": ["after", "text"],
+                    "properties": {"after": {"type": "integer"}, "text": {"type": "string"}}}
+
+
+def _subscribe_at(script: str):
+    """Words before the first paragraph that asks to subscribe, or None when there is none."""
+    seen = 0
+    for x in re.split(r"\n\s*\n", script):
+        if any(w in x.lower() for w in SUBSCRIBE_WORDS):
+            return seen
+        seen += word_count(x)
+    return None
+
+
+def _ensure_subscribe(c: Ctx, script: str) -> str:
+    """The writer was told to ask for a subscription at 30-40 seconds; if it did not (or put it far away), one short
+    paragraph is written and inserted at the right place. The rest of the text stays as it is."""
+    if not c.asks_subscribe():
+        return script
+    at = _subscribe_at(script)
+    lo, hi = 20 * c.wpm / 60, 75 * c.wpm / 60
+    if at is not None and lo <= at <= hi:
+        return script
+    paras = [x.strip() for x in re.split(r"\n\s*\n", script) if x.strip()]
+    if len(paras) < 3:
+        return script
+    target, seen, after = 35 * c.wpm / 60, 0, 1
+    for i, x in enumerate(paras[:-1], 1):  # the paragraph boundary closest to 35 seconds, never before the first
+        seen += word_count(x)
+        if abs(seen - target) < abs(sum(word_count(y) for y in paras[:after]) - target):
+            after = i
+    c.check()
+    c.log("Добавляю просьбу подписаться и поставить лайк примерно на 30–40 секунде…")
+    try:
+        r = llm.call_json(
+            c.settings, "You are the head writer of a YouTube channel. Channel niche: " + c.niche + c.char_block()
+            + "\nAnswer only with JSON.",
+            "Write one short paragraph (1-2 spoken sentences, at most 40 words) for the narrator that asks the viewer "
+            "to subscribe to the channel and like the video to support a new author, warm and natural, in the same "
+            "language and voice as the script, tied to what comes next, then leading straight back into the story. "
+            "It goes right after the paragraph below. after = " + str(after) + ".\n\nTHE PARAGRAPH BEFORE:\n"
+            + paras[after - 1] + "\n\nTHE PARAGRAPH AFTER:\n" + paras[after],
+            SCHEMA_SUBSCRIBE, c.usage, 2000)
+        c.save_usage()
+    except UserError as e:
+        c.log(f"Просьбу подписаться добавить не получилось ({e}).")
+        return script
+    text = str(r.get("text") or "").strip()
+    if not text or word_count(text) > 70:
+        return script
+    return "\n\n".join(paras[:after] + [text] + paras[after:])
+
+
 def st_script(c: Ctx):
     if c.demo:
         r = _demo("script")
@@ -1359,7 +1433,8 @@ def st_script(c: Ctx):
     script = r["script"].strip()
     if word_count(script) < c.words * 0.9:
         script = _expand(c, script)
-        r["script"] = script
+    script = _ensure_subscribe(c, script)
+    r["script"] = script
     r["checks"] = script_checks(script, c.words, c.wpm)
     c.log(f"Текст готов: {r['checks']['word_count']} слов (~{r['checks']['minutes']} мин)")
     write_json(c.out("script"), r)
@@ -1488,6 +1563,7 @@ def st_review(c: Ctx):
         best = max(rounds, key=lambda x: (x["passed"], x["overall"]))
         final = best["evaluated_script"]
     best = next(x for x in reversed(rounds) if x["evaluated_script"] == final)
+    final = _ensure_subscribe(c, final)  # an editor that dropped the request gets it back
     result = {
         "rounds": rounds,
         "final_script": final,
@@ -1568,7 +1644,7 @@ def improve_script(jid: str, note: str = "") -> dict:
     extras = read_json(d / "extras.json") or {}
     thumb = (read_json(d / "thumb.json") or {}).get("text") or extras.get("thumbnail_text", "")
     system = ("You are the head writer of a YouTube channel who edits finished scripts with a light hand. "
-              f"Channel niche: {c.niche}" + c.lessons_block() + c.library_block("03_script.txt"))
+              f"Channel niche: {c.niche}" + c.lessons_block() + c.library_block("03_script.txt") + c.subscribe_rule())
     owner = f"\nTHE OWNER'S NOTES (follow them first; they may be in Russian):\n{note.strip()[:4000]}\n" if note.strip() else ""
     now = word_count(review["final_script"])
     grow = (f" The text is too short: add new paragraphs (insert_after) that together give about {c.words - now} more "
