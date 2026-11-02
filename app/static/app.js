@@ -74,12 +74,13 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
     prompts: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
     insta: '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h0"/>',
     music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+    channels: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/>',
     balance: '<rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20M16 15h2"/>',
     help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h0"/>',
   };
   nav.querySelectorAll("a[data-nav]").forEach(a => { const d = P[a.dataset.nav]; if (d) a.insertAdjacentHTML("afterbegin", `<svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`); });
   const GROUPS = { new: "Создание", producer: "Знания", settings: "Система" };
-  const DEFAULT = ["new", "jobs", "montage", "remake", "producer", "library", "insta", "projects", "characters", "items", "settings", "prompts", "music", "balance", "help"];
+  const DEFAULT = ["new", "jobs", "channels", "montage", "remake", "producer", "library", "insta", "projects", "characters", "items", "settings", "prompts", "music", "balance", "help"];
   const heads = () => {
     nav.querySelectorAll(".ngrp").forEach(x => x.remove());
     if (nav.classList.contains("editing")) return;
@@ -116,6 +117,89 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
   };
 })();
 
+// ------------------------------------------------------------------ my channels (the owner's notebook)
+const CH_STATUS = {
+  "": ["Без статуса", "st-none"], dead: ["Мёртвый", "st-dead"], views: ["Идут просмотры", "st-views"],
+  monetized: ["Монетизация", "st-mon"], demonetized: ["Демонетизация", "st-demon"],
+};
+async function viewMyChannels() {
+  let list = (await api("/api/mychannels")).channels || [];
+  let filter = lsGet("ay_ch_filter") || "all";
+  let saveT = null;
+  const save = (now) => {
+    const lab = $("#mc-saved"); if (lab) lab.textContent = "Сохраняю…";
+    clearTimeout(saveT);
+    saveT = setTimeout(async () => {
+      try { await api("/api/mychannels", { method: "PUT", json: { channels: list } }); if ($("#mc-saved")) $("#mc-saved").textContent = "✓ Сохранено"; }
+      catch (e) { toast(e.message, true); }
+    }, now ? 0 : 600);
+  };
+  const pill = st => `<span class="mc-pill ${CH_STATUS[st || ""][1]}">${CH_STATUS[st || ""][0]}</span>`;
+  const head = ch => `${pill(ch.status)} <b>${esc(ch.name || "Без названия")}</b>${ch.niche ? ` <span class="muted small">· ${esc(ch.niche)}</span>` : ""}${ch.url ? ` <a class="small" href="${esc(ch.url)}" target="_blank" onclick="event.stopPropagation()">открыть ↗</a>` : ""}`;
+  const fieldRow = (f, j) => `<div class="mc-field" data-j="${j}"><input type="text" data-ff="label" value="${esc(f.label)}" placeholder="Что (например, подписчики)"><input type="text" data-ff="value" value="${esc(f.value)}" placeholder="Значение"><button class="sm danger" data-fdel title="Удалить поле">✕</button></div>`;
+  const draw = () => {
+    const counts = {}; list.forEach(c => { counts[c.status || ""] = (counts[c.status || ""] || 0) + 1; });
+    const shown = list.map((c, i) => [c, i]).filter(([c]) => filter === "all" || (c.status || "") === filter);
+    main.innerHTML = `<h1>📺 Мои каналы</h1>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">Ваша записная книжка по каналам: ниша, статус, заметки и любые свои данные. Всё сохраняется само и попадает в резервную копию.</p>
+      <div class="row"><button class="primary" id="mc-add">＋ Добавить канал</button>
+        <button class="sm" id="mc-open">Развернуть все</button><button class="sm" id="mc-close">Свернуть все</button>
+        <span id="mc-saved" class="muted small"></span></div>
+      <div class="row mc-filter" style="margin-top:10px">
+        <button class="sm ${filter === "all" ? "on" : ""}" data-flt="all">Все (${list.length})</button>
+        ${Object.entries(CH_STATUS).filter(([k]) => counts[k]).map(([k, [n]]) => `<button class="sm ${filter === k ? "on" : ""}" data-flt="${k}">${n} (${counts[k]})</button>`).join("")}
+      </div>
+    </div>
+    ${list.length ? "" : `<div class="card muted">Каналов пока нет. Нажмите «Добавить канал».</div>`}
+    <div id="mc-list">${shown.map(([ch, i]) => `<details class="card mc ${CH_STATUS[ch.status || ""][1]}" data-i="${i}" ${ch.open ? "open" : ""}>
+      <summary class="mc-head">${head(ch)}</summary>
+      <div class="grid2"><div>
+        <label class="f">Название канала</label><input type="text" data-f="name" value="${esc(ch.name)}">
+        <label class="f">Ниша</label><input type="text" data-f="niche" value="${esc(ch.niche)}" placeholder="например, истории, загадки истории">
+      </div><div>
+        <label class="f">Ссылка на канал</label><input type="text" data-f="url" value="${esc(ch.url)}" placeholder="https://youtube.com/@...">
+        <label class="f">Статус</label><select data-f="status">${Object.entries(CH_STATUS).map(([k, [n]]) => `<option value="${k}" ${(ch.status || "") === k ? "selected" : ""}>${n}</option>`).join("")}</select>
+      </div></div>
+      <label class="f">Заметка</label><textarea data-f="note" rows="4" placeholder="Что угодно: идеи, что сработало, пароли не храните">${esc(ch.note)}</textarea>
+      <label class="f">Мои данные <span class="hint">Любые поля: подписчики, доход, дата создания, почта, частота роликов…</span></label>
+      <div class="mc-fields">${(ch.fields || []).map(fieldRow).join("")}</div>
+      <div class="row" style="margin-top:8px"><button class="sm" data-fadd>＋ Поле</button><span style="flex:1"></span>
+        <button class="sm" data-up title="Выше">▲</button><button class="sm" data-dn title="Ниже">▼</button>
+        <button class="sm danger" data-del>Удалить канал</button></div>
+    </details>`).join("")}</div>`;
+    $("#mc-add").onclick = () => {
+      list.unshift({ id: String(Date.now()), name: "", url: "", niche: "", note: "", status: "", open: true, fields: [] });
+      filter = "all"; lsSet("ay_ch_filter", filter); save(true); draw();
+      main.querySelector('#mc-list details [data-f="name"]')?.focus();
+    };
+    $("#mc-open").onclick = () => { list.forEach(c => c.open = true); save(); draw(); };
+    $("#mc-close").onclick = () => { list.forEach(c => c.open = false); save(); draw(); };
+    main.querySelectorAll("[data-flt]").forEach(b => b.onclick = () => { filter = b.dataset.flt; lsSet("ay_ch_filter", filter); draw(); });
+    main.querySelectorAll("details.mc").forEach(box => {
+      const i = +box.dataset.i, ch = list[i];
+      box.addEventListener("toggle", () => { if (ch.open !== box.open) { ch.open = box.open; save(); } });
+      box.querySelectorAll("[data-f]").forEach(el => el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => {
+        ch[el.dataset.f] = el.value; save();
+        box.querySelector(".mc-head").innerHTML = head(ch);
+        if (el.dataset.f === "status") box.className = `card mc ${CH_STATUS[ch.status || ""][1]}`;
+      }));
+      const bindFields = () => box.querySelectorAll(".mc-field").forEach(row => {
+        const j = +row.dataset.j;
+        row.querySelectorAll("[data-ff]").forEach(el => el.oninput = () => { ch.fields[j][el.dataset.ff] = el.value; save(); });
+        row.querySelector("[data-fdel]").onclick = () => { ch.fields.splice(j, 1); save(); redrawFields(); };
+      });
+      const redrawFields = () => { box.querySelector(".mc-fields").innerHTML = (ch.fields || []).map(fieldRow).join(""); bindFields(); };
+      bindFields();
+      box.querySelector("[data-fadd]").onclick = () => { (ch.fields = ch.fields || []).push({ label: "", value: "" }); save(); redrawFields(); box.querySelector(".mc-field:last-child input")?.focus(); };
+      box.querySelector("[data-del]").onclick = () => { if (!confirm(`Удалить канал «${ch.name || "без названия"}» из списка?`)) return; list.splice(i, 1); save(true); draw(); };
+      box.querySelector("[data-up]").onclick = () => { if (i > 0) { [list[i - 1], list[i]] = [list[i], list[i - 1]]; save(); draw(); } };
+      box.querySelector("[data-dn]").onclick = () => { if (i < list.length - 1) { [list[i + 1], list[i]] = [list[i], list[i + 1]]; save(); draw(); } };
+    });
+  };
+  draw();
+}
+
 // ------------------------------------------------------------------ router
 async function route() {
   clearInterval(timer); timer = null;
@@ -138,6 +222,7 @@ async function route() {
     else if (page === "insta") await viewInsta();
     else if (page === "help") viewHelp();
     else if (page === "balance") await viewBalance();
+    else if (page === "channels") await viewMyChannels();
     else await viewJobs();
   } catch (e) { main.innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
   draftRestore();

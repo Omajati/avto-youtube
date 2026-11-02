@@ -1,6 +1,6 @@
 {
- "version": 159,
- "label": "цепляющее начало, название и фраза для превью",
- "notes": "цепляющее начало, название и фраза для превью для каждого рассказа",
+ "version": 160,
+ "label": "вкладка «Мои каналы»",
+ "notes": "вкладка «Мои каналы»: ниша, статус, заметки, свои данные",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

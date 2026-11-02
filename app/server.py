@@ -1110,6 +1110,33 @@ def update_status():
     return updater.state
 
 
+# ---------------------------------------------------------------- my channels (the owner's own notebook)
+MY_CHANNELS = DATA_DIR / "mychannels.json"
+CHANNEL_STATUSES = {"dead", "views", "monetized", "demonetized", ""}
+
+
+@app.get("/api/mychannels")
+def mychannels_get():
+    return {"channels": pipeline.read_json(MY_CHANNELS, []) or []}
+
+
+@app.put("/api/mychannels")
+def mychannels_put(data: dict = Body(...)):
+    out = []
+    for ch in (data.get("channels") or [])[:500]:
+        if not isinstance(ch, dict):
+            continue
+        fields = [{"label": str(f.get("label") or "")[:200], "value": str(f.get("value") or "")[:5000]}
+                  for f in (ch.get("fields") or [])[:100] if isinstance(f, dict)]
+        out.append({"id": str(ch.get("id") or "")[:40] or str(time.time_ns()),
+                    "name": str(ch.get("name") or "")[:200], "url": str(ch.get("url") or "")[:500],
+                    "niche": str(ch.get("niche") or "")[:300], "note": str(ch.get("note") or "")[:20000],
+                    "status": ch.get("status") if ch.get("status") in CHANNEL_STATUSES else "",
+                    "open": bool(ch.get("open")), "fields": fields})
+    pipeline.write_json(MY_CHANNELS, out)
+    return {"ok": True, "channels": out}
+
+
 @app.get("/api/balance")
 def balance_all():
     return {"services": balance.check_all(), "low_usd": balance.LOW_USD}
