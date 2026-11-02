@@ -1,6 +1,6 @@
 {
- "version": 158,
- "label": "RoyalTechno — картинки, анимация, озвучка",
- "notes": "картинки и озвучка ElevenLabs через RoyalTechno",
+ "version": 159,
+ "label": "цепляющее начало, название и фраза для превью",
+ "notes": "цепляющее начало, название и фраза для превью для каждого рассказа",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

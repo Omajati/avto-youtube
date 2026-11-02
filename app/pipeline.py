@@ -1564,6 +1564,7 @@ def st_review(c: Ctx):
         final = best["evaluated_script"]
     best = next(x for x in reversed(rounds) if x["evaluated_script"] == final)
     final = _ensure_subscribe(c, final)  # an editor that dropped the request gets it back
+    final = _bait(c, final)
     result = {
         "rounds": rounds,
         "final_script": final,
@@ -1577,6 +1578,79 @@ def st_review(c: Ctx):
     write_json(c.out("review"), result)
     (c.dir / "review_progress.json").unlink(missing_ok=True)
     (c.dir / "script_final.txt").write_text(final, "utf-8")
+
+
+SCHEMA_BAIT = {"type": "object", "additionalProperties": False,
+               "required": ["opening", "replaces", "title", "title_ru", "thumbnail_text", "thumbnail_text_ru", "why_ru"],
+               "properties": {"opening": {"type": "string"}, "replaces": {"type": "integer"},
+                              "title": {"type": "string"}, "title_ru": {"type": "string"},
+                              "thumbnail_text": {"type": "string"}, "thumbnail_text_ru": {"type": "string"},
+                              "why_ru": {"type": "string"}}}
+BAIT_PROMPT = """BAIT PASS (the owner's rule). The narration below is finished. Your only job now: make a stranger who hears the first seconds, sees the title and the thumbnail UNABLE not to find out what happened next.
+
+1) opening: the most gripping first 1-3 spoken sentences for THIS story. They replace the first sentences of the narration (numbered below; replaces = how many of them, 1-4). Rules:
+- Start inside the most shocking, strange or high-stakes moment of the story, or with its boldest TRUE claim or number, so the listener instantly has a burning question ("what? how? and then?").
+- Raise the stakes for the listener personally or for the hero; hint that it gets worse or stranger, but never give the answer or the twist.
+- No greeting, no "today I will tell you", no "imagine", no warm-up, no announcing; speak as if already mid-story. Short, punchy spoken sentences, numbers in words, the same language, voice and characters as the narration.
+- Only what really happens in this story: no invented facts, no promise the video does not keep.
+- It must flow straight into the sentence that follows the replaced ones, with no repetition and no gap in logic.
+2) title: the most clickable title for this video, honest (max {title_max} characters), in the narration's language: a curiosity gap or a shocking true claim, the main topic words people would search for, never the answer or the twist; it works together with the opening. title_ru: its Russian translation.
+3) thumbnail_text: 1-4 words for the cover that add what the title does not say and make the question sharper (a provocative claim, a shocking number, a warning, a half-sentence that demands an ending); never repeat the title, never the twist. thumbnail_text_ru: Russian translation.
+4) why_ru: one short line in Russian, why this hooks.
+
+THE FIRST SENTENCES OF THE NARRATION (numbered):
+{first}
+
+WHAT FOLLOWS THEM:
+{after}
+
+THE WHOLE NARRATION (to know the story; do not rewrite it):
+{script}"""
+
+
+def _bait(c: Ctx, script: str) -> str:
+    """The owner's rule: the first sentences, the title and the thumbnail phrase made as gripping as the story allows.
+    Only the first sentences of the text change; the title and the phrase go to the YouTube texts."""
+    if (c.demo or c.project.get("ad_mode") or c.opts.get("translate_from") or own_video_file(c.dir) is not None
+            or not c.settings.get("bait_pass", True)):
+        return script
+    (c.dir / "bait.json").unlink(missing_ok=True)
+    paras = [x.strip() for x in re.split(r"\n\s*\n", script) if x.strip()]
+    if not paras:
+        return script
+    sents = [x for x in re.split(r"(?<=[.!?…])\s+", paras[0]) if x.strip()]
+    head = sents[:6]
+    after = " ".join(sents[len(head):]) + ("\n\n" + paras[1] if len(paras) > 1 else "")
+    c.check()
+    c.log("Делаю первые фразы, название и фразу для превью максимально цепляющими…")
+    try:
+        r = llm.call_json(
+            c.settings, "You are the head writer of a YouTube channel, a master of hooks. Channel niche: " + c.niche
+            + c.char_block() + c.lessons_block() + c.library_block("03_script.txt") + "\nAnswer only with JSON.",
+            BAIT_PROMPT.format(title_max=60 if c.short_format else 70,
+                               first="\n".join(f"[{i + 1}] {x}" for i, x in enumerate(head)),
+                               after=after[:1500] or "-", script=script),
+            SCHEMA_BAIT, c.usage, 4000)
+        c.save_usage()
+    except UserError as e:
+        c.log(f"Сделать первые фразы цепляющими не получилось ({e}), оставляю как было.")
+        return script
+    opening = " ".join(str(r.get("opening") or "").split())
+    try:
+        n = min(max(int(r.get("replaces") or 1), 1), len(head))
+    except (TypeError, ValueError):
+        n = 1
+    limit = 45 if c.short_format else 80
+    if opening and word_count(opening) <= limit:
+        paras[0] = " ".join([opening] + sents[n:])
+        script = "\n\n".join(paras)
+        c.log("Новое начало: " + opening[:300])
+    write_json(c.dir / "bait.json", {k: str(r.get(k) or "").strip() for k in
+                                     ("opening", "title", "title_ru", "thumbnail_text", "thumbnail_text_ru", "why_ru")})
+    if r.get("title"):
+        c.log(f"Название: {r['title']}" + (f" ({r['title_ru']})" if c.lang != "ru" and r.get("title_ru") else "")
+              + f". Фраза для превью: {r.get('thumbnail_text', '')}")
+    return script
 
 
 def set_final_script(jid: str, text: str):
@@ -2184,6 +2258,11 @@ def st_extras(c: Ctx):
             "\n\nTHE OWNER'S PERMANENT SEARCH PHRASES FOR THIS CHANNEL (use the ones that fit in the description and "
             f"hashtags; all of them go into the tags):\n{seo}" if seo else ""))
         r["tags"] = merge_tags(r.get("tags") or [], seo)
+        bait = read_json(c.dir / "bait.json") or {}
+        for k, src in (("youtube_title", "title"), ("youtube_title_ru", "title_ru"), ("thumbnail_text", "thumbnail_text"),
+                       ("thumbnail_text_ru", "thumbnail_text_ru")):
+            if bait.get(src):
+                r[k] = bait[src]  # the hook pass made them for this very story
     if c.lang == "ru" and not r.get("script_ru"):
         r["script_ru"] = script
     write_json(c.out("extras"), r)

@@ -44,7 +44,8 @@ DEFAULTS = {
     "opus_script_only": True,
     "step_effort": True,  # only the script is thought through at full depth; the other text steps think less
     "voice_provider": "elevenlabs",  # or "royal": the same ElevenLabs voices through RoyalTechno
-    "subscribe_ask": True,  # long voiced videos ask to subscribe and like at 30-40 seconds
+    "subscribe_ask": True,
+    "bait_pass": True,  # the first sentences, the title and the thumbnail phrase made as gripping as possible  # long voiced videos ask to subscribe and like at 30-40 seconds
     "motion_mode": "auto",  # maps and timelines drawn in place of some pictures (see motion.py)
     "atmos_mode": "auto",  # fog, rain, snow… drawn over the scenes where the script has them (see atmos.py)
     "atmos_volume": 0.35,  # loudness of the rain, wind and fire sounds under those scenes  # Opus/Fable write only the script and its editing; the other text steps use Sonnet
