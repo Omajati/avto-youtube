@@ -1587,6 +1587,7 @@ SCHEMA_BAIT = {"type": "object", "additionalProperties": False,
                               "thumbnail_text": {"type": "string"}, "thumbnail_text_ru": {"type": "string"},
                               "why_ru": {"type": "string"}}}
 BAIT_PROMPT = """BAIT PASS (the owner's rule). The narration below is finished. Your only job now: make a stranger who hears the first seconds, sees the title and the thumbnail UNABLE not to find out what happened next.
+THREE-BAIT LEVEL: the title, the thumbnail phrase and the opening are three baits that work as one chain: the title opens the question, the thumbnail phrase sharpens it with what the title does not say, the opening pulls the viewer straight into the story and confirms the click was worth it. They never repeat each other's words, never contradict each other, and none of them gives the answer.
 
 1) opening: the most gripping first 1-3 spoken sentences for THIS story. They replace the first sentences of the narration (numbered below; replaces = how many of them, 1-4). Rules:
 - Start inside the most shocking, strange or high-stakes moment of the story, or with its boldest TRUE claim or number, so the listener instantly has a burning question ("what? how? and then?").
@@ -2238,7 +2239,29 @@ THUMB_RULE = (
     "clickbait cover on the edge: one huge face with an extreme emotion (shock, terror, fury, disbelief) or a shocking, "
     "absurd or forbidden-looking moment from the script, a strong curiosity gap, maximum contrast and saturated "
     "colours, readable at phone size in a split second. Provocative and intriguing, but no nudity, gore or real "
-    "celebrities, and nothing that is not in the video.")
+    "celebrities, and nothing that is not in the video. THREE-BAIT LEVEL: the title, the thumbnail and the first "
+    "seconds of the video are one chain of baits: the thumbnail shows or says what the title does not, never repeats "
+    "its words, and the opening of the script confirms the promise.")
+
+
+DESC_RULE = """
+
+DESCRIPTION, HASHTAGS AND TAGS (the owner's teacher's rules; they beat the instructions above where they differ):
+description, in the video's language, in this order:
+1) A KILLER START, the first 2 lines (what the viewer sees before "...more"): briefly and vividly what the video is about, with the main search keywords, plus intrigue, a reason to watch to the end. Example of the level: "Раскрываю секрет самого сочного стейка за 5 минут. Такого способа прожарки вы точно не видели!" It adds to the title and the thumbnail, never repeats them, never gives away the twist.
+2) An SEO block of 3-5 sentences that retells the topic without spoilers, using synonyms and other wordings of the topic, the niche and the hero, for better ranking. Natural sentences, never a list of keywords.
+3) A QUESTION TO THE AUDIENCE that starts a discussion in the comments (an opinion, "а вы бы...?", "как думаете...?").
+4) An organic call to subscribe to the channel{telegram}.
+5) {sources}
+6) The last line: exactly 5 hashtags, general and narrow ones mixed, the most important first.
+Tone: professional but alive and engaging, no water. Flawless spelling and grammar (mistakes lower trust in the author). Emoji only as a few visual accents (2-4 in the whole description), never overdone.
+tags: 10-15 tags, the most relevant first: the exact search phrases of the topic, their synonyms, the niche and the hero; no duplicates, no "#"."""
+
+DESC_SOURCES = ("SOURCES: if the script is built on real history, science or facts, a short block \"Источники\" (in the "
+                "video's language) with 2-5 real books, authors, scientific studies or documents this topic is known from. "
+                "Only sources that truly exist and are widely known: never invent a title, an author or a study; if you "
+                "are not sure of any, leave this block out.")
+DESC_NO_SOURCES = "(no sources block: this is a fictional story)"
 
 
 def st_extras(c: Ctx):
@@ -2254,7 +2277,12 @@ def st_extras(c: Ctx):
     else:
         c.log("Готовлю название, описание и теги" + ("…" if c.lang == "ru" else ", перевожу сценарий на русский…"))
         seo = (c.project.get("seo_ru") or "").strip()
-        r = c.ask("06_extras.txt", SCHEMA_EXTRAS, 32000, script=script, extra=THUMB_RULE + (
+        tg = (c.project.get("telegram_url") or c.settings.get("telegram_url") or "").strip()
+        desc = DESC_RULE.format(
+            telegram=f" and to the Telegram channel, with this link on its own line: {tg}" if tg else "",
+            sources=DESC_NO_SOURCES if c.project.get("fiction") or c.project.get("made_for_kids") or c.project.get("ad_mode")
+            else DESC_SOURCES)
+        r = c.ask("06_extras.txt", SCHEMA_EXTRAS, 32000, script=script, extra=THUMB_RULE + desc + (
             "\n\nTHE OWNER'S PERMANENT SEARCH PHRASES FOR THIS CHANNEL (use the ones that fit in the description and "
             f"hashtags; all of them go into the tags):\n{seo}" if seo else ""))
         r["tags"] = merge_tags(r.get("tags") or [], seo)

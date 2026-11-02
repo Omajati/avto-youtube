@@ -45,6 +45,7 @@ DEFAULTS = {
     "step_effort": True,  # only the script is thought through at full depth; the other text steps think less
     "voice_provider": "elevenlabs",  # or "royal": the same ElevenLabs voices through RoyalTechno
     "subscribe_ask": True,
+    "telegram_url": "",  # the owner's Telegram channel: the descriptions invite there
     "bait_pass": True,  # the first sentences, the title and the thumbnail phrase made as gripping as possible  # long voiced videos ask to subscribe and like at 30-40 seconds
     "motion_mode": "auto",  # maps and timelines drawn in place of some pictures (see motion.py)
     "atmos_mode": "auto",  # fog, rain, snow… drawn over the scenes where the script has them (see atmos.py)

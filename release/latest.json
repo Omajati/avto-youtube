@@ -1,6 +1,6 @@
 {
- "version": 161,
- "label": "статус «Нужны подписчики»",
- "notes": "статус канала «Нужны подписчики»",
+ "version": 162,
+ "label": "описание, теги и превью по правилам учителя",
+ "notes": "описание, хештеги, теги и превью по правилам учителя; Телеграм в описании",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
