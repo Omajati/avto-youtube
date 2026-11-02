@@ -2251,7 +2251,7 @@ description, in the video's language, in this order:
 1) A KILLER START, the first 2 lines (what the viewer sees before "...more"): briefly and vividly what the video is about, with the main search keywords, plus intrigue, a reason to watch to the end. Example of the level: "Раскрываю секрет самого сочного стейка за 5 минут. Такого способа прожарки вы точно не видели!" It adds to the title and the thumbnail, never repeats them, never gives away the twist.
 2) An SEO block of 3-5 sentences that retells the topic without spoilers, using synonyms and other wordings of the topic, the niche and the hero, for better ranking. Natural sentences, never a list of keywords.
 3) A QUESTION TO THE AUDIENCE that starts a discussion in the comments (an opinion, "а вы бы...?", "как думаете...?").
-4) An organic call to subscribe to the channel{telegram}.
+4) An organic call to subscribe to the channel{telegram} (no Telegram, no other social networks).
 5) {sources}
 6) The last line: exactly 5 hashtags, general and narrow ones mixed, the most important first.
 Tone: professional but alive and engaging, no water. Flawless spelling and grammar (mistakes lower trust in the author). Emoji only as a few visual accents (2-4 in the whole description), never overdone.
@@ -2277,7 +2277,7 @@ def st_extras(c: Ctx):
     else:
         c.log("Готовлю название, описание и теги" + ("…" if c.lang == "ru" else ", перевожу сценарий на русский…"))
         seo = (c.project.get("seo_ru") or "").strip()
-        tg = (c.project.get("telegram_url") or c.settings.get("telegram_url") or "").strip()
+        tg = ""  # the owner does not want Telegram in the descriptions
         desc = DESC_RULE.format(
             telegram=f" and to the Telegram channel, with this link on its own line: {tg}" if tg else "",
             sources=DESC_NO_SOURCES if c.project.get("fiction") or c.project.get("made_for_kids") or c.project.get("ad_mode")
