@@ -3586,7 +3586,7 @@ def st_animate(c: Ctx):
                 tmp.write_bytes(data)
                 tmp.replace(out)
                 c.add_usage("anim_cost", animate.cost(aset, need))
-                balance.record("fal", animate.cost(aset, need))
+                balance.record(animate.provider(aset), animate.cost(aset, need))
         except UserError as e:
             if "ключ" in str(e) or "денег" in str(e) or "лимит" in str(e):
                 raise

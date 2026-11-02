@@ -25,6 +25,7 @@ SERVICES = {
     "replicate": {"name": "Replicate (картинки)", "key": "replicate_key", "billing": "https://replicate.com/account/billing"},
     "together": {"name": "Together (картинки)", "key": "together_key", "billing": "https://api.together.ai/settings/billing"},
     "runware": {"name": "Runware (картинки)", "key": "runware_key", "billing": "https://my.runware.ai/wallet"},
+    "royaltechno": {"name": "RoyalTechno (анимация)", "key": "royal_key", "billing": "https://t.me/royaltechno_ai_bot"},
 }
 
 
@@ -92,6 +93,22 @@ def _fal(key: str) -> dict:
     return {"kind": "real", "value": round(val, 2), "unit": cr.get("currency", "USD"), "low": val < LOW_USD}
 
 
+def _royal(key: str) -> dict:
+    r = net.request("RoyalTechno", "GET", "https://api.royaltechno.cc/v1/account", tries=1, timeout=15,
+                    headers={"Authorization": f"Bearer {key}"}).json()
+    for k in ("balance_usd_cents", "balance_cents"):
+        if isinstance(r.get(k), (int, float)):
+            val = r[k] / 100
+            break
+    else:
+        b = r.get("balance")
+        b = b.get("usd_cents", b.get("amount")) if isinstance(b, dict) else b
+        if not isinstance(b, (int, float)):
+            raise UserError("RoyalTechno не прислал баланс.")
+        val = b / 100 if isinstance(r.get("balance"), dict) and "usd_cents" in r["balance"] else float(b)
+    return {"kind": "real", "value": round(val, 2), "unit": "USD", "low": val < LOW_USD}
+
+
 def _estimate(service: str, d: dict) -> dict:
     spent = d.get("spent", {}).get(service, 0)
     known = d.get("known", {}).get(service)
@@ -118,6 +135,11 @@ def _one(sid: str, key: str, d: dict) -> dict:
     try:
         if sid == "elevenlabs":
             row.update(_elevenlabs(key))
+        elif sid == "royaltechno":
+            try:
+                row.update(_royal(key))
+            except UserError as e:
+                row.update(_estimate(sid, d), error=str(e))
         elif sid == "fal":
             try:
                 row.update(_fal(key))

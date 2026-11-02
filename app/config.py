@@ -34,7 +34,7 @@ if not _EDITED_MARK.exists():
 
 SECRET_FIELDS = [
     "anthropic_key", "openai_key", "elevenlabs_key",
-    "fal_key", "replicate_key", "together_key", "runware_key", "ig_token", "ig_user_token",
+    "fal_key", "replicate_key", "together_key", "runware_key", "royal_key", "ig_token", "ig_user_token",
 ]
 
 DEFAULTS = {

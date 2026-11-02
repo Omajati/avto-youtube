@@ -1,8 +1,9 @@
-"""Image-to-video: turns a finished scene picture into a short moving clip (fal.ai)."""
+"""Image-to-video: turns a finished scene picture into a short moving clip (fal.ai, or RoyalTechno)."""
 import base64
 import io
 import math
 import time
+import uuid
 from pathlib import Path
 
 from . import net
@@ -37,7 +38,24 @@ VIDEO_MODELS = {
         "endpoint": "fal-ai/kling-video/v2.6/pro/image-to-video",
         "price": 0.07,
     },
+    # RoyalTechno: a reseller (Telegram bot @royaltechno_ai_bot) with very low prices; its own key, see ROYAL below.
+    "rt_veo": {
+        "name": "RoyalTechno · Veo 3.1 (Google) — очень дёшево, сторонний сервис",
+        "provider": "royal", "model": "veo-3.1", "seconds": 8,
+        "price": 0.0025,  # $0.02 per 8-second clip
+    },
+    "rt_grok": {
+        "name": "RoyalTechno · Grok Imagine 720p — сторонний сервис",
+        "provider": "royal", "model": "grok-imagine-1.5-720p",
+        "price": 0.02,
+    },
+    "rt_omni": {
+        "name": "RoyalTechno · Omni 1.1 Flash — самое дешёвое, сторонний сервис",
+        "provider": "royal", "model": "omni-flash",
+        "price": 0.01,
+    },
 }
+ROYAL = "https://api.royaltechno.cc/v1"
 
 MODES = {
     "off": "Выключена",
@@ -108,6 +126,8 @@ def clip_seconds(settings, need: float) -> float:
     m = settings.get("video_model")
     if m == "ltx2":
         return _ltx_frames(need) / 25
+    if VIDEO_MODELS.get(m, {}).get("seconds"):
+        return float(VIDEO_MODELS[m]["seconds"])
     return 5.0 if need <= 9.5 else 10.0  # a 5 s clip can be slowed down to ~9 s
 
 
@@ -157,6 +177,8 @@ def _data_uri(img: Path) -> str:
 def generate(settings, img: Path, prompt: str, need: float, vertical: bool, check=None, motion=None, tail=None,
              negative: str = None) -> bytes:
     """Returns mp4 bytes. tail: the picture the clip must end on (Kling 2.5 Turbo Pro is used for it)."""
+    if VIDEO_MODELS.get(settings.get("video_model"), {}).get("provider") == "royal" and not tail:
+        return _royal(settings, img, prompt, need, vertical, check, motion)
     key = settings.get("fal_key")
     if not key:
         raise UserError("Для анимации нужен ключ fal.ai. Вставьте его в Настройках, раздел «Картинки» → fal.ai.")
@@ -227,6 +249,63 @@ def generate(settings, img: Path, prompt: str, need: float, vertical: bool, chec
     if len(data) < 1000:
         raise UserError("fal.ai вернул пустое видео. Попробуйте ещё раз.")
     return data
+
+
+def _royal(settings, img: Path, prompt: str, need: float, vertical: bool, check=None, motion=None) -> bytes:
+    """RoyalTechno: one job with the scene picture as the first frame; polled until the mp4 is ready."""
+    key = settings.get("royal_key")
+    if not key:
+        raise UserError("Для анимации через RoyalTechno нужен ключ: создайте его в их Телеграм-боте @royaltechno_ai_bot "
+                        "командой /api_key_new и вставьте в Настройках, раздел «Анимация сцен».")
+    m = VIDEO_MODELS[settings["video_model"]]
+    headers = {"Authorization": f"Bearer {key}"}
+    inp = {"prompt": f"{prompt.strip().rstrip('.')}. {motion or MOTION_PROMPT}", "start_image_url": _data_uri(img),
+           "aspect_ratio": "9:16" if vertical else "16:9", "duration_sec": int(clip_seconds(settings, need))}
+    # One id per clip: a retried request after a network hiccup is not charged twice.
+    idem = str(uuid.uuid4())
+    try:
+        job = net.request("RoyalTechno", "POST", f"{ROYAL}/jobs", json={"model": m["model"], "input": inp},
+                          headers={**headers, "Idempotency-Key": idem}, timeout=120, tries=3).json()
+    except UserError as e:
+        if "invalid" not in str(e).lower():
+            raise
+        inp.pop("duration_sec")  # the model has its own fixed length: take it, the assembly fits it to the scene
+        job = net.request("RoyalTechno", "POST", f"{ROYAL}/jobs", json={"model": m["model"], "input": inp},
+                          headers={**headers, "Idempotency-Key": str(uuid.uuid4())}, timeout=120, tries=3).json()
+    jid = job.get("id")
+    if not jid:
+        raise UserError(f"RoyalTechno не принял сцену: {str(job.get('error') or job)[:300]}")
+    started = time.time()
+    while True:
+        if check:
+            check()
+        st = net.request("RoyalTechno", "GET", f"{ROYAL}/jobs/{jid}", headers=headers, timeout=30, tries=3).json()
+        status = st.get("status")
+        if status == "succeeded":
+            break
+        if status in ("failed", "canceled"):
+            err = st.get("error") or {}
+            raise UserError(f"RoyalTechno: анимация не получилась ({err.get('message') or err or status}). "
+                            "Деньги за неё они возвращают сами.")
+        if time.time() - started > 8 * 60:
+            try:
+                net.request("RoyalTechno", "POST", f"{ROYAL}/jobs/{jid}/cancel", headers=headers, timeout=20, tries=1)
+            except UserError:
+                pass
+            raise UserError("RoyalTechno делал сцену дольше 8 минут, запрос отменён")
+        time.sleep(8)
+    url = ((st.get("output") or {}).get("url")) or ""
+    if not url:
+        raise UserError(f"RoyalTechno не вернул видео: {str(st)[:300]}")
+    data = net.request("RoyalTechno", "GET", url, timeout=300).content
+    if len(data) < 1000:
+        raise UserError("RoyalTechno вернул пустое видео. Попробуйте ещё раз.")
+    return data
+
+
+def provider(settings) -> str:
+    """Which service the animation is billed at: "royaltechno" or "fal"."""
+    return "royaltechno" if model(settings).get("provider") == "royal" else "fal"
 
 
 def estimate(settings, mode: str, minutes: float, short: bool, anim_short: bool, vertical: bool = False,
