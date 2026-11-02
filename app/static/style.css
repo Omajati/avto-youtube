@@ -474,3 +474,5 @@ details.mc.st-demon { border-left-color: #dc2626; }
 .mc-field { display: grid; grid-template-columns: 1fr 2fr auto; gap: 6px; margin-top: 6px; }
 html[data-theme="dark"] .mc-pill.st-none, html[data-theme="dark"] .mc-pill.st-dead { background: #2a2f3a; color: #c2c7d0; }
 html[data-theme="dark"] .mc-pill.st-views { background: #3a2d0c; color: #fbbf24; }
+.mc-pill.st-subs { background: #2563eb; color: #fff; }
+details.mc.st-subs { border-left-color: #2563eb; }

@@ -1112,7 +1112,7 @@ def update_status():
 
 # ---------------------------------------------------------------- my channels (the owner's own notebook)
 MY_CHANNELS = DATA_DIR / "mychannels.json"
-CHANNEL_STATUSES = {"dead", "views", "monetized", "demonetized", ""}
+CHANNEL_STATUSES = {"dead", "subs", "views", "monetized", "demonetized", ""}
 
 
 @app.get("/api/mychannels")

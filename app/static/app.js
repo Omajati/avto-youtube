@@ -119,7 +119,7 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
 
 // ------------------------------------------------------------------ my channels (the owner's notebook)
 const CH_STATUS = {
-  "": ["Без статуса", "st-none"], dead: ["Мёртвый", "st-dead"], views: ["Идут просмотры", "st-views"],
+  "": ["Без статуса", "st-none"], dead: ["Мёртвый", "st-dead"], subs: ["Нужны подписчики", "st-subs"], views: ["Идут просмотры", "st-views"],
   monetized: ["Монетизация", "st-mon"], demonetized: ["Демонетизация", "st-demon"],
 };
 async function viewMyChannels() {
