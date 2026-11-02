@@ -1329,6 +1329,7 @@ function renderHead(d) {
   const imgWait = d.images_waiting;
   const ownPending = !imgWait && ((d.own_images || []).length || (d.own_clips || []).length) && ["done", "error", "paused"].includes(j.status) && !d.stages.video;
   if (imgWait) act.push(`<button class="primary" data-own-go="1">${d.images_manual ? "🎬 Собрать видео с моими картинками" : "▶ Продолжить: дорисовать недостающие и смонтировать"}</button>`);
+  if (imgWait && d.images_manual) act.push(`<button data-img-ai="1" title="Только для этого ролика">🎨 Передумал: пусть нарисует нейросеть</button>`);
   if (ownPending) act.push(`<button class="primary" data-own-go="1">🎬 Собрать видео с моими ${(d.own_clips || []).length && !(d.own_images || []).length ? "клипами" : "картинками"}</button>`);
   if (j.status === "review" && !ideaWait && !animWait && !imgWait) act.push(`<button class="primary" data-act="approve">✓ Сценарий хороший, продолжить</button>`);
   if (j.options.project_id && d.stages.review && j.status !== "running") act.push(`<button data-gold="video" title="Сценарист будет изучать этот текст перед новыми роликами проекта">⭐ ${d.format === "short" ? "Шортс" : "Сценарий"} в копилку удачных</button>`);
@@ -1362,6 +1363,14 @@ function renderHead(d) {
   $("#jhead").querySelectorAll("[data-own-go]").forEach(b => b.onclick = async () => {
     b.disabled = true;
     await api(`/api/jobs/${j.id}/own-images-done`, { method: "POST" }).then(() => toast(d.images_manual ? "Собираю видео с вашими картинками" : "Продолжаю: дорисую недостающие картинки и смонтирую видео")).catch(e => { toast(e.message, true); b.disabled = false; });
+    lastStagesKey = "";
+  });
+  $("#jhead").querySelector("[data-img-ai]")?.addEventListener("click", async e => {
+    const b = e.currentTarget;
+    const prov = META.providers[(SETTINGS_CACHE || {}).image_provider] || {};
+    if (!confirm(`Картинки этого ролика нарисует нейросеть${prov.name ? ` (${prov.name})` : ""}, это платно. Картинки, которые вы уже загрузили, останутся. Потом ролик сам смонтируется. Продолжить?`)) return;
+    b.disabled = true;
+    await api(`/api/jobs/${j.id}/images-ai`, { method: "POST" }).then(() => toast("Рисую картинки нейросетью, потом смонтирую видео")).catch(err => { toast(err.message, true); b.disabled = false; });
     lastStagesKey = "";
   });
   $("#jhead").querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {

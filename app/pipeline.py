@@ -3116,6 +3116,8 @@ def make_package(jid: str, text: str = None, side: str = None, font: str = None,
 def images_manual(job: dict = None, settings: dict = None) -> bool:
     """The owner draws every picture himself in another service and uploads them: the program draws nothing."""
     opts = (job or {}).get("options") or {}
+    if opts.get("images_ai"):  # the owner changed his mind for this video: the program draws them
+        return False
     return bool((settings or load_settings()).get("images_manual", True)) and not opts.get("demo")
 
 

@@ -667,6 +667,19 @@ def job_own_images_done(jid: str):
     return {"ok": True}
 
 
+@app.post("/api/jobs/{jid}/images-ai")
+def job_images_ai(jid: str):
+    """The owner meant to upload his own pictures but changed his mind: the program draws the missing ones itself
+    (the pictures he already uploaded stay) and assembles the video."""
+    j = _job_or_404(jid)
+    if j["status"] == "running":
+        raise UserError("Ролик уже собирается.")
+    opts = dict(j["options"], images_ai=True, images_picked=True)
+    db.update(jid, options=opts, status="queued", error="")
+    worker.wake()
+    return {"ok": True}
+
+
 @app.get("/api/jobs/{jid}/scene-prompts")
 def job_scene_prompts(jid: str):
     """Prompts for drawing the scene pictures elsewhere (shown in a window with copy buttons)."""

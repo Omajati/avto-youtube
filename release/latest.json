@@ -1,6 +1,6 @@
 {
- "version": 163,
- "label": "описание без Телеграма",
- "notes": "описание без Телеграма",
+ "version": 164,
+ "label": "передумал загружать свои картинки — рисует нейросеть",
+ "notes": "кнопка «Передумал: пусть нарисует нейросеть» в ролике, который ждёт свои картинки",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }
