@@ -3448,7 +3448,9 @@ async function viewLocalEditor(id) {
   let saveTimer = null, saving = false;
   const motionOptions = [["none", "Без движения"], ["zoom_in", "Медленное приближение"], ["zoom_out", "Медленное отдаление"], ["pan_left", "Панорама влево"], ["pan_right", "Панорама вправо"]];
   const transitionOptions = [["cut", "Обычный стык"], ["fade", "Через затемнение"]];
-  const graphicOptions = [["none", "Без моушен-графики"], ["counter", "Крупная цифра / счётчик"], ["money", "Деньги"], ["percent", "Процент в круге"], ["bar", "Шкала заполнения"], ["timer", "Обратный отсчёт"], ["stopwatch", "Секундомер"], ["up", "Стрелка роста"], ["down", "Стрелка падения"], ["date", "Дата"], ["rank", "Место в рейтинге"], ["keyword", "Крупная надпись"]];
+  const graphicOptions = [["none", "Без моушен-графики"], ["counter", "Крупная цифра / счётчик"], ["money", "Деньги"], ["percent", "Процент в круге"], ["bar", "Шкала заполнения"], ["timer", "Обратный отсчёт"], ["stopwatch", "Секундомер"], ["up", "Стрелка роста"], ["down", "Стрелка падения"], ["date", "Дата"], ["rank", "Место в рейтинге"], ["keyword", "Крупная надпись"], ["warning", "Предупреждение"], ["people", "Люди / аудитория"], ["location", "Место / страна"], ["idea", "Идея / открытие"], ["trophy", "Достижение / рекорд"]];
+  const graphicStyles = [["classic", "Классический"], ["glass", "Стекло"], ["neon", "Неон"], ["minimal", "Минимальный"]];
+  const graphicAnimations = [["pop", "Пружина"], ["slide", "Выезд сбоку"], ["pulse", "Пульс"], ["fade", "Плавное появление"]];
   const options = (items, value) => items.map(([k, n]) => `<option value="${k}" ${k === value ? "selected" : ""}>${n}</option>`).join("");
   const busy = () => p.render?.status === "running" || p.transcript?.status === "running";
   const save = async (quiet = false) => {
@@ -3463,7 +3465,7 @@ async function viewLocalEditor(id) {
   const mediaBox = s => s.kind === "image"
     ? `<img src="${s.url}" alt="${esc(s.name)}">`
     : `<video src="${s.url}#t=${Number(s.trim_start || 0).toFixed(2)}" preload="metadata" muted></video><span class="le-play">▶</span>`;
-  const sceneCard = (s, i) => { const g = s.graphic || { type: "none", value: "", unit: "", label: "", start: .2 }; return `<article class="le-scene" data-scene="${s.id}" draggable="${busy() ? "false" : "true"}">
+  const sceneCard = (s, i) => { const g = s.graphic || { type: "none", value: "", unit: "", label: "", start: .2, style: "classic", animation: "pop", auto: false }; return `<article class="le-scene" data-scene="${s.id}" draggable="${busy() ? "false" : "true"}">
     <div class="le-handle" title="Перетащите сцену">⋮⋮</div><div class="le-num">${i + 1}</div><div class="le-media">${mediaBox(s)}</div>
     <div class="le-fields"><b title="${esc(s.name)}">${esc(s.name)}</b><div class="row le-compact">
       <label>Длительность <input type="number" min=".1" step=".1" data-sf="duration" value="${Number(s.duration).toFixed(2)}"> сек</label>
@@ -3476,6 +3478,8 @@ async function viewLocalEditor(id) {
       <input type="text" data-gf="value" value="${esc(g.value)}" placeholder="Значение: 75 или 1896" ${g.type === "none" ? "disabled" : ""}>
       <input type="text" data-gf="unit" value="${esc(g.unit)}" placeholder="Единица: %, ₽, млн" ${g.type === "none" ? "disabled" : ""}>
       <input type="text" data-gf="label" value="${esc(g.label)}" placeholder="Короткая подпись" ${g.type === "none" ? "disabled" : ""}>
+      <select data-gf="style" ${g.type === "none" ? "disabled" : ""}>${options(graphicStyles, g.style || "classic")}</select>
+      <select data-gf="animation" ${g.type === "none" ? "disabled" : ""}>${options(graphicAnimations, g.animation || "pop")}</select>
       <label>Старт <input type="number" data-gf="start" min="0" max="${Number(s.duration).toFixed(2)}" step=".1" value="${Number(g.start || 0).toFixed(1)}" ${g.type === "none" ? "disabled" : ""}> сек</label></div></details>
     </div><div class="le-actions">${s.alternate_source ? `<button class="sm" data-swap-source title="Переключить фото и видео">${s.kind === "video" ? "Фото" : "Видео"}</button>` : ""}<button class="sm" data-up title="Выше">↑</button><button class="sm" data-down title="Ниже">↓</button><button class="sm danger" data-remove title="Убрать с таймлайна">✕</button></div>
   </article>`; };
@@ -3540,8 +3544,8 @@ async function viewLocalEditor(id) {
     <div class="card le-subtitles"><div class="row"><h2 class="grow">Субтитры</h2><label class="check le-subcheck"><input id="le-subs" type="checkbox" ${p.subtitles !== false ? "checked" : ""}> Показывать на видео</label>
       <select id="le-subs-pos">${options([["low", "Внизу"], ["mid_low", "Ниже середины"], ["mid", "Чуть ниже центра"], ["center", "По центру"]], p.subtitles_position || "mid_low")}</select>
       ${tr.status === "done" ? `<a class="btn sm" href="${tr.srt_url || `/api/local-editor/${p.id}/output/subtitles`}">Скачать SRT</a>` : `<span class="muted small">Появятся после расшифровки голоса Whisper.</span>`}</div></div>
-    <div class="card le-graphics-master"><div class="row"><h2 class="grow">Моушен-графика</h2><label class="check le-mastercheck"><input id="le-gfx-enabled" type="checkbox" ${p.graphics_enabled ? "checked" : ""}> Использовать в ролике</label></div>
-      <div class="row"><button id="le-gfx-detect" ${p.transcript?.status !== "done" || !p.scenes.length || busy() ? "disabled" : ""}>Найти цифры в тексте Whisper</button><span class="muted small">Можно отключить всё одним переключателем или настроить только выбранные сцены. Никаких API.</span></div></div>
+    <div class="card le-graphics-master"><div class="row"><h2 class="grow">Моушен-графика</h2><label class="check le-mastercheck"><input id="le-gfx-auto" type="checkbox" ${p.graphics_auto ? "checked" : ""}> Определять автоматически</label><label class="check le-mastercheck"><input id="le-gfx-enabled" type="checkbox" ${p.graphics_enabled ? "checked" : ""}> Использовать в ролике</label></div>
+      <div class="row"><button id="le-gfx-detect" ${p.transcript?.status !== "done" || !p.scenes.length || busy() ? "disabled" : ""}>Обновить автоподбор</button><span class="muted small">Whisper распознаёт цифры, деньги, даты, рост, падение, людей, места, идеи и предупреждения. 4 стиля и 4 варианта появления. Никаких API.</span></div></div>
     <div class="row le-timeline-head"><h2 class="grow">Таймлайн</h2><span class="muted small">Перетаскивайте сцены за ⋮⋮ или используйте стрелки</span></div>
     <div class="card le-bulk-tools"><div class="row"><b>Видео вместо фото</b>
       <button id="le-match-media" class="sm" ${busy() || !imageCount || !videoCount ? "disabled" : ""}>Сопоставить по имени или номеру</button>
@@ -3572,6 +3576,7 @@ async function viewLocalEditor(id) {
       let synced = false;
       if (kind === "scene" && p.transcript?.status === "done" && p.scenes.length) {
         p = await api(`/api/local-editor/${id}/sync-scenes`, { method: "POST" }); synced = true;
+        if (p.graphics_auto) p = await api(`/api/local-editor/${id}/suggest-graphics`, { method: "POST" }).catch(() => p);
       }
       draw(); toast(kind === "scene" ? (synced ? "Файлы добавлены, сцены синхронизированы с голосом" : replaced ? `Видео поставлено вместо фото: ${replaced}` : "Файлы добавлены на таймлайн") : kind === "voice" ? "Озвучка добавлена" : "Музыка добавлена");
     } catch (e) { toast(e.message, true); if (lab) lab.textContent = ""; }
@@ -3607,6 +3612,7 @@ async function viewLocalEditor(id) {
     $("#le-subs")?.addEventListener("change", e => { p.subtitles = e.target.checked; saveSoon(); });
     $("#le-subs-pos")?.addEventListener("change", e => { p.subtitles_position = e.target.value; saveSoon(); });
     $("#le-gfx-enabled")?.addEventListener("change", e => { p.graphics_enabled = e.target.checked; saveSoon(); });
+    $("#le-gfx-auto")?.addEventListener("change", async e => { p.graphics_auto = e.target.checked; if (e.target.checked) p.graphics_enabled = true; await save(true); if (e.target.checked && p.transcript?.status === "done" && p.scenes.length) { try { p = await api(`/api/local-editor/${id}/suggest-graphics`, { method: "POST" }); } catch (x) { } } draw(); toast(e.target.checked ? "Автоподбор моушена включён" : "Автоподбор моушена выключен"); });
     $("#le-gfx-detect")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/suggest-graphics`, { method: "POST" }); draw(); toast(`Добавлено анимаций: ${p.graphics_added || 0}`); } catch (e) { toast(e.message, true); } });
     $("#le-match-media")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/match-media`, { method: "POST" }); const count = p.media_replaced || 0; if (p.transcript?.status === "done") p = await api(`/api/local-editor/${id}/sync-scenes`, { method: "POST" }); draw(); toast(`Видео поставлено вместо фото: ${count}`); } catch (e) { toast(e.message, true); } });
     $("#le-apply-motion")?.addEventListener("click", async () => { const value = $("#le-motion-all").value, cycle = ["zoom_in", "pan_left", "zoom_out", "pan_right"]; let i = 0; p.scenes.forEach(s => { if (s.kind === "image") s.motion = value === "auto" ? cycle[i++ % cycle.length] : value; }); await save(true); draw(); toast(value === "auto" ? "Движения камеры автоматически чередуются" : "Движение применено ко всем фотографиям"); });
@@ -3618,7 +3624,7 @@ async function viewLocalEditor(id) {
       row.querySelectorAll("[data-sf]").forEach(el => el.onchange = () => { const s = p.scenes[i], k = el.dataset.sf; s[k] = el.type === "number" ? +el.value : el.value; saveSoon(); });
       row.querySelectorAll("[data-gf]").forEach(el => {
         const event = el.tagName === "INPUT" && el.type !== "number" ? "input" : "change";
-        el.addEventListener(event, () => { const s = p.scenes[i], k = el.dataset.gf; s.graphic = s.graphic || { type: "none", value: "", unit: "", label: "", start: .2 }; s.graphic[k] = el.type === "number" ? +el.value : el.value; saveSoon(); if (k === "type") draw(); });
+        el.addEventListener(event, () => { const s = p.scenes[i], k = el.dataset.gf; s.graphic = s.graphic || { type: "none", value: "", unit: "", label: "", start: .2, style: "classic", animation: "pop", auto: false }; s.graphic[k] = el.type === "number" ? +el.value : el.value; s.graphic.auto = false; saveSoon(); if (k === "type") draw(); });
       });
       row.querySelector("[data-up]").onclick = () => move(i, i - 1); row.querySelector("[data-down]").onclick = () => move(i, i + 1);
       row.querySelector("[data-swap-source]")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/scene/${p.scenes[i].id}/swap-source`, { method: "POST" }); draw(); toast("Источник сцены переключён"); } catch (e) { toast(e.message, true); } });

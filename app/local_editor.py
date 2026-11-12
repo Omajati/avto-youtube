@@ -36,7 +36,9 @@ FILE_ID = re.compile(r"[0-9a-f]{12}\.[a-z0-9]{2,6}")
 _lock = threading.RLock()
 _rendering: set[str] = set()
 _transcribing: set[str] = set()
-LOCAL_GRAPHICS = {"none", "counter", "money", "percent", "bar", "timer", "stopwatch", "up", "down", "date", "rank", "keyword"}
+LOCAL_GRAPHICS = {"none", "counter", "money", "percent", "bar", "timer", "stopwatch", "up", "down", "date", "rank", "keyword", "warning", "people", "location", "idea", "trophy"}
+GRAPHIC_STYLES = {"classic", "glass", "neon", "minimal"}
+GRAPHIC_ANIMATIONS = {"pop", "slide", "pulse", "fade"}
 
 
 def _now() -> int:
@@ -101,6 +103,7 @@ def _default_project(project_id: str, title: str, format_: str) -> dict:
         "fps": 30,
         "music_volume": 0.12,
         "graphics_enabled": False,
+        "graphics_auto": False,
         "subtitles": True,
         "subtitles_position": "mid_low",
         "scenes_synced": False,
@@ -168,6 +171,7 @@ def update_project(project_id: str, data: dict = Body(...)):
     project["fps"] = int(_number(data.get("fps", project.get("fps", 30)), 30, 24, 60))
     project["music_volume"] = _number(data.get("music_volume", project.get("music_volume", .12)), .12, 0, 1)
     project["graphics_enabled"] = bool(data.get("graphics_enabled", project.get("graphics_enabled", False)))
+    project["graphics_auto"] = bool(data.get("graphics_auto", project.get("graphics_auto", False)))
     project["subtitles"] = bool(data.get("subtitles", project.get("subtitles", True)))
     project["subtitles_position"] = data.get("subtitles_position") if data.get("subtitles_position") in captions.POSITIONS else "mid_low"
     current = {s["id"]: s for s in project.get("scenes", [])}
@@ -191,6 +195,9 @@ def update_project(project_id: str, data: dict = Body(...)):
                 "unit": str(raw_graphic.get("unit") or "")[:12],
                 "label": str(raw_graphic.get("label") or "")[:60],
                 "start": round(_number(raw_graphic.get("start"), .2, 0, 3600), 2),
+                "style": raw_graphic.get("style") if raw_graphic.get("style") in GRAPHIC_STYLES else "classic",
+                "animation": raw_graphic.get("animation") if raw_graphic.get("animation") in GRAPHIC_ANIMATIONS else "pop",
+                "auto": bool(raw_graphic.get("auto", False)),
             }
             scene["duration"] = _number(sent.get("duration"), float(old.get("duration") or 5), .1, 3600)
             if scene["kind"] == "video":
@@ -296,7 +303,8 @@ async def upload(project_id: str, request: Request, name: str, kind: str = "scen
                     "kind": media_kind, "source_duration": round(source_duration, 3),
                     "trim_start": 0, "trim_end": round(source_duration, 3),
                     "duration": round(source_duration, 3), "fit": "cover", "motion": "none", "transition": "cut",
-                    "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2},
+                    "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2,
+                                "style": "classic", "animation": "pop", "auto": False},
                 }
                 project.setdefault("scenes", []).append(scene)
                 project["scenes_synced"] = False
@@ -465,6 +473,8 @@ def _transcribe_worker(project_id: str, model: str, language: str):
             for scene, start, end in zip(project["scenes"], cuts, cuts[1:]):
                 scene["duration"] = round(end - start, 3)
             project["scenes_synced"] = True
+            if project.get("graphics_auto"):
+                _apply_graphic_suggestions(project)
         _write_srt(project)
         _write(project)
     except Exception as exc:
@@ -538,7 +548,7 @@ def sync_scenes(project_id: str):
 
 
 def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
-    """Find numeric facts in the local Whisper transcript. No model or network call is used."""
+    """Find facts and visual cues in the local Whisper transcript. No model or network call is used."""
     words = project.get("transcript", {}).get("words", [])
     scenes = project.get("scenes", [])
     if not words or not scenes:
@@ -578,9 +588,9 @@ def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
         low = (token + " " + context).lower()
         if "%" in shown or "процент" in low:
             kind, unit = "percent", "%"
-        elif any(x in shown for x in ("₽", "$", "€")):
+        elif any(x in shown for x in ("₽", "$", "€")) or any(x in low for x in ("рубл", "доллар", "евро")):
             kind = "money"
-            unit = next((x for x in ("₽", "$", "€") if x in shown), "")
+            unit = next((x for x in ("₽", "$", "€") if x in shown), "₽" if "рубл" in low else "$" if "доллар" in low else "€")
         elif number.is_integer() and 1000 <= number <= 2100:
             kind, unit = "date", ""
         elif any(x in low for x in ("место", "топ")):
@@ -589,29 +599,74 @@ def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
             kind, unit = "counter", ""
         start = sum(float(s.get("duration") or 0) for s in scenes[:scene_i])
         graphic = {"type": kind, "value": clean, "unit": unit, "label": context,
-                   "start": round(min(max(at - start - .15, 0), max(float(scenes[scene_i].get("duration") or 0) - .2, 0)), 2)}
+                   "start": round(min(max(at - start - .15, 0), max(float(scenes[scene_i].get("duration") or 0) - .2, 0)), 2),
+                   "style": ("glass", "neon", "minimal", "classic")[scene_i % 4],
+                   "animation": ("pop", "slide", "pulse", "fade")[scene_i % 4], "auto": True}
         suggestions.append((scene_i, graphic))
         used_scenes.add(scene_i)
         last_time = at
         if len(suggestions) >= limit:
             break
+    semantic_last = -99.0
+    rules = [
+        (r"опас|угроз|предупр|риск", "warning"),
+        (r"вырос|рост|увелич|поднял|подорож", "up"),
+        (r"упал|паден|сниз|уменьш|сократ|подешев", "down"),
+        (r"люд|человек|жител|населен|аудитор", "people"),
+        (r"город|страна|остров|место|регион|континент", "location"),
+        (r"иде|открыт|изобрел|придум", "idea"),
+        (r"побед|достижен|чемпион|награ", "trophy"),
+        (r"главн|важн|впервые|никогда|секрет", "keyword"),
+    ]
+    for wi, raw in enumerate(words):
+        at = float(raw[1])
+        if at - semantic_last < (5 if project.get("format") == "short" else 9):
+            continue
+        token = re.sub(r"^[\W_]+|[\W_]+$", "", str(raw[0])).lower().replace("ё", "е")
+        kind = next((kind for pattern, kind in rules if re.search(pattern, token)), "")
+        if not kind:
+            continue
+        scene_i = next((i for i, end in enumerate(ends) if at < end), len(scenes) - 1)
+        if scene_i in used_scenes:
+            continue
+        phrase = []
+        for item in words[wi:wi + 3]:
+            cleaned = re.sub(r"^[\W_]+|[\W_]+$", "", str(item[0]))
+            if cleaned:
+                phrase.append(cleaned)
+            if re.search(r"[.!?…]", str(item[0])):
+                break
+        start = sum(float(s.get("duration") or 0) for s in scenes[:scene_i])
+        graphic = {"type": kind, "value": "", "unit": "", "label": " ".join(phrase)[:40],
+                   "start": round(min(max(at - start - .1, 0), max(float(scenes[scene_i].get("duration") or 0) - .2, 0)), 2),
+                   "style": ("glass", "neon", "minimal", "classic")[scene_i % 4],
+                   "animation": ("pop", "slide", "pulse", "fade")[scene_i % 4], "auto": True}
+        suggestions.append((scene_i, graphic))
+        used_scenes.add(scene_i)
+        semantic_last = at
+        if len(suggestions) >= limit:
+            break
     return suggestions
+
+
+def _apply_graphic_suggestions(project: dict) -> int:
+    added = 0
+    for scene_i, graphic in _graphic_suggestions(project):
+        scene = project["scenes"][scene_i]
+        current = scene.get("graphic") or {}
+        if current.get("type") not in (None, "", "none") and not current.get("auto"):
+            continue
+        scene["graphic"] = graphic
+        added += 1
+    return added
 
 
 @router.post("/{project_id}/suggest-graphics")
 def suggest_graphics(project_id: str):
     project = _read(project_id)
-    suggestions = _graphic_suggestions(project)
-    added = 0
-    for scene_i, graphic in suggestions:
-        scene = project["scenes"][scene_i]
-        current = scene.get("graphic") or {}
-        if current.get("type") not in (None, "", "none"):
-            continue
-        scene["graphic"] = graphic
-        added += 1
+    added = _apply_graphic_suggestions(project)
     if not added:
-        raise UserError("Новых подходящих цифр не найдено. Моушен можно настроить вручную в любой сцене.")
+        raise UserError("Подходящих фактов или визуальных акцентов не найдено. Моушен можно настроить вручную.")
     project["graphics_enabled"] = True
     project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
     out = _public(_write(project))

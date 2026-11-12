@@ -6,7 +6,7 @@ import re
 import shutil
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from . import cta, media
 
@@ -38,6 +38,16 @@ TEMPLATES = {
     "date": ("Дата или год", "label: the date or year as written on screen (\"1941\", \"12 апреля\")"),
     "rank": ("Место в рейтинге: №1, топ", "value: the place number; label: what the ranking is"),
     "warning": ("Предупреждение «!»", "label: the warning (2-5 words)"),
+    "people": ("Люди / аудитория", "label: who the people are"),
+    "location": ("Место", "label: the place or country"),
+    "idea": ("Идея / открытие", "label: the idea or discovery"),
+    "trophy": ("Достижение", "label: the achievement or record"),
+}
+
+MATERIAL_FONT = Path(__file__).resolve().parent / "assets" / "material-symbols" / "MaterialSymbolsRounded.ttf"
+MATERIAL = {
+    "people": (0xF233, BLUE), "location": (0xF1DB, RED),
+    "idea": (0xE90F, GOLD), "trophy": (0xEA23, GOLD),
 }
 
 
@@ -52,6 +62,10 @@ def _ease_back(x):
 
 def _font(px):
     return cta._font(int(px * SS))
+
+
+def _material_font(px):
+    return ImageFont.truetype(str(MATERIAL_FONT), int(px * SS)) if MATERIAL_FONT.exists() else _font(px)
 
 
 def fmt_number(v: float, decimals: int = 0) -> str:
@@ -81,24 +95,40 @@ def _fit(d: ImageDraw.ImageDraw, text: str, px: int, max_w: float):
     return _font(px)
 
 
-def _finish(layer: Image.Image, t: float) -> Image.Image:
-    scale = 0.4 + 0.6 * _ease_back(t / 0.32)
+def _finish(layer: Image.Image, t: float, animation: str = "pop") -> Image.Image:
+    k = _ease(t / .38)
+    dx = dy = 0
+    if animation == "slide":
+        scale, dx, alpha = 1.0, (1 - k) * W * .55 * SS, k
+    elif animation == "pulse":
+        scale, alpha = .86 + .14 * _ease_back(t / .28), k
+        if .35 < t < 2.5:
+            scale *= 1 + .025 * math.sin((t - .35) * math.pi * 4)
+    elif animation == "fade":
+        scale, alpha = 1.0, k
+    else:
+        scale, alpha = 0.4 + 0.6 * _ease_back(t / 0.32), min(1.0, t / 0.15)
     out_t = DUR - 0.35
-    alpha = min(1.0, t / 0.15)
     if t > out_t:
         k = _ease((t - out_t) / 0.35)
         scale *= 1 - 0.25 * k
         alpha *= 1 - k
     canvas = Image.new("RGBA", (W * SS, H * SS), (0, 0, 0, 0))
-    cta._place(canvas, layer, scale, alpha, W * SS / 2, H * SS / 2)
+    cta._place(canvas, layer, scale, alpha, W * SS / 2 + dx, H * SS / 2 + dy)
     return canvas.resize((W, H), Image.LANCZOS)
 
 
-def _panel(w: float = 820, h: float = 400):
+def _panel(w: float = 820, h: float = 400, style: str = "classic"):
     im = Image.new("RGBA", (W * SS, H * SS), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     x0, y0 = (W - w) / 2 * SS, (H - h) / 2 * SS
-    d.rounded_rectangle([x0, y0, x0 + w * SS, y0 + h * SS], radius=36 * SS, fill=CARD)
+    fills = {"glass": (22, 32, 52, 150), "neon": (5, 8, 18, 225), "minimal": (8, 10, 16, 105)}
+    outlines = {"glass": (125, 190, 255, 115), "neon": (51, 230, 255, 230), "minimal": (255, 255, 255, 30)}
+    d.rounded_rectangle([x0, y0, x0 + w * SS, y0 + h * SS], radius=36 * SS,
+                        fill=fills.get(style, CARD), outline=outlines.get(style), width=(3 if style == "neon" else 2) * SS)
+    if style == "neon":
+        d.rounded_rectangle([x0 + 10 * SS, y0 + 10 * SS, x0 + (w - 10) * SS, y0 + (h - 10) * SS],
+                            radius=29 * SS, outline=(59, 130, 246, 100), width=2 * SS)
     return im, d, (x0, y0, x0 + w * SS, y0 + h * SS)
 
 
@@ -117,7 +147,7 @@ def _counting(t: float, start: float = 0.15, length: float = 1.4) -> float:
 def frame(g: dict, t: float) -> Image.Image:
     kind = g.get("type")
     label = (g.get("label") or "").strip()[:40]
-    im, d, box = _panel()
+    im, d, box = _panel(style=str(g.get("style") or "classic"))
     x0, y0, x1, y1 = box
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     if kind in ("counter", "money", "rank"):
@@ -266,6 +296,12 @@ def frame(g: dict, t: float) -> Image.Image:
         sub = (g.get("unit") or "").strip()[:30]
         if sub:
             _label(d, box, sub, 0.88, 40)
+    elif kind in MATERIAL:
+        codepoint, color = MATERIAL[kind]
+        k = _counting(t, .08, .65)
+        icon_y = y0 + (y1 - y0) * .42 + (1 - k) * 35 * SS
+        d.text((cx, icon_y), chr(codepoint), font=_material_font(180), fill=(*color[:3], int(255 * k)), anchor="mm")
+        _label(d, box, label, .84, 46)
     else:  # keyword
         txt = (label or str(g.get("value") or "")).upper()
         lines = _wrap(d, txt, (x1 - x0) - 80 * SS, 110)
@@ -280,7 +316,7 @@ def frame(g: dict, t: float) -> Image.Image:
         uy = min(y + (len(lines[0]) - 1) * step + step * 0.62, y1 - 22 * SS)
         u = 120 * SS * _counting(t, 0.3, 0.4)
         d.rectangle([cx - u, uy, cx + u, uy + 10 * SS], fill=GOLD)
-    return _finish(im, t)
+    return _finish(im, t, str(g.get("animation") or "pop"))
 
 
 def _wrap(d, text: str, max_w: float, px: int):
