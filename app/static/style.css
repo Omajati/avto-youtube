@@ -499,6 +499,7 @@ details.mc.st-subs { border-left-color: #2563eb; }
 .le-subcheck { display: inline-flex; grid-template-columns: none; gap: 6px; align-items: center; margin: 0; font-size: 13px; }
 .le-subcheck input { grid-row: auto; }
 .le-subtitles h2, .le-render-top h2 { margin: 0; }
+.le-subtitles select { width: auto; max-width: 240px; }
 .le-render-top { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
 .le-transcribe-state:empty { display: none; }
 .le-graphics-master h2 { margin: 0; }

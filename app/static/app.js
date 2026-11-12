@@ -3451,6 +3451,8 @@ async function viewLocalEditor(id) {
   const graphicOptions = [["none", "Без моушен-графики"], ["counter", "Крупная цифра / счётчик"], ["money", "Деньги"], ["percent", "Процент в круге"], ["bar", "Шкала заполнения"], ["timer", "Обратный отсчёт"], ["stopwatch", "Секундомер"], ["up", "Стрелка роста"], ["down", "Стрелка падения"], ["date", "Дата"], ["rank", "Место в рейтинге"], ["keyword", "Крупная надпись"], ["warning", "Предупреждение"], ["people", "Люди / аудитория"], ["location", "Кинематографическая локация"], ["name", "Имя / нижняя треть"], ["quote", "Цитата"], ["chapter", "Глава / раздел"], ["document", "Архивный документ"], ["secret", "Печать «Секретно»"], ["news", "Новостная плашка"], ["timeline", "Временная линия"], ["idea", "Идея / открытие"], ["trophy", "Достижение / рекорд"]];
   const graphicStyles = [["classic", "Классический"], ["glass", "Стекло"], ["neon", "Неон"], ["minimal", "Минимальный"], ["cinematic", "Кинематографический"], ["broadcast", "Эфирный"]];
   const graphicAnimations = [["pop", "Пружина"], ["slide", "Выезд сбоку"], ["pulse", "Пульс"], ["fade", "Плавное появление"]];
+  const subtitlePresets = [["documentary", "Документальный"], ["karaoke", "Караоке с заливкой"], ["words", "Слово за словом"], ["shorts", "Крупный Shorts"], ["clean", "Чистый статичный"], ["box", "На полупрозрачной плашке"]];
+  const subtitleFonts = [["auto", "Шрифт: автоматически"], ["arial_black", "Arial Black"], ["impact", "Impact"], ["arial_bold", "Arial Bold"]];
   const options = (items, value) => items.map(([k, n]) => `<option value="${k}" ${k === value ? "selected" : ""}>${n}</option>`).join("");
   const busy = () => p.render?.status === "running" || p.transcript?.status === "running";
   const save = async (quiet = false) => {
@@ -3543,6 +3545,9 @@ async function viewLocalEditor(id) {
       </div>${transcriptState()}
       ${tr.status === "done" ? `<div class="row le-transcript-tools"><b>${(tr.words || []).length} слов · язык ${esc(tr.language || "определён")}</b><span class="badge done">${p.scenes_synced ? "Сцены синхронизированы" : "Нужна синхронизация"}</span><button id="le-sync" ${!p.scenes.length ? "disabled" : ""}>Синхронизировать заново</button></div><textarea class="le-transcript" readonly>${esc(tr.text)}</textarea>` : ""}</div>` : ""}</div>
     <div class="card le-subtitles"><div class="row"><h2 class="grow">Субтитры</h2><label class="check le-subcheck"><input id="le-subs" type="checkbox" ${p.subtitles !== false ? "checked" : ""}> Показывать на видео</label>
+      <select id="le-subs-preset">${options(subtitlePresets, p.subtitle_preset || "documentary")}</select>
+      <select id="le-subs-font">${options(subtitleFonts, p.subtitle_font || "auto")}</select>
+      <select id="le-subs-size">${options([["small", "Мелкие"], ["medium", "Средние"], ["large", "Крупные"]], p.subtitle_size || "medium")}</select>
       <select id="le-subs-pos">${options([["low", "Внизу"], ["mid_low", "Ниже середины"], ["mid", "Чуть ниже центра"], ["center", "По центру"]], p.subtitles_position || "mid_low")}</select>
       ${tr.status === "done" ? `<a class="btn sm" href="${tr.srt_url || `/api/local-editor/${p.id}/output/subtitles`}">Скачать SRT</a>` : `<span class="muted small">Появятся после расшифровки голоса Whisper.</span>`}</div></div>
     <div class="card le-graphics-master"><div class="row"><h2 class="grow">Моушен-графика</h2><label class="check le-mastercheck"><input id="le-gfx-auto" type="checkbox" ${p.graphics_auto ? "checked" : ""}> Определять автоматически</label><label class="check le-mastercheck"><input id="le-gfx-enabled" type="checkbox" ${p.graphics_enabled ? "checked" : ""}> Использовать в ролике</label></div>
@@ -3610,6 +3615,9 @@ async function viewLocalEditor(id) {
     $("#le-transcribe")?.addEventListener("click", startTranscription);
     $("#le-sync")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/sync-scenes`, { method: "POST" }); draw(); toast("Сцены подогнаны к паузам и длине озвучки"); } catch (e) { toast(e.message, true); } });
     $("#le-subs")?.addEventListener("change", e => { p.subtitles = e.target.checked; saveSoon(); });
+    $("#le-subs-preset")?.addEventListener("change", e => { p.subtitle_preset = e.target.value; saveSoon(); });
+    $("#le-subs-font")?.addEventListener("change", e => { p.subtitle_font = e.target.value; saveSoon(); });
+    $("#le-subs-size")?.addEventListener("change", e => { p.subtitle_size = e.target.value; saveSoon(); });
     $("#le-subs-pos")?.addEventListener("change", e => { p.subtitles_position = e.target.value; saveSoon(); });
     $("#le-gfx-enabled")?.addEventListener("change", e => { p.graphics_enabled = e.target.checked; saveSoon(); });
     $("#le-gfx-auto")?.addEventListener("change", async e => { p.graphics_auto = e.target.checked; if (e.target.checked) p.graphics_enabled = true; await save(true); if (e.target.checked && p.transcript?.status === "done" && p.scenes.length) { try { p = await api(`/api/local-editor/${id}/suggest-graphics`, { method: "POST" }); } catch (x) { } } draw(); toast(e.target.checked ? "Автоподбор моушена включён" : "Автоподбор моушена выключен"); });

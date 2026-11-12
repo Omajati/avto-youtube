@@ -37,6 +37,34 @@ def font() -> tuple:
     return fdir, "Arial"
 
 
+def font_choice(choice: str = "auto") -> tuple:
+    """Copies the selected local system font and returns (fonts_dir, family)."""
+    preferred = {
+        "arial_black": ["Arial Black.ttf"],
+        "impact": ["Impact.ttf"],
+        "arial_bold": ["Arial Bold.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
+    }.get(choice, [])
+    if not preferred:
+        return font()
+    fdir = DATA_DIR / "fonts"
+    fdir.mkdir(parents=True, exist_ok=True)
+    for wanted in preferred:
+        for src in FONT_CANDIDATES:
+            p = Path(src)
+            if p.name.lower() != wanted.lower() or not p.exists():
+                continue
+            dst = fdir / p.name
+            if not dst.exists():
+                shutil.copy(p, dst)
+            try:
+                from PIL import ImageFont
+                family = ImageFont.truetype(str(dst), 20).getname()[0]
+            except Exception:
+                family = p.stem.replace(" Bold", "")
+            return fdir, family
+    return font()
+
+
 def _scene_words(text: str, align_file: Path, speech: float) -> list:
     """[(word, start, end)] relative to the start of the scene audio."""
     words = []
@@ -247,6 +275,81 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         t = t.replace("\\", "").replace("{", "(").replace("}", ")")
         style = places[n] if places and places[n] != PLACES[vertical][0][0] else "Default"
         rows.append(f"Dialogue: 0,{_ts(s, False)},{_ts(e, False)},{style},,0,0,0,,{t}")
+    out.write_text(header + "\n".join(rows) + "\n", encoding="utf-8")
+
+
+def write_ass_preset(cues: list, words: list, out: Path, width: int, height: int, vertical: bool, family: str,
+                     margin_v: int, preset: str = "documentary", size: int = None):
+    """Writes local-editor subtitles with ready-made animation and colour presets."""
+    base_size = 96 if vertical else 60
+    size = int(size or base_size)
+    outline = max(2, round((6 if vertical else 4) * size / base_size))
+    primary, secondary = "&H00FFFFFF", "&H0015CCFA"  # white and gold (ASS uses BBGGRR)
+    border_style, back, shadow = 1, "&H80000000", 2
+    if preset == "karaoke":
+        primary, secondary = "&H0015CCFA", "&H00FFFFFF"
+    elif preset == "box":
+        border_style, back, shadow, outline = 3, "&H78000000", 0, max(8, round(size * .24))
+    elif preset == "clean":
+        shadow = 1
+    align = 2
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{family},{size},{primary},{secondary},&H00000000,{back},-1,0,0,0,100,100,0,0,{border_style},{outline},{shadow},{align},80,80,{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+    def clean(text: str) -> str:
+        text = str(text).replace("\\", "").replace("{", "(").replace("}", ")")
+        return text.upper() if vertical or preset == "shorts" else text
+
+    def cue_words(start: float, end: float) -> list:
+        return [(clean(w[0]), float(w[1]), float(w[2])) for w in words
+                if float(w[1]) < end + .02 and float(w[2]) > start - .02]
+
+    def accent(parts: list[str], current: int = -1) -> str:
+        if not parts:
+            return ""
+        idx = current if current >= 0 else max(range(len(parts)), key=lambda i: len(re.sub(r"\W", "", parts[i])))
+        return " ".join((r"{\c&H15CCFA&}" + part + r"{\c&HFFFFFF&}") if i == idx else part
+                        for i, part in enumerate(parts))
+
+    rows = []
+    for text, start, end in cues:
+        subset = cue_words(float(start), float(end))
+        parts = [w[0] for w in subset] or clean(text).split()
+        if preset == "karaoke" and subset:
+            shown = " ".join(r"{\k%d}%s" % (max(5, round((we - ws) * 100)), word)
+                             for word, ws, we in subset)
+            shown = r"{\fad(80,120)}" + shown
+            rows.append(f"Dialogue: 0,{_ts(start, False)},{_ts(end, False)},Default,,0,0,0,,{shown}")
+            continue
+        if preset == "words" and subset:
+            for i, (_, ws, _) in enumerate(subset):
+                stop = subset[i + 1][1] if i + 1 < len(subset) else float(end)
+                shown = r"{\fad(35,0)\fscx88\fscy88\t(0,130,\fscx100\fscy100)}" + accent(parts[:i + 1], i)
+                rows.append(f"Dialogue: 0,{_ts(ws, False)},{_ts(stop, False)},Default,,0,0,0,,{shown}")
+            continue
+        if preset == "documentary":
+            shown = r"{\fad(180,180)}" + accent(parts)
+        elif preset == "shorts":
+            shown = r"{\fad(70,100)\fscx90\fscy90\t(0,150,\fscx108\fscy108)}" + accent(parts)
+        elif preset == "box":
+            shown = r"{\fad(120,160)}" + " ".join(parts)
+        elif preset == "clean":
+            shown = " ".join(parts)
+        else:
+            shown = r"{\fad(120,140)}" + " ".join(parts)
+        rows.append(f"Dialogue: 0,{_ts(start, False)},{_ts(end, False)},Default,,0,0,0,,{shown}")
     out.write_text(header + "\n".join(rows) + "\n", encoding="utf-8")
 
 

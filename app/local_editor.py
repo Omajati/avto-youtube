@@ -39,6 +39,9 @@ _transcribing: set[str] = set()
 LOCAL_GRAPHICS = {"none", "counter", "money", "percent", "bar", "timer", "stopwatch", "up", "down", "date", "rank", "keyword", "warning", "people", "location", "idea", "trophy", "name", "quote", "chapter", "document", "secret", "news", "timeline"}
 GRAPHIC_STYLES = {"classic", "glass", "neon", "minimal", "cinematic", "broadcast"}
 GRAPHIC_ANIMATIONS = {"pop", "slide", "pulse", "fade"}
+SUBTITLE_PRESETS = {"documentary", "karaoke", "words", "shorts", "clean", "box"}
+SUBTITLE_FONTS = {"auto", "arial_black", "impact", "arial_bold"}
+SUBTITLE_SIZES = {"small", "medium", "large"}
 
 
 def _now() -> int:
@@ -106,6 +109,9 @@ def _default_project(project_id: str, title: str, format_: str) -> dict:
         "graphics_auto": False,
         "subtitles": True,
         "subtitles_position": "mid_low",
+        "subtitle_preset": "documentary",
+        "subtitle_font": "auto",
+        "subtitle_size": "medium",
         "scenes_synced": False,
         "voice": None,
         "music": None,
@@ -174,6 +180,9 @@ def update_project(project_id: str, data: dict = Body(...)):
     project["graphics_auto"] = bool(data.get("graphics_auto", project.get("graphics_auto", False)))
     project["subtitles"] = bool(data.get("subtitles", project.get("subtitles", True)))
     project["subtitles_position"] = data.get("subtitles_position") if data.get("subtitles_position") in captions.POSITIONS else "mid_low"
+    project["subtitle_preset"] = data.get("subtitle_preset") if data.get("subtitle_preset") in SUBTITLE_PRESETS else "documentary"
+    project["subtitle_font"] = data.get("subtitle_font") if data.get("subtitle_font") in SUBTITLE_FONTS else "auto"
+    project["subtitle_size"] = data.get("subtitle_size") if data.get("subtitle_size") in SUBTITLE_SIZES else "medium"
     current = {s["id"]: s for s in project.get("scenes", [])}
     if isinstance(data.get("scenes"), list):
         scenes = []
@@ -809,11 +818,15 @@ def _burn_subtitles(project: dict, video: Path, out: Path, width: int, height: i
     render_dir = _project_dir(project["id"]) / "render"
     srt, ass = render_dir / "subtitles.srt", render_dir / "subtitles.ass"
     captions.write_srt(cues, srt)
-    fonts, family = captions.font()
+    fonts, family = captions.font_choice(str(project.get("subtitle_font") or "auto"))
     vertical = height > width
     pos = project.get("subtitles_position", "mid_low")
     margin = int(height * captions.POS_SHARE[vertical].get(pos, captions.POS_SHARE[vertical]["mid_low"]))
-    captions.write_ass(cues, ass, width, height, vertical, family, margin_v=margin)
+    base_size = 96 if vertical else 60
+    size = round(base_size * {"small": .82, "medium": 1.0, "large": 1.24}.get(project.get("subtitle_size"), 1.0))
+    words = [(str(w[0]), float(w[1]), float(w[2])) for w in project.get("transcript", {}).get("words", [])]
+    captions.write_ass_preset(cues, words, ass, width, height, vertical, family, margin,
+                              str(project.get("subtitle_preset") or "documentary"), size)
     rel_fonts = str(Path(fonts).resolve()).replace("\\", "/").replace(":", "\\:")
     media.run(["-i", video.resolve(), "-vf", f"subtitles=filename={ass.name}:fontsdir={rel_fonts}",
                "-c:v", "libx264", "-preset", "veryfast", "-crf", 20, "-pix_fmt", "yuv420p",
