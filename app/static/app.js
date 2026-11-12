@@ -3443,10 +3443,12 @@ async function viewLocalEditor(id) {
   }
 
   let p = await api(`/api/local-editor/${id}`);
+  const whisper = await api("/api/local-editor/whisper/info").catch(() => ({ installed: false, models: {} }));
+  p.transcript = p.transcript || { status: "idle", text: "", words: [], language: "", model: "small", error: "", step: "" };
   let saveTimer = null, saving = false;
   const motionOptions = [["none", "Без движения"], ["zoom_in", "Медленное приближение"], ["zoom_out", "Медленное отдаление"], ["pan_left", "Панорама влево"], ["pan_right", "Панорама вправо"]];
   const options = (items, value) => items.map(([k, n]) => `<option value="${k}" ${k === value ? "selected" : ""}>${n}</option>`).join("");
-  const busy = () => p.render?.status === "running";
+  const busy = () => p.render?.status === "running" || p.transcript?.status === "running";
   const save = async (quiet = false) => {
     clearTimeout(saveTimer); saveTimer = null;
     if (busy() || saving) return;
@@ -3475,6 +3477,12 @@ async function viewLocalEditor(id) {
     if (r.status === "error") return `<div class="banner bad"><b>Сборка не завершилась.</b> ${esc(r.error || "Неизвестная ошибка")}</div>`;
     return "";
   };
+  const transcriptState = () => {
+    const t = p.transcript || {};
+    if (t.status === "running") return `<div class="banner info le-transcribe-state"><b>Whisper работает локально…</b><div class="small" style="margin-top:5px">${esc(t.step || "Распознаю речь и таймкоды слов…")}</div></div>`;
+    if (t.status === "error") return `<div class="banner bad le-transcribe-state"><b>Расшифровка не завершилась.</b> ${esc(t.error || "Неизвестная ошибка")}</div>`;
+    return `<div class="le-transcribe-state"></div>`;
+  };
   const outputBox = () => {
     const r = p.render || {}, url = r.final_url || r.preview_url;
     if (!url) return "";
@@ -3500,6 +3508,7 @@ async function viewLocalEditor(id) {
   };
   const draw = () => {
     const total = p.scenes.reduce((n, s) => n + Number(s.duration || 0), 0); p.duration = total;
+    const tr = p.transcript || {}, modelOptions = Object.entries(whisper.models || {}).map(([k, v]) => `<option value="${k}" ${k === (tr.model || "small") ? "selected" : ""}>${esc(v.name)} · ${esc(v.size)}</option>`).join("");
     main.innerHTML = `<div class="row le-titlebar"><a class="btn sm" href="#/local-editor">← Все монтажи</a><input id="le-title" class="grow" type="text" value="${esc(p.title)}"><span id="le-saved" class="muted small">✓ Сохранено</span></div>
     <div class="le-toolbar card"><div class="row"><label>Формат <select id="le-format"><option value="long" ${p.format === "long" ? "selected" : ""}>YouTube 16:9</option><option value="short" ${p.format === "short" ? "selected" : ""}>Shorts / Reels 9:16</option></select></label>
       <label>Кадров/сек <select id="le-fps">${[24, 25, 30, 50, 60].map(x => `<option ${x === p.fps ? "selected" : ""}>${x}</option>`).join("")}</select></label>
@@ -3510,7 +3519,16 @@ async function viewLocalEditor(id) {
         <span id="le-uploading" class="muted small"></span></div></div>
     <div class="card le-audio"><div class="row"><h2 class="grow">Звук</h2>${p.voice ? `<span class="small">🎙 ${esc(p.voice.name)} (${fmtTime(p.voice.duration)})</span><button class="sm danger" data-audio-remove="voice">Убрать</button>` : `<span class="muted small">Озвучка не добавлена — ролик будет без голоса</span>`}</div>
       ${p.voice ? `<canvas id="le-wave"></canvas>` : ""}
-      <div class="row le-musicline">${p.music ? `<span class="grow small">♫ ${esc(p.music.name)} (${fmtTime(p.music.duration)})</span><label>Громкость музыки <input id="le-music-volume" type="range" min="0" max="1" step=".01" value="${p.music_volume}"><b id="le-music-value">${Math.round(p.music_volume * 100)}%</b></label><button class="sm danger" data-audio-remove="music">Убрать</button>` : `<span class="muted small">Музыка не добавлена</span>`}</div></div>
+      <div class="row le-musicline">${p.music ? `<span class="grow small">♫ ${esc(p.music.name)} (${fmtTime(p.music.duration)})</span><label>Громкость музыки <input id="le-music-volume" type="range" min="0" max="1" step=".01" value="${p.music_volume}"><b id="le-music-value">${Math.round(p.music_volume * 100)}%</b></label><button class="sm danger" data-audio-remove="music">Убрать</button>` : `<span class="muted small">Музыка не добавлена</span>`}</div>
+      ${p.voice ? `<div class="le-whisper"><h3>Локальный Whisper</h3><div class="row">
+        <select id="le-whisper-model" ${busy() ? "disabled" : ""}>${modelOptions || `<option value="small">Whisper Small</option>`}</select>
+        <select id="le-whisper-lang" ${busy() ? "disabled" : ""}>${options([["", "Язык: определить автоматически"], ["ru", "Русский"], ["en", "Английский"], ["de", "Немецкий"], ["es", "Испанский"], ["fr", "Французский"]], tr.language || "")}</select>
+        <button id="le-transcribe" ${busy() || !whisper.installed ? "disabled" : ""}>${tr.status === "done" ? "Расшифровать заново" : "Расшифровать голос"}</button>
+        ${!whisper.installed ? `<span class="muted small">Библиотека Whisper ещё не установлена.</span>` : `<span class="muted small">Без API: звук не покидает Mac. Модель загружается один раз.</span>`}
+      </div>${transcriptState()}
+      ${tr.status === "done" ? `<div class="row le-transcript-tools"><b>${(tr.words || []).length} слов · язык ${esc(tr.language || "определён")}</b><button id="le-sync" ${!p.scenes.length ? "disabled" : ""}>Подогнать сцены к голосу</button><a class="btn sm" href="${tr.srt_url || `/api/local-editor/${p.id}/output/subtitles`}">Скачать SRT</a>
+        <label class="check le-subcheck"><input id="le-subs" type="checkbox" ${p.subtitles !== false ? "checked" : ""}> Субтитры на видео</label>
+        <select id="le-subs-pos">${options([["low", "Субтитры: внизу"], ["mid_low", "Субтитры: ниже середины"], ["mid", "Субтитры: чуть ниже центра"], ["center", "Субтитры: по центру"]], p.subtitles_position || "mid_low")}</select></div><textarea class="le-transcript" readonly>${esc(tr.text)}</textarea>` : ""}</div>` : ""}</div>
     <div class="row le-timeline-head"><h2 class="grow">Таймлайн</h2><span class="muted small">Перетаскивайте сцены за ⋮⋮ или используйте стрелки</span></div>
     <div id="le-timeline" class="le-timeline">${p.scenes.length ? p.scenes.map(sceneCard).join("") : `<label class="le-empty">Перетащите сюда фото и видео или нажмите «＋ Фото и видео»<input id="le-empty-files" type="file" accept="image/*,video/*" multiple hidden></label>`}</div>
     <div class="card le-render"><h2>Сборка</h2>${renderState()}<div class="row"><button id="le-preview" ${busy() || !p.scenes.length ? "disabled" : ""}>▶ Быстрый предпросмотр</button><button class="primary" id="le-final" ${busy() || !p.scenes.length ? "disabled" : ""}>Экспорт 1080p MP4</button><span class="muted small">Всё собирает FFmpeg на вашем Mac.</span></div></div>${outputBox()}`;
@@ -3536,11 +3554,16 @@ async function viewLocalEditor(id) {
     try { await api(`/api/local-editor/${id}/render?quality=${quality}`, { method: "POST" }); p = await api(`/api/local-editor/${id}`); draw(); poll(); }
     catch (e) { toast(e.message, true); draw(); }
   };
+  const startTranscription = async () => {
+    const model = $("#le-whisper-model")?.value || "small", language = $("#le-whisper-lang")?.value || "";
+    try { await api(`/api/local-editor/${id}/transcribe?model=${encodeURIComponent(model)}&language=${encodeURIComponent(language)}`, { method: "POST" }); p = await api(`/api/local-editor/${id}`); draw(); poll(); }
+    catch (e) { toast(e.message, true); }
+  };
   const poll = () => {
     clearInterval(timer); timer = setInterval(async () => {
-      try { p = await api(`/api/local-editor/${id}`); if (p.render.status !== "running") { clearInterval(timer); timer = null; draw(); if (p.render.status === "done") toast(p.render.quality === "final" ? "Готовый ролик собран" : "Предпросмотр готов"); } else { const box = $(".le-render"); if (box) { const banner = box.querySelector(".banner"); if (banner) banner.outerHTML = renderState(); } } }
+      try { const wasRender = p.render?.status === "running", wasWhisper = p.transcript?.status === "running"; p = await api(`/api/local-editor/${id}`); if (!busy()) { clearInterval(timer); timer = null; draw(); if (wasRender && p.render.status === "done") toast(p.render.quality === "final" ? "Готовый ролик собран" : "Предпросмотр готов"); if (wasWhisper && p.transcript.status === "done") toast("Whisper закончил расшифровку"); } else { const rb = $(".le-render .banner"); if (rb && p.render?.status === "running") rb.outerHTML = renderState(); const tb = $(".le-transcribe-state"); if (tb) tb.outerHTML = transcriptState(); } }
       catch (e) { clearInterval(timer); timer = null; toast(e.message, true); }
-    }, 1000);
+    }, 1200);
   };
   const bind = () => {
     $("#le-title").oninput = e => { p.title = e.target.value; saveSoon(); };
@@ -3551,6 +3574,10 @@ async function viewLocalEditor(id) {
     $("#le-voice").onchange = e => uploadFiles([e.target.files[0]], "voice");
     $("#le-music").onchange = e => uploadFiles([e.target.files[0]], "music");
     $("#le-music-volume")?.addEventListener("input", e => { p.music_volume = +e.target.value; $("#le-music-value").textContent = `${Math.round(p.music_volume * 100)}%`; saveSoon(); });
+    $("#le-transcribe")?.addEventListener("click", startTranscription);
+    $("#le-sync")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/sync-scenes`, { method: "POST" }); draw(); toast("Сцены подогнаны к паузам и длине озвучки"); } catch (e) { toast(e.message, true); } });
+    $("#le-subs")?.addEventListener("change", e => { p.subtitles = e.target.checked; saveSoon(); });
+    $("#le-subs-pos")?.addEventListener("change", e => { p.subtitles_position = e.target.value; saveSoon(); });
     main.querySelectorAll("[data-audio-remove]").forEach(b => b.onclick = async () => { try { p = await api(`/api/local-editor/${id}/audio/${b.dataset.audioRemove}`, { method: "DELETE" }); draw(); } catch (e) { toast(e.message, true); } });
     $("#le-preview").onclick = () => startRender("preview"); $("#le-final").onclick = () => startRender("final");
     const rows = [...main.querySelectorAll(".le-scene")];
@@ -3590,7 +3617,7 @@ async function viewMontage() {
       <div id="mt-polish" style="display:none;margin-top:8px">
         <label class="f">Готовый ролик</label><input type="file" id="mt-polishfile" accept="video/*">
         <label class="f">Отдельная озвучка <span class="hint">необязательно: если голос уже есть в ролике, субтитры сделаются по нему</span></label><input type="file" id="mt-polishvoice" accept="audio/*">
-        <label class="f">Текст озвучки <span class="hint">необязательно, если есть ключ ElevenLabs: тогда программа сама расшифрует голос. Без ключа вставьте текст, и программа сама расставит слова по паузам в голосе</span></label><textarea id="mt-polishtext" rows="4" placeholder="Текст, который звучит в ролике"></textarea>
+        <label class="f">Текст озвучки <span class="hint">необязательно: локальный Whisper сам расшифрует голос и поставит таймкоды слов без API-ключей</span></label><textarea id="mt-polishtext" rows="4" placeholder="Текст, который звучит в ролике"></textarea>
       </div>
     </div>
     <div class="card">

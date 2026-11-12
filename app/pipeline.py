@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import animate, atmos, balance, captions, cta, db, effects, graphics, images, llm, media, motion, music as musiclib, take, thumb, tts
+from . import animate, atmos, balance, captions, cta, db, effects, graphics, images, llm, local_whisper, media, motion, music as musiclib, take, thumb, tts
 from .config import JOBS_DIR, MUSIC_DIR, PROMPTS_DIR, PROMPTS_DEFAULT_DIR, load_settings
 from .net import Cancelled, UserError
 
@@ -2784,11 +2784,14 @@ OWN_VOICE_TITLE = "Ролик с моей озвучкой"
 
 def _transcribe_own_voice(c: Ctx):
     """No text was given with the owner's recording: it is transcribed and becomes the script."""
-    if not c.settings.get("elevenlabs_key"):
-        raise UserError("Чтобы расшифровать вашу озвучку, нужен ключ ElevenLabs. Без ключа вставьте текст озвучки "
-                        "в поле «Текст» и создайте ролик заново: время слов программа посчитает сама.")
-    c.log("Текста нет: расшифровываю вашу озвучку (ElevenLabs)…")
-    text, words = tts.transcribe(c.settings, own_voice_file(c.dir), c.lang)
+    if local_whisper.available():
+        c.log("Текста нет: расшифровываю вашу озвучку локально (Whisper, без API)…")
+        text, words, _ = local_whisper.transcribe(own_voice_file(c.dir), "small", c.lang, on_status=c.log)
+    elif c.settings.get("elevenlabs_key"):
+        c.log("Текста нет: расшифровываю вашу озвучку (ElevenLabs)…")
+        text, words = tts.transcribe(c.settings, own_voice_file(c.dir), c.lang)
+    else:
+        raise UserError("Локальный Whisper ещё не установлен. Обновите библиотеки программы или вставьте текст озвучки.")
     write_json(c.dir / "own_voice_words.json", {"key": hashlib.md5(" ".join(text.split()).encode("utf-8")).hexdigest(),
                                                 "words": words})
     checks = script_checks(text, word_count(text), WPM.get(c.lang, WORDS_PER_MIN))
@@ -4592,9 +4595,8 @@ def prepare_montage(jid: str, title: str, script: str):
     opts = job.get("options") or {}
     text = re.sub(r"\n{3,}", "\n\n", script.replace("\r", "")).strip()
     transcribe = own_voice_file(d) is not None and word_count(text) < 3
-    if transcribe and not load_settings().get("elevenlabs_key"):
-        raise UserError("Без ключа ElevenLabs программа не может сама расшифровать озвучку. Вставьте текст озвучки "
-                        "в поле «Текст»: время слов для субтитров программа посчитает сама по паузам в голосе.")
+    if transcribe and not local_whisper.available() and not load_settings().get("elevenlabs_key"):
+        raise UserError("Локальный Whisper ещё не установлен. Обновите библиотеки программы или вставьте текст озвучки.")
     if transcribe:
         text = "Текст появится после расшифровки вашей озвучки."
         title = (title or "").strip() or OWN_VOICE_TITLE

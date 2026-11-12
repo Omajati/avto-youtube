@@ -6,3 +6,4 @@ imageio-ffmpeg>=0.5.1
 pillow>=10.1
 pywebview>=5.3; sys_platform == "darwin"
 yt-dlp>=2025.1
+mlx-whisper>=0.4.3; sys_platform == "darwin" and platform_machine == "arm64"

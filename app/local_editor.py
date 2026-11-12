@@ -20,7 +20,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from . import media
+from . import captions, local_whisper, media
 from .config import DATA_DIR
 from .net import UserError
 
@@ -35,6 +35,7 @@ PROJECT_ID = re.compile(r"[0-9a-f]{12}")
 FILE_ID = re.compile(r"[0-9a-f]{12}\.[a-z0-9]{2,6}")
 _lock = threading.RLock()
 _rendering: set[str] = set()
+_transcribing: set[str] = set()
 
 
 def _now() -> int:
@@ -85,6 +86,8 @@ def _public(project: dict) -> dict:
         name = f"{quality}.mp4"
         if (_project_dir(pid) / "render" / name).is_file():
             render[f"{quality}_url"] = f"/api/local-editor/{pid}/output/{quality}"
+    if (_project_dir(pid) / "render" / "subtitles.srt").is_file():
+        out.setdefault("transcript", {})["srt_url"] = f"/api/local-editor/{pid}/output/subtitles"
     out["duration"] = round(sum(float(s.get("duration") or 0) for s in out.get("scenes", [])), 3)
     return out
 
@@ -96,9 +99,12 @@ def _default_project(project_id: str, title: str, format_: str) -> dict:
         "format": "short" if format_ == "short" else "long",
         "fps": 30,
         "music_volume": 0.12,
+        "subtitles": True,
+        "subtitles_position": "mid_low",
         "voice": None,
         "music": None,
         "scenes": [],
+        "transcript": {"status": "idle", "text": "", "words": [], "language": "", "model": "small", "error": "", "step": ""},
         "render": {"status": "idle", "progress": 0, "quality": "", "error": ""},
         "created": _now(),
         "updated": _now(),
@@ -138,6 +144,9 @@ def get_project(project_id: str):
     if project.get("render", {}).get("status") == "running" and project_id not in _rendering:
         project["render"].update(status="error", error="Сборка была прервана. Запустите её ещё раз.")
         _write(project)
+    if project.get("transcript", {}).get("status") == "running" and project_id not in _transcribing:
+        project["transcript"].update(status="error", error="Расшифровка была прервана. Запустите её ещё раз.")
+        _write(project)
     return _public(project)
 
 
@@ -155,6 +164,8 @@ def update_project(project_id: str, data: dict = Body(...)):
     project["format"] = "short" if data.get("format") == "short" else "long"
     project["fps"] = int(_number(data.get("fps", project.get("fps", 30)), 30, 24, 60))
     project["music_volume"] = _number(data.get("music_volume", project.get("music_volume", .12)), .12, 0, 1)
+    project["subtitles"] = bool(data.get("subtitles", project.get("subtitles", True)))
+    project["subtitles_position"] = data.get("subtitles_position") if data.get("subtitles_position") in captions.POSITIONS else "mid_low"
     current = {s["id"]: s for s in project.get("scenes", [])}
     if isinstance(data.get("scenes"), list):
         scenes = []
@@ -171,7 +182,6 @@ def update_project(project_id: str, data: dict = Body(...)):
                 source_duration = float(scene.get("source_duration") or scene["duration"])
                 scene["trim_start"] = _number(sent.get("trim_start"), float(old.get("trim_start") or 0), 0, max(source_duration - .1, 0))
                 scene["trim_end"] = _number(sent.get("trim_end"), float(old.get("trim_end") or source_duration), scene["trim_start"] + .1, source_duration)
-                scene["duration"] = min(scene["duration"], scene["trim_end"] - scene["trim_start"])
             scenes.append(scene)
         project["scenes"] = scenes
     project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
@@ -181,8 +191,8 @@ def update_project(project_id: str, data: dict = Body(...)):
 @router.delete("/{project_id}")
 def delete_project(project_id: str):
     path = _project_dir(project_id)
-    if project_id in _rendering:
-        raise UserError("Сначала дождитесь окончания сборки.")
+    if project_id in _rendering or project_id in _transcribing:
+        raise UserError("Сначала дождитесь окончания текущей обработки.")
     TRASH.mkdir(parents=True, exist_ok=True)
     target = TRASH / f"{project_id}-{_now()}"
     shutil.move(str(path), str(target))
@@ -228,6 +238,9 @@ async def upload(project_id: str, request: Request, name: str, kind: str = "scen
             duration = _duration(path)
             old = project.get(kind)
             project[kind] = {"source": filename, "name": Path(name).name, "duration": round(duration, 3)}
+            if kind == "voice":
+                project["transcript"] = {"status": "idle", "text": "", "words": [], "language": "", "model": "small", "error": "", "step": ""}
+                (path.parent.parent / "render" / "subtitles.srt").unlink(missing_ok=True)
             if old and FILE_ID.fullmatch(str(old.get("source") or "")):
                 # Replaced files are kept in the media folder until the project is removed. This makes undo/recovery possible.
                 pass
@@ -244,6 +257,9 @@ def remove_audio(project_id: str, kind: str):
         raise HTTPException(404)
     project = _read(project_id)
     project[kind] = None
+    if kind == "voice":
+        project["transcript"] = {"status": "idle", "text": "", "words": [], "language": "", "model": "small", "error": "", "step": ""}
+        (_project_dir(project_id) / "render" / "subtitles.srt").unlink(missing_ok=True)
     project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
     return _public(_write(project))
 
@@ -260,6 +276,11 @@ def source_file(project_id: str, filename: str):
 
 @router.get("/{project_id}/output/{quality}")
 def output_file(project_id: str, quality: str, download: bool = False):
+    if quality == "subtitles":
+        path = _project_dir(project_id) / "render" / "subtitles.srt"
+        if not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path, filename=f"{_read(project_id)['title']}.srt", media_type="application/x-subrip")
     if quality not in ("preview", "final"):
         raise HTTPException(404)
     path = _project_dir(project_id) / "render" / f"{quality}.mp4"
@@ -289,6 +310,119 @@ def waveform(project_id: str, kind: str, points: int = 700):
     peaks = [round(max((abs(x) for x in samples[i:i + step]), default=0) / 32768, 3)
              for i in range(0, len(samples), step)][:points]
     return {"peaks": peaks, "duration": item.get("duration", 0)}
+
+
+@router.get("/whisper/info")
+def whisper_info():
+    return local_whisper.info()
+
+
+def _transcript_cues(project: dict) -> list:
+    words = [(str(w[0]), float(w[1]), float(w[2]), 0) for w in project.get("transcript", {}).get("words", [])]
+    return captions.group(words, 3, 18) if project.get("format") == "short" else captions.group(words, 8, 42)
+
+
+def _write_srt(project: dict):
+    cues = _transcript_cues(project)
+    if cues:
+        captions.write_srt(cues, _project_dir(project["id"]) / "render" / "subtitles.srt")
+
+
+def _set_transcript(project_id: str, **changes):
+    with _lock:
+        try:
+            project = _read(project_id)
+        except Exception:
+            return
+        project.setdefault("transcript", {}).update(changes)
+        _write(project)
+
+
+def _transcribe_worker(project_id: str, model: str, language: str):
+    try:
+        project = _read(project_id)
+        voice = project.get("voice")
+        if not voice:
+            raise UserError("Сначала добавьте озвучку.")
+        source = _project_dir(project_id) / "media" / voice["source"]
+        text, words, detected = local_whisper.transcribe(
+            source, model, language,
+            on_status=lambda step: _set_transcript(project_id, step=step),
+        )
+        project = _read(project_id)
+        project["transcript"] = {
+            "status": "done", "text": text, "words": words, "language": detected,
+            "model": model, "error": "", "step": "Готово", "finished": _now(),
+        }
+        _write_srt(project)
+        _write(project)
+    except Exception as exc:
+        _set_transcript(project_id, status="error", error=str(exc), step="")
+    finally:
+        with _lock:
+            _transcribing.discard(project_id)
+
+
+@router.post("/{project_id}/transcribe")
+def start_transcription(project_id: str, model: str = "small", language: str = ""):
+    project = _read(project_id)
+    if not project.get("voice"):
+        raise UserError("Сначала добавьте озвучку.")
+    if model not in local_whisper.MODELS:
+        model = "small"
+    with _lock:
+        if project_id in _transcribing:
+            raise UserError("Эта озвучка уже расшифровывается.")
+        if project_id in _rendering:
+            raise UserError("Сначала дождитесь окончания сборки видео.")
+        _transcribing.add(project_id)
+    project["transcript"] = {"status": "running", "text": "", "words": [], "language": language,
+                             "model": model, "error": "", "step": "Запускаю локальный Whisper…", "started": _now()}
+    _write(project)
+    threading.Thread(target=_transcribe_worker, args=(project_id, model, language), daemon=True,
+                     name=f"local-whisper-{project_id}").start()
+    return {"ok": True, "status": "running"}
+
+
+def _sync_cuts(project: dict) -> list[float]:
+    scenes = project.get("scenes", [])
+    words = project.get("transcript", {}).get("words", [])
+    total = float((project.get("voice") or {}).get("duration") or (words[-1][2] if words else 0))
+    if not scenes or not words or total <= 0:
+        raise UserError("Для синхронизации нужны сцены и готовая расшифровка Whisper.")
+    current = [max(float(s.get("duration") or 0), .1) for s in scenes]
+    current_total = sum(current) or len(scenes)
+    targets, acc = [], 0.0
+    for duration in current[:-1]:
+        acc += duration
+        targets.append(acc / current_total * total)
+    boundaries = []
+    for i, word in enumerate(words[:-1]):
+        end, next_start = float(word[2]), float(words[i + 1][1])
+        text = str(word[0])
+        if next_start - end >= .22 or re.search(r"[.!?…]\W*$", text):
+            boundaries.append((end + next_start) / 2)
+    cuts, last = [0.0], 0.0
+    for target in targets:
+        available = [x for x in boundaries if x >= last + .25 and x <= total - .25]
+        cut = min(available, key=lambda x: abs(x - target)) if available else target
+        if abs(cut - target) > 3.0:
+            cut = target
+        cut = min(max(cut, last + .25), total - .25)
+        cuts.append(cut)
+        last = cut
+    cuts.append(total)
+    return cuts
+
+
+@router.post("/{project_id}/sync-scenes")
+def sync_scenes(project_id: str):
+    project = _read(project_id)
+    cuts = _sync_cuts(project)
+    for scene, start, end in zip(project["scenes"], cuts, cuts[1:]):
+        scene["duration"] = round(end - start, 3)
+    project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
+    return _public(_write(project))
 
 
 def _set_render(project_id: str, **changes):
@@ -333,9 +467,12 @@ def _image_filter(scene: dict, width: int, height: int, fps: int, frames: int) -
 
 
 def _video_filter(scene: dict, width: int, height: int, fps: int) -> str:
-    vf = f"{_fit_filter(width, height, scene.get('fit', 'cover'))},fps={fps}"
+    duration = float(scene["duration"])
+    source_window = max(float(scene.get("trim_end") or duration) - float(scene.get("trim_start") or 0), .1)
+    # If the voice needs this scene for longer than the source clip, hold the last frame.
+    vf = (f"trim=duration={source_window:.3f},setpts=PTS-STARTPTS,{_fit_filter(width, height, scene.get('fit', 'cover'))},"
+          f"fps={fps},tpad=stop_mode=clone:stop_duration={duration:.3f}")
     if scene.get("transition") == "fade":
-        duration = float(scene["duration"])
         vf += f",fade=t=in:st=0:d=0.35,fade=t=out:st={max(duration - .35, 0):.3f}:d=0.35"
     return vf + ",setsar=1,format=yuv420p"
 
@@ -384,6 +521,26 @@ def _mix(project_dir: Path, project: dict, video: Path, out: Path, total: float)
                "-t", f"{total:.3f}", "-movflags", "+faststart", out], "Звук локального монтажа")
 
 
+def _burn_subtitles(project: dict, video: Path, out: Path, width: int, height: int):
+    cues = _transcript_cues(project)
+    if not cues:
+        shutil.copy2(video, out)
+        return
+    render_dir = _project_dir(project["id"]) / "render"
+    srt, ass = render_dir / "subtitles.srt", render_dir / "subtitles.ass"
+    captions.write_srt(cues, srt)
+    fonts, family = captions.font()
+    vertical = height > width
+    pos = project.get("subtitles_position", "mid_low")
+    margin = int(height * captions.POS_SHARE[vertical].get(pos, captions.POS_SHARE[vertical]["mid_low"]))
+    captions.write_ass(cues, ass, width, height, vertical, family, margin_v=margin)
+    rel_fonts = str(Path(fonts).resolve()).replace("\\", "/").replace(":", "\\:")
+    media.run(["-i", video.resolve(), "-vf", f"subtitles=filename={ass.name}:fontsdir={rel_fonts}",
+               "-c:v", "libx264", "-preset", "veryfast", "-crf", 20, "-pix_fmt", "yuv420p",
+               "-c:a", "copy", "-movflags", "+faststart", out.resolve()],
+              "Субтитры локального монтажа", cwd=render_dir, exe=media.ffmpeg_with_subtitles())
+
+
 def _render_worker(project_id: str, quality: str):
     work = None
     try:
@@ -413,7 +570,13 @@ def _render_worker(project_id: str, quality: str):
         target = project_dir / "render" / f"{quality}.mp4"
         tmp = project_dir / "render" / f".{quality}.tmp.mp4"
         _mix(project_dir, project, joined, tmp, total)
-        tmp.replace(target)
+        if project.get("subtitles") and project.get("transcript", {}).get("words"):
+            burned = project_dir / "render" / f".{quality}.subtitled.tmp.mp4"
+            _burn_subtitles(project, tmp, burned, width, height)
+            burned.replace(target)
+            tmp.unlink(missing_ok=True)
+        else:
+            tmp.replace(target)
         _set_render(project_id, status="done", progress=1, quality=quality, error="", finished=_now())
     except Exception as exc:  # the error must be visible on the editor page, not lost in the background thread
         _set_render(project_id, status="error", error=str(exc), progress=0, quality=quality)
@@ -434,6 +597,8 @@ def start_render(project_id: str, quality: str = "preview"):
     with _lock:
         if project_id in _rendering:
             raise UserError("Этот проект уже собирается.")
+        if project_id in _transcribing:
+            raise UserError("Сначала дождитесь окончания расшифровки Whisper.")
         _rendering.add(project_id)
     _set_render(project_id, status="running", progress=0, quality=quality, error="", started=_now())
     threading.Thread(target=_render_worker, args=(project_id, quality), daemon=True, name=f"local-render-{project_id}").start()
