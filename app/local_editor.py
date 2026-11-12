@@ -21,7 +21,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from . import captions, graphics, local_whisper, media
+from . import captions, editing_styles, effects, graphics, local_whisper, media
 from .config import DATA_DIR
 from .net import UserError
 
@@ -85,7 +85,7 @@ def _public(project: dict) -> dict:
     pid = project["id"]
     for scene in out.get("scenes", []):
         scene["url"] = f"/api/local-editor/{pid}/media/{scene['source']}"
-    for kind in ("voice", "music"):
+    for kind in ("voice", "music", "ambience"):
         if out.get(kind):
             out[f"{kind}_url"] = f"/api/local-editor/{pid}/media/{out[kind]['source']}"
     render = out.setdefault("render", {})
@@ -106,6 +106,22 @@ def _default_project(project_id: str, title: str, format_: str) -> dict:
         "format": "short" if format_ == "short" else "long",
         "fps": 30,
         "music_volume": 0.12,
+        "ambience_volume": 0.06,
+        "auto_sfx": True,
+        "sfx_volume": 0.18,
+        "edit_style": "auto",
+        "edit_tempo": "balanced",
+        "effect_level": "normal",
+        "color_look": "auto",
+        "resolved_color_look": "natural",
+        "avoid_repeats": True,
+        "auto_duck": True,
+        "voice_cleanup": True,
+        "voice_tone": "auto",
+        "resolved_voice_tone": "natural",
+        "audio_master": True,
+        "plan_revision": 0,
+        "plan": {},
         "graphics_enabled": False,
         "graphics_auto": False,
         "subtitles": True,
@@ -116,6 +132,7 @@ def _default_project(project_id: str, title: str, format_: str) -> dict:
         "scenes_synced": False,
         "voice": None,
         "music": None,
+        "ambience": None,
         "scenes": [],
         "transcript": {"status": "idle", "text": "", "words": [], "language": "", "model": "small", "error": "", "step": ""},
         "render": {"status": "idle", "progress": 0, "quality": "", "error": ""},
@@ -177,6 +194,26 @@ def update_project(project_id: str, data: dict = Body(...)):
     project["format"] = "short" if data.get("format") == "short" else "long"
     project["fps"] = int(_number(data.get("fps", project.get("fps", 30)), 30, 24, 60))
     project["music_volume"] = _number(data.get("music_volume", project.get("music_volume", .12)), .12, 0, 1)
+    project["ambience_volume"] = _number(data.get("ambience_volume", project.get("ambience_volume", .06)), .06, 0, .5)
+    project["auto_sfx"] = bool(data.get("auto_sfx", project.get("auto_sfx", True)))
+    project["sfx_volume"] = _number(data.get("sfx_volume", project.get("sfx_volume", .18)), .18, 0, .8)
+    project["edit_style"] = data.get("edit_style") if data.get("edit_style") in editing_styles.STYLE_IDS | {"auto"} else "auto"
+    project["edit_tempo"] = data.get("edit_tempo") if data.get("edit_tempo") in editing_styles.TEMPOS else "balanced"
+    project["effect_level"] = data.get("effect_level") if data.get("effect_level") in editing_styles.EFFECT_LEVELS else "normal"
+    project["color_look"] = data.get("color_look") if data.get("color_look") in editing_styles.COLOR_LOOKS else "auto"
+    if project["color_look"] != "auto":
+        project["resolved_color_look"] = project["color_look"]
+    else:
+        project["resolved_color_look"] = data.get("resolved_color_look") if data.get("resolved_color_look") in editing_styles.COLOR_LOOKS - {"auto"} else project.get("resolved_color_look", "natural")
+    project["avoid_repeats"] = bool(data.get("avoid_repeats", project.get("avoid_repeats", True)))
+    project["auto_duck"] = bool(data.get("auto_duck", project.get("auto_duck", True)))
+    project["voice_cleanup"] = bool(data.get("voice_cleanup", project.get("voice_cleanup", True)))
+    project["voice_tone"] = data.get("voice_tone") if data.get("voice_tone") in editing_styles.VOICE_TONES else "auto"
+    if project["voice_tone"] != "auto":
+        project["resolved_voice_tone"] = project["voice_tone"]
+    else:
+        project["resolved_voice_tone"] = data.get("resolved_voice_tone") if data.get("resolved_voice_tone") in editing_styles.VOICE_TONES - {"auto"} else project.get("resolved_voice_tone", "natural")
+    project["audio_master"] = bool(data.get("audio_master", project.get("audio_master", True)))
     project["graphics_enabled"] = bool(data.get("graphics_enabled", project.get("graphics_enabled", False)))
     project["graphics_auto"] = bool(data.get("graphics_auto", project.get("graphics_auto", False)))
     project["subtitles"] = bool(data.get("subtitles", project.get("subtitles", True)))
@@ -193,8 +230,10 @@ def update_project(project_id: str, data: dict = Body(...)):
                 continue
             scene = deepcopy(old)
             scene["fit"] = sent.get("fit") if sent.get("fit") in ("cover", "contain") else "cover"
-            scene["motion"] = sent.get("motion") if sent.get("motion") in ("none", "zoom_in", "zoom_out", "pan_left", "pan_right") else "none"
-            scene["transition"] = sent.get("transition") if sent.get("transition") in ("cut", "fade") else "cut"
+            scene["motion"] = sent.get("motion") if sent.get("motion") in editing_styles.MOTIONS else "none"
+            scene["transition"] = sent.get("transition") if sent.get("transition") in editing_styles.TRANSITIONS else "cut"
+            scene["effect"] = sent.get("effect") if sent.get("effect") in effects.EFFECTS else str(old.get("effect") or "none")
+            scene["sfx"] = sent.get("sfx") if sent.get("sfx") in effects.SFX else str(old.get("sfx") or "none")
             raw_graphic = sent.get("graphic") if isinstance(sent.get("graphic"), dict) else {}
             graphic_type = str(raw_graphic.get("type") or "none")
             if graphic_type not in LOCAL_GRAPHICS:
@@ -239,7 +278,7 @@ def _upload_ext(name: str, kind: str) -> tuple[str, str]:
         if ext in VIDEO_EXT:
             return ext, "video"
         raise UserError("Для таймлайна подходят картинки JPG, PNG, WEBP и видео MP4, MOV, WEBM, MKV.")
-    if kind in ("voice", "music") and ext in AUDIO_EXT:
+    if kind in ("voice", "music", "ambience") and ext in AUDIO_EXT:
         return ext, "audio"
     raise UserError("Для озвучки и музыки подходят MP3, WAV, M4A, AAC, OGG, FLAC, OPUS или звук из видео.")
 
@@ -257,6 +296,31 @@ def _media_identity(name: str) -> tuple[str, str]:
     return core, number
 
 
+def _image_focus(path: Path) -> tuple[float, float]:
+    """Estimate a useful focal point from local detail, without a model or network call."""
+    try:
+        from PIL import Image, ImageFilter, ImageStat
+        with Image.open(path) as source:
+            image = source.convert("L")
+            image.thumbnail((320, 320))
+            if ImageStat.Stat(image).stddev[0] < 6:
+                return .5, .5
+            edges = image.filter(ImageFilter.FIND_EDGES)
+        cols, rows = 5, 5
+        cw, ch = max(edges.width // cols, 1), max(edges.height // rows, 1)
+        ranked = []
+        for row in range(rows):
+            for col in range(cols):
+                box = (col * cw, row * ch, min((col + 1) * cw, edges.width), min((row + 1) * ch, edges.height))
+                detail = ImageStat.Stat(edges.crop(box)).mean[0]
+                distance = ((col + .5) / cols - .5) ** 2 + ((row + .5) / rows - .5) ** 2
+                ranked.append((detail * (1 - min(distance, .35)), col, row))
+        _score, col, row = max(ranked)
+        return round(min(max((col + .5) / cols, .18), .82), 3), round(min(max((row + .5) / rows, .18), .82), 3)
+    except (OSError, ValueError, ImportError):
+        return .5, .5
+
+
 def _matching_scene(scenes: list[dict], name: str, kind: str) -> dict | None:
     candidates = [scene for scene in scenes if scene.get("kind") == kind]
     core, number = _media_identity(name)
@@ -268,12 +332,12 @@ def _matching_scene(scenes: list[dict], name: str, kind: str) -> dict | None:
 
 
 def _source_snapshot(scene: dict) -> dict:
-    return {key: scene.get(key) for key in ("source", "name", "kind", "source_duration", "trim_start", "trim_end")}
+    return {key: scene.get(key) for key in ("source", "name", "kind", "source_duration", "trim_start", "trim_end", "focus_x", "focus_y")}
 
 
 def _activate_source(scene: dict, source: dict):
     duration = float(scene.get("duration") or source.get("source_duration") or 5)
-    scene.update({key: source.get(key) for key in ("source", "name", "kind", "source_duration", "trim_start", "trim_end")})
+    scene.update({key: source.get(key) for key in ("source", "name", "kind", "source_duration", "trim_start", "trim_end", "focus_x", "focus_y")})
     scene["duration"] = duration
 
 
@@ -295,8 +359,10 @@ async def upload(project_id: str, request: Request, name: str, kind: str = "scen
             source = {
                 "source": filename, "name": Path(name).name, "kind": media_kind,
                 "source_duration": round(source_duration, 3), "trim_start": 0,
-                "trim_end": round(source_duration, 3),
+                "trim_end": round(source_duration, 3), "focus_x": .5, "focus_y": .5,
             }
+            if media_kind == "image":
+                source["focus_x"], source["focus_y"] = _image_focus(path)
             opposite = "image" if media_kind == "video" else "video"
             matched = _matching_scene(project.get("scenes", []), Path(name).name, opposite)
             replaced = False
@@ -312,7 +378,9 @@ async def upload(project_id: str, request: Request, name: str, kind: str = "scen
                     "id": uuid.uuid4().hex[:12], "source": filename, "name": Path(name).name,
                     "kind": media_kind, "source_duration": round(source_duration, 3),
                     "trim_start": 0, "trim_end": round(source_duration, 3),
+                    "focus_x": source["focus_x"], "focus_y": source["focus_y"],
                     "duration": round(source_duration, 3), "fit": "cover", "motion": "none", "transition": "cut",
+                    "effect": "none", "sfx": "none",
                     "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2,
                                 "style": "classic", "animation": "pop", "auto": False},
                 }
@@ -376,7 +444,7 @@ def swap_scene_source(project_id: str, scene_id: str):
 
 @router.delete("/{project_id}/audio/{kind}")
 def remove_audio(project_id: str, kind: str):
-    if kind not in ("voice", "music"):
+    if kind not in ("voice", "music", "ambience"):
         raise HTTPException(404)
     project = _read(project_id)
     project[kind] = None
@@ -718,6 +786,54 @@ def suggest_graphics(project_id: str):
     return out
 
 
+def _editing_history() -> list[dict]:
+    path = ROOT / ".editing-history.json"
+    try:
+        value = json.loads(path.read_text("utf-8"))
+        return value if isinstance(value, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _remember_editing_style(project: dict):
+    plan = project.get("plan") or {}
+    style = str(plan.get("style") or "")
+    if style not in editing_styles.STYLE_IDS:
+        return
+    history = [item for item in _editing_history() if item.get("project_id") != project.get("id")]
+    history.insert(0, {"project_id": project.get("id"), "style": style, "at": _now()})
+    ROOT.mkdir(parents=True, exist_ok=True)
+    (ROOT / ".editing-history.json").write_text(
+        json.dumps(history[:30], ensure_ascii=False, indent=2), "utf-8")
+
+
+@router.post("/{project_id}/director-plan")
+def create_director_plan(project_id: str):
+    project = _read(project_id)
+    recent = []
+    if project.get("avoid_repeats", True):
+        recent = [str(item.get("style") or "") for item in _editing_history()
+                  if item.get("project_id") != project_id]
+    plan = editing_styles.build_plan(project, recent)
+    graphics_added = 0
+    if project.get("graphics_auto") and project.get("transcript", {}).get("status") == "done" and project.get("scenes"):
+        try:
+            graphics_added = _apply_graphic_suggestions(project)
+        except UserError:
+            pass
+    project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
+    out = _public(_write(project))
+    out["director_plan"] = plan
+    out["quality_report"] = editing_styles.quality_report(project)
+    out["graphics_added"] = graphics_added
+    return out
+
+
+@router.get("/{project_id}/quality-report")
+def quality_report(project_id: str):
+    return {"items": editing_styles.quality_report(_read(project_id))}
+
+
 def _set_render(project_id: str, **changes):
     with _lock:
         try:
@@ -735,7 +851,27 @@ def _fit_filter(width: int, height: int, fit: str) -> str:
     return f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
 
 
-def _image_filter(scene: dict, width: int, height: int, fps: int, frames: int) -> str:
+def _look_filter(look: str) -> str:
+    return editing_styles.COLOR_FILTERS.get(look, editing_styles.COLOR_FILTERS["natural"])
+
+
+def _transition_filter(kind: str, duration: float) -> str:
+    """Transitions stay intentionally short; the ordinary cut remains the default."""
+    out_at = max(duration - .3, 0)
+    if kind == "fade":
+        return f",fade=t=in:st=0:d=0.32,fade=t=out:st={out_at:.3f}:d=0.30"
+    if kind == "dissolve":
+        return f",fade=t=in:st=0:d=0.18,fade=t=out:st={max(duration - .18, 0):.3f}:d=0.18"
+    if kind == "flash":
+        return f",fade=t=in:st=0:d=0.14:color=white,fade=t=out:st={max(duration - .14, 0):.3f}:d=0.14:color=white"
+    if kind == "light_leak":
+        return f",fade=t=in:st=0:d=0.22:color=0xffd08a,fade=t=out:st={max(duration - .22, 0):.3f}:d=0.22:color=0xffd08a"
+    if kind == "film":
+        return f",noise=alls=5:allf=t+u,fade=t=in:st=0:d=0.10,fade=t=out:st={max(duration - .10, 0):.3f}:d=0.10"
+    return ""
+
+
+def _image_filter(scene: dict, width: int, height: int, fps: int, frames: int, look: str) -> str:
     fit = scene.get("fit", "cover")
     motion = scene.get("motion", "none")
     if motion == "none" or fit == "contain":
@@ -743,35 +879,48 @@ def _image_filter(scene: dict, width: int, height: int, fps: int, frames: int) -
     else:
         big_w, big_h = width * 2, height * 2
         p = f"on/{max(frames, 1)}"
+        focus_x = _number(scene.get("focus_x"), .5, .05, .95)
+        focus_y = _number(scene.get("focus_y"), .5, .05, .95)
+        focus_x_expr = f"max(min(iw*{focus_x:.3f}-iw/zoom/2,iw-iw/zoom),0)"
+        focus_y_expr = f"max(min(ih*{focus_y:.3f}-ih/zoom/2,ih-ih/zoom),0)"
+        y = focus_y_expr
         if motion == "zoom_out":
-            z, x = f"1.16-0.16*{p}", "(iw-iw/zoom)/2"
+            z, x = f"1.16-0.16*{p}", focus_x_expr
         elif motion == "pan_left":
             z, x = "1.16", f"(iw-iw/zoom)*(1-{p})"
         elif motion == "pan_right":
             z, x = "1.16", f"(iw-iw/zoom)*{p}"
+        elif motion == "pan_up":
+            z, x, y = "1.16", "(iw-iw/zoom)/2", f"(ih-ih/zoom)*(1-{p})"
+        elif motion == "pan_down":
+            z, x, y = "1.16", "(iw-iw/zoom)/2", f"(ih-ih/zoom)*{p}"
+        elif motion == "diagonal_in":
+            z, x, y = f"1+0.18*{p}", f"(iw-iw/zoom)*{p}", f"(ih-ih/zoom)*(1-{p})"
+        elif motion == "punch_in":
+            z, x = f"min(1+0.32*on/{max(round(frames * .35), 1)},1.32)", focus_x_expr
         else:
-            z, x = f"1+0.16*{p}", "(iw-iw/zoom)/2"
+            z, x = f"1+0.16*{p}", focus_x_expr
         vf = (f"scale={big_w}:{big_h}:force_original_aspect_ratio=increase,crop={big_w}:{big_h},"
-              f"zoompan=z='{z}':x='{x}':y='(ih-ih/zoom)/2':d={frames}:s={width}x{height}:fps={fps}")
-    if scene.get("transition") == "fade":
-        duration = frames / fps
-        vf += f",fade=t=in:st=0:d=0.35,fade=t=out:st={max(duration - .35, 0):.3f}:d=0.35"
+              f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={width}x{height}:fps={fps}")
+    duration = frames / fps
+    vf += "," + _look_filter(look)
+    vf += _transition_filter(str(scene.get("transition") or "cut"), duration)
     return vf + ",setsar=1,format=yuv420p"
 
 
-def _video_filter(scene: dict, width: int, height: int, fps: int) -> str:
+def _video_filter(scene: dict, width: int, height: int, fps: int, look: str) -> str:
     duration = float(scene["duration"])
     source_window = max(float(scene.get("trim_end") or duration) - float(scene.get("trim_start") or 0), .1)
     # If the voice needs this scene for longer than the source clip, hold the last frame.
     vf = (f"trim=duration={source_window:.3f},setpts=PTS-STARTPTS,{_fit_filter(width, height, scene.get('fit', 'cover'))},"
           f"fps={fps},tpad=stop_mode=clone:stop_duration={duration:.3f}")
-    if scene.get("transition") == "fade":
-        vf += f",fade=t=in:st=0:d=0.35,fade=t=out:st={max(duration - .35, 0):.3f}:d=0.35"
+    vf += "," + _look_filter(look)
+    vf += _transition_filter(str(scene.get("transition") or "cut"), duration)
     return vf + ",setsar=1,format=yuv420p"
 
 
 def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: int, fps: int,
-                 graphics_enabled: bool = False):
+                 graphics_enabled: bool = False, color_look: str = "natural"):
     source = project_dir / "media" / scene["source"]
     duration = float(scene["duration"])
     frames = max(round(duration * fps), 1)
@@ -779,11 +928,11 @@ def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: 
     active_graphic = graphics_enabled and graphic.get("type") in LOCAL_GRAPHICS - {"none"}
     base = out.with_name(f".{out.stem}.base.mp4") if active_graphic else out
     if scene["kind"] == "image":
-        args = ["-loop", "1", "-framerate", fps, "-i", source, "-vf", _image_filter(scene, width, height, fps, frames),
+        args = ["-loop", "1", "-framerate", fps, "-i", source, "-vf", _image_filter(scene, width, height, fps, frames, color_look),
                 "-frames:v", frames]
     else:
         args = ["-ss", f"{float(scene.get('trim_start') or 0):.3f}", "-i", source, "-t", f"{duration:.3f}",
-                "-vf", _video_filter(scene, width, height, fps)]
+                "-vf", _video_filter(scene, width, height, fps, color_look)]
     media.run([*args, "-an", "-r", fps, "-c:v", "libx264", "-preset", "veryfast", "-crf", 22,
                "-pix_fmt", "yuv420p", base], "Фрагмент локального монтажа")
     if active_graphic:
@@ -800,23 +949,48 @@ def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: 
             shutil.rmtree(work, ignore_errors=True)
 
 
-def _mix(project_dir: Path, project: dict, video: Path, out: Path, total: float):
+def _mix(project_dir: Path, project: dict, video: Path, out: Path, total: float, sfx_path: Path | None = None):
     args: list = ["-i", video]
     filters = []
     audio_labels = []
     idx = 1
     voice = project.get("voice")
     music = project.get("music")
+    ambience = project.get("ambience")
     if voice:
         args += ["-i", project_dir / "media" / voice["source"]]
-        filters.append(f"[{idx}:a]aformat=sample_rates=44100:channel_layouts=stereo,apad,atrim=0:{total:.3f}[voice]")
+        cleanup = ",highpass=f=75,lowpass=f=15500,acompressor=threshold=0.10:ratio=3:attack=8:release=160:makeup=1.6" if project.get("voice_cleanup", True) else ""
+        tone = {
+            "warm": ",equalizer=f=180:width_type=o:width=1.4:g=2",
+            "deep": ",equalizer=f=120:width_type=o:width=1.2:g=3,equalizer=f=2800:width_type=o:width=1.4:g=-1",
+            "bright": ",equalizer=f=3600:width_type=o:width=1.3:g=2",
+            "radio": ",highpass=f=180,lowpass=f=6500,equalizer=f=1800:width_type=o:width=1.5:g=2",
+        }.get(str(project.get("resolved_voice_tone") or project.get("voice_tone") or "natural"), "")
+        split = ",asplit=2[voice][voice_side]" if music and project.get("auto_duck", True) else "[voice]"
+        filters.append(f"[{idx}:a]aformat=sample_rates=44100:channel_layouts=stereo{cleanup}{tone},apad,atrim=0:{total:.3f}{split}")
         audio_labels.append("[voice]")
         idx += 1
     if music:
         args += ["-stream_loop", "-1", "-i", project_dir / "media" / music["source"]]
         volume = float(project.get("music_volume", .12))
-        filters.append(f"[{idx}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={volume:.3f},atrim=0:{total:.3f}[music]")
+        filters.append(f"[{idx}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={volume:.3f},atrim=0:{total:.3f}[music_base]")
+        if voice and project.get("auto_duck", True):
+            filters.append("[music_base][voice_side]sidechaincompress=threshold=0.025:ratio=10:attack=20:release=350[music]")
+        else:
+            filters.append("[music_base]anull[music]")
         audio_labels.append("[music]")
+        idx += 1
+    if ambience:
+        args += ["-stream_loop", "-1", "-i", project_dir / "media" / ambience["source"]]
+        volume = float(project.get("ambience_volume", .06))
+        filters.append(f"[{idx}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={volume:.3f},atrim=0:{total:.3f}[ambience]")
+        audio_labels.append("[ambience]")
+        idx += 1
+    if sfx_path and sfx_path.is_file():
+        args += ["-i", sfx_path]
+        filters.append(f"[{idx}:a]aformat=sample_rates=44100:channel_layouts=stereo,apad,atrim=0:{total:.3f}[sfx]")
+        audio_labels.append("[sfx]")
+        idx += 1
     if not audio_labels:
         args += ["-f", "lavfi", "-t", f"{total:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
         audio_map = f"{idx}:a"
@@ -825,6 +999,9 @@ def _mix(project_dir: Path, project: dict, video: Path, out: Path, total: float)
     else:
         filters.append("".join(audio_labels) + f"amix=inputs={len(audio_labels)}:duration=longest:normalize=0[a]")
         audio_map = "[a]"
+    if audio_labels and project.get("audio_master", True):
+        filters.append(f"{audio_map}loudnorm=I=-14:LRA=11:TP=-1.5,alimiter=limit=0.95[master]")
+        audio_map = "[master]"
     filter_args = ["-filter_complex", ";".join(filters)] if filters else []
     media.run([*args, *filter_args, "-map", "0:v", "-map", audio_map, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
                "-t", f"{total:.3f}", "-movflags", "+faststart", out], "Звук локального монтажа")
@@ -872,9 +1049,13 @@ def _render_worker(project_id: str, quality: str):
             shutil.rmtree(work)
         work.mkdir(parents=True)
         clips = []
+        color_look = str(project.get("resolved_color_look") or project.get("color_look") or "natural")
+        if color_look == "auto" or color_look not in editing_styles.COLOR_LOOKS:
+            color_look = "natural"
         for i, scene in enumerate(scenes):
             clip = work / f"{i:04d}.mp4"
-            _render_clip(project_dir, scene, clip, width, height, fps, bool(project.get("graphics_enabled")))
+            _render_clip(project_dir, scene, clip, width, height, fps,
+                         bool(project.get("graphics_enabled")), color_look)
             clips.append(clip)
             _set_render(project_id, progress=round((i + 1) / (len(scenes) + 1) * .9, 3))
         joined = work / "joined.mp4"
@@ -882,7 +1063,13 @@ def _render_worker(project_id: str, quality: str):
         total = sum(float(s["duration"]) for s in scenes)
         target = project_dir / "render" / f"{quality}.mp4"
         tmp = project_dir / "render" / f".{quality}.tmp.mp4"
-        _mix(project_dir, project, joined, tmp, total)
+        sfx_path = work / "automatic-sfx.wav"
+        has_sfx = False
+        if project.get("auto_sfx", True):
+            fx_plan = effects.plan(scenes, "light", project.get("format") == "short")
+            has_sfx = effects.build_track(fx_plan, [float(s["duration"]) for s in scenes],
+                                          sfx_path, float(project.get("sfx_volume", .18)))
+        _mix(project_dir, project, joined, tmp, total, sfx_path if has_sfx else None)
         if project.get("subtitles") and project.get("transcript", {}).get("words"):
             burned = project_dir / "render" / f".{quality}.subtitled.tmp.mp4"
             _burn_subtitles(project, tmp, burned, width, height)
@@ -891,6 +1078,8 @@ def _render_worker(project_id: str, quality: str):
         else:
             tmp.replace(target)
         _set_render(project_id, status="done", progress=1, quality=quality, error="", finished=_now())
+        if quality == "final":
+            _remember_editing_style(_read(project_id))
     except Exception as exc:  # the error must be visible on the editor page, not lost in the background thread
         _set_render(project_id, status="error", error=str(exc), progress=0, quality=quality)
     finally:
