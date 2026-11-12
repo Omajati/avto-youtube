@@ -42,6 +42,13 @@ TEMPLATES = {
     "location": ("Место", "label: the place or country"),
     "idea": ("Идея / открытие", "label: the idea or discovery"),
     "trophy": ("Достижение", "label: the achievement or record"),
+    "name": ("Имя / персона", "label: the name; unit: role or description"),
+    "quote": ("Цитата", "label: a short quote; unit: author"),
+    "chapter": ("Глава / раздел", "label: the chapter title; unit: optional number"),
+    "document": ("Архивный документ", "label: document title; unit: source or date"),
+    "secret": ("Печать «Секретно»", "label: what was classified"),
+    "news": ("Новостная плашка", "label: headline; unit: source"),
+    "timeline": ("Временная линия", "label: event; value: year or date"),
 }
 
 MATERIAL_FONT = Path(__file__).resolve().parent / "assets" / "material-symbols" / "MaterialSymbolsRounded.ttf"
@@ -122,8 +129,10 @@ def _panel(w: float = 820, h: float = 400, style: str = "classic"):
     im = Image.new("RGBA", (W * SS, H * SS), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     x0, y0 = (W - w) / 2 * SS, (H - h) / 2 * SS
-    fills = {"glass": (22, 32, 52, 150), "neon": (5, 8, 18, 225), "minimal": (8, 10, 16, 105)}
-    outlines = {"glass": (125, 190, 255, 115), "neon": (51, 230, 255, 230), "minimal": (255, 255, 255, 30)}
+    fills = {"glass": (22, 32, 52, 150), "neon": (5, 8, 18, 225), "minimal": (8, 10, 16, 105),
+             "cinematic": (8, 8, 10, 215), "broadcast": (16, 32, 62, 225)}
+    outlines = {"glass": (125, 190, 255, 115), "neon": (51, 230, 255, 230), "minimal": (255, 255, 255, 30),
+                "cinematic": (250, 204, 21, 120), "broadcast": (59, 130, 246, 180)}
     d.rounded_rectangle([x0, y0, x0 + w * SS, y0 + h * SS], radius=36 * SS,
                         fill=fills.get(style, CARD), outline=outlines.get(style), width=(3 if style == "neon" else 2) * SS)
     if style == "neon":
@@ -147,7 +156,8 @@ def _counting(t: float, start: float = 0.15, length: float = 1.4) -> float:
 def frame(g: dict, t: float) -> Image.Image:
     kind = g.get("type")
     label = (g.get("label") or "").strip()[:40]
-    im, d, box = _panel(style=str(g.get("style") or "classic"))
+    compact = kind in ("name", "location", "chapter", "document", "news", "timeline")
+    im, d, box = _panel(h=280 if compact else 400, style=str(g.get("style") or "classic"))
     x0, y0, x1, y1 = box
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     if kind in ("counter", "money", "rank"):
@@ -296,6 +306,73 @@ def frame(g: dict, t: float) -> Image.Image:
         sub = (g.get("unit") or "").strip()[:30]
         if sub:
             _label(d, box, sub, 0.88, 40)
+    elif kind == "name":
+        sub = (g.get("unit") or "").strip()[:38]
+        ix = x0 + 115 * SS
+        d.ellipse([ix - 66 * SS, cy - 66 * SS, ix + 66 * SS, cy + 66 * SS], fill=(59, 130, 246, 210))
+        d.text((ix, cy), chr(0xF0D3), font=_material_font(92), fill=WHITE, anchor="mm")
+        tx = x0 + 220 * SS
+        d.text((tx, cy - 24 * SS), label.upper(), font=_fit(d, label.upper(), 62, x1 - tx - 45 * SS), fill=WHITE, anchor="lm")
+        d.rectangle([tx, cy + 24 * SS, min(tx + 250 * SS, x1 - 40 * SS), cy + 31 * SS], fill=GOLD)
+        if sub:
+            d.text((tx, cy + 62 * SS), sub, font=_fit(d, sub, 32, x1 - tx - 45 * SS), fill=(190, 198, 210, 255), anchor="lm")
+    elif kind == "location":
+        sub = (g.get("unit") or "ЛОКАЦИЯ").strip()[:24].upper()
+        d.text((x0 + 115 * SS, cy), chr(0xF1DB), font=_material_font(120), fill=RED, anchor="mm")
+        tx = x0 + 215 * SS
+        d.text((tx, cy - 38 * SS), sub, font=_font(24), fill=GOLD, anchor="lm")
+        d.text((tx, cy + 26 * SS), label.upper(), font=_fit(d, label.upper(), 68, x1 - tx - 45 * SS), fill=WHITE, anchor="lm")
+        d.rectangle([tx, cy + 76 * SS, x1 - 45 * SS, cy + 82 * SS], fill=(255, 255, 255, 55))
+    elif kind == "quote":
+        author = (g.get("unit") or "").strip()[:32]
+        d.text((x0 + 82 * SS, y0 + 72 * SS), chr(0xE244), font=_material_font(72), fill=GOLD, anchor="mm")
+        lines, f = _wrap(d, label, (x1 - x0) - 150 * SS, 60)
+        step = f.size * 1.08
+        yy = cy - step * (len(lines) - 1) / 2
+        for line in lines:
+            d.text((cx, yy), line, font=f, fill=WHITE, anchor="mm"); yy += step
+        if author:
+            d.text((x1 - 55 * SS, y1 - 42 * SS), f"— {author}", font=_font(28), fill=(190, 198, 210, 255), anchor="rm")
+    elif kind == "chapter":
+        number = (g.get("unit") or "НОВЫЙ РАЗДЕЛ").strip()[:24].upper()
+        d.text((cx, cy - 58 * SS), number, font=_font(26), fill=GOLD, anchor="mm")
+        d.text((cx, cy + 12 * SS), label.upper(), font=_fit(d, label.upper(), 72, (x1 - x0) - 90 * SS), fill=WHITE, anchor="mm")
+        d.rectangle([cx - 130 * SS, cy + 76 * SS, cx + 130 * SS, cy + 84 * SS], fill=GOLD)
+    elif kind == "document":
+        source = (g.get("unit") or "АРХИВНЫЙ ДОКУМЕНТ").strip()[:28]
+        d.rounded_rectangle([x0 + 48 * SS, cy - 90 * SS, x0 + 190 * SS, cy + 90 * SS], radius=10 * SS, fill=(235, 229, 210, 255))
+        d.text((x0 + 119 * SS, cy - 8 * SS), chr(0xE873), font=_material_font(78), fill=(50, 48, 42, 255), anchor="mm")
+        tx = x0 + 235 * SS
+        d.text((tx, cy - 56 * SS), source.upper(), font=_font(24), fill=GOLD, anchor="lm")
+        lines, f = _wrap(d, label.upper(), x1 - tx - 38 * SS, 54)
+        yy = cy - 5 * SS
+        for line in lines[:2]:
+            d.text((tx, yy), line, font=f, fill=WHITE, anchor="lm"); yy += f.size * 1.05
+    elif kind == "secret":
+        stamp = Image.new("RGBA", im.size, (0, 0, 0, 0)); sd = ImageDraw.Draw(stamp)
+        sw, sh = 520 * SS, 145 * SS
+        sx0, sy0 = cx - sw / 2, cy - sh / 2
+        sd.rounded_rectangle([sx0, sy0, sx0 + sw, sy0 + sh], radius=18 * SS, outline=RED, width=10 * SS)
+        sd.text((cx, cy), "СЕКРЕТНО", font=_font(76), fill=RED, anchor="mm")
+        stamp = stamp.rotate(7, resample=Image.BICUBIC, center=(cx, cy))
+        im.alpha_composite(stamp)
+        if label:
+            d.text((cx, y1 - 42 * SS), label.upper(), font=_fit(d, label.upper(), 34, (x1 - x0) - 80 * SS), fill=WHITE, anchor="mm")
+    elif kind == "news":
+        source = (g.get("unit") or "СРОЧНО").strip()[:20].upper()
+        d.rounded_rectangle([x0 + 38 * SS, y0 + 30 * SS, x0 + 205 * SS, y1 - 30 * SS], radius=18 * SS, fill=RED)
+        d.text((x0 + 121 * SS, cy), source, font=_fit(d, source, 34, 140 * SS), fill=WHITE, anchor="mm")
+        tx = x0 + 245 * SS
+        d.text((tx, cy), label.upper(), font=_fit(d, label.upper(), 58, x1 - tx - 35 * SS), fill=WHITE, anchor="lm")
+    elif kind == "timeline":
+        value = (g.get("value") or g.get("unit") or "").strip()[:18]
+        ly = cy + 55 * SS
+        d.line([x0 + 65 * SS, ly, x1 - 65 * SS, ly], fill=(255, 255, 255, 75), width=6 * SS)
+        for frac in (.12, .5, .88):
+            px = x0 + (x1 - x0) * frac
+            d.ellipse([px - 13 * SS, ly - 13 * SS, px + 13 * SS, ly + 13 * SS], fill=GOLD if frac == .5 else GREY)
+        d.text((cx, cy - 62 * SS), value, font=_font(40), fill=GOLD, anchor="mm")
+        d.text((cx, cy - 3 * SS), label.upper(), font=_fit(d, label.upper(), 52, (x1 - x0) - 110 * SS), fill=WHITE, anchor="mm")
     elif kind in MATERIAL:
         codepoint, color = MATERIAL[kind]
         k = _counting(t, .08, .65)
@@ -362,7 +439,8 @@ def overlay(video: Path, out: Path, items: list, width: int, height: int, work: 
             # Frames already drawn (an animation that spans two scene clips) are reused.
             args += ["-framerate", FPS, "-i", g.get("_frames") or _frames(g, work / f"gfx_{i:02d}")]
             fc.append(f"[{i + 1}:v]scale={ow}:{oh},format=rgba,setpts=PTS-STARTPTS+{g['start']:.3f}/TB[g{i}]")
-            fc.append(f"[{last}][g{i}]overlay={x}:{y}:eof_action=pass:format=auto[v{i}]")
+            item_y = height - oh - int(height * .08) if g.get("type") == "name" else y
+            fc.append(f"[{last}][g{i}]overlay={x}:{item_y}:eof_action=pass:format=auto[v{i}]")
             last = f"v{i}"
         rate = ["-r", fps] if fps else []  # a scene clip keeps its frame rate, so it joins with the others
         media.run([*args, "-filter_complex", ";".join(fc), "-map", f"[{last}]", *rate, "-c:v", "libx264",

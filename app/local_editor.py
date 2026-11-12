@@ -36,8 +36,8 @@ FILE_ID = re.compile(r"[0-9a-f]{12}\.[a-z0-9]{2,6}")
 _lock = threading.RLock()
 _rendering: set[str] = set()
 _transcribing: set[str] = set()
-LOCAL_GRAPHICS = {"none", "counter", "money", "percent", "bar", "timer", "stopwatch", "up", "down", "date", "rank", "keyword", "warning", "people", "location", "idea", "trophy"}
-GRAPHIC_STYLES = {"classic", "glass", "neon", "minimal"}
+LOCAL_GRAPHICS = {"none", "counter", "money", "percent", "bar", "timer", "stopwatch", "up", "down", "date", "rank", "keyword", "warning", "people", "location", "idea", "trophy", "name", "quote", "chapter", "document", "secret", "news", "timeline"}
+GRAPHIC_STYLES = {"classic", "glass", "neon", "minimal", "cinematic", "broadcast"}
 GRAPHIC_ANIMATIONS = {"pop", "slide", "pulse", "fade"}
 
 
@@ -558,7 +558,7 @@ def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
         total += float(scene.get("duration") or 0)
         ends.append(total)
     suggestions, used_scenes, last_time = [], set(), -99.0
-    limit = 3 if project.get("format") == "short" else min(10, max(3, len(scenes) // 3))
+    limit = 4 if project.get("format") == "short" else min(16, max(5, len(scenes) // 2))
     for wi, raw in enumerate(words):
         token = str(raw[0]).strip()
         match = re.search(r"(?<!\w)([+−-]?[€$₽]?\d+(?:[.,]\d+)?[%€$₽]?)(?!\w)", token)
@@ -616,31 +616,46 @@ def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
         (r"город|страна|остров|место|регион|континент", "location"),
         (r"иде|открыт|изобрел|придум", "idea"),
         (r"побед|достижен|чемпион|награ", "trophy"),
-        (r"главн|важн|впервые|никогда|секрет", "keyword"),
+        (r"архив|документ|доклад|письмо|записк", "document"),
+        (r"секрет|засекреч|тайн", "secret"),
+        (r"новост|сообщил|данным", "news"),
+        (r"спустя|позже|затем", "timeline"),
+        (r"главн|важн|впервые|никогда", "keyword"),
     ]
     for wi, raw in enumerate(words):
         at = float(raw[1])
         if at - semantic_last < (5 if project.get("format") == "short" else 9):
             continue
         token = re.sub(r"^[\W_]+|[\W_]+$", "", str(raw[0])).lower().replace("ё", "е")
-        kind = next((kind for pattern, kind in rules if re.search(pattern, token)), "")
+        phrase_start, phrase_count, unit = wi, 3, ""
+        if token in ("звали", "имени", "называли") and wi + 1 < len(words):
+            kind, phrase_start, phrase_count, unit = "name", wi + 1, 2, "герой истории"
+        elif re.search(r"сказал|сказала|говорил|заявил|ответил", token) and wi + 1 < len(words):
+            kind, phrase_start, phrase_count = "quote", wi + 1, 5
+        elif re.search(r"глава|часть|далее|тем временем", token):
+            kind, phrase_start, phrase_count, unit = "chapter", wi + 1, 3, token
+        else:
+            kind = next((kind for pattern, kind in rules if re.search(pattern, token)), "")
         if not kind:
             continue
+        if kind == "location":
+            phrase_start, phrase_count, unit = wi + 1, 2, token
         scene_i = next((i for i, end in enumerate(ends) if at < end), len(scenes) - 1)
         if scene_i in used_scenes:
             continue
         phrase = []
-        for item in words[wi:wi + 3]:
+        for item in words[phrase_start:phrase_start + phrase_count]:
             cleaned = re.sub(r"^[\W_]+|[\W_]+$", "", str(item[0]))
             if cleaned:
                 phrase.append(cleaned)
             if re.search(r"[.!?…]", str(item[0])):
                 break
         start = sum(float(s.get("duration") or 0) for s in scenes[:scene_i])
-        graphic = {"type": kind, "value": "", "unit": "", "label": " ".join(phrase)[:40],
+        special = kind in ("name", "location", "quote", "chapter", "document", "secret", "news", "timeline")
+        graphic = {"type": kind, "value": "", "unit": unit, "label": " ".join(phrase)[:40],
                    "start": round(min(max(at - start - .1, 0), max(float(scenes[scene_i].get("duration") or 0) - .2, 0)), 2),
-                   "style": ("glass", "neon", "minimal", "classic")[scene_i % 4],
-                   "animation": ("pop", "slide", "pulse", "fade")[scene_i % 4], "auto": True}
+                   "style": ("cinematic", "broadcast")[scene_i % 2] if special else ("glass", "neon", "minimal", "classic")[scene_i % 4],
+                   "animation": {"name": "slide", "location": "fade", "quote": "fade", "chapter": "pop", "document": "slide", "secret": "pop", "news": "slide", "timeline": "fade"}.get(kind, ("pop", "slide", "pulse", "fade")[scene_i % 4]), "auto": True}
         suggestions.append((scene_i, graphic))
         used_scenes.add(scene_i)
         semantic_last = at
