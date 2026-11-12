@@ -21,8 +21,8 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from . import captions, editing_styles, effects, graphics, local_whisper, media
-from .config import DATA_DIR
+from . import captions, editing_styles, effects, graphics, local_whisper, media, tts
+from .config import DATA_DIR, load_settings
 from .net import UserError
 
 
@@ -122,6 +122,7 @@ def _default_project(project_id: str, title: str, format_: str) -> dict:
         "audio_master": True,
         "plan_revision": 0,
         "plan": {},
+        "transcription_provider": "local",
         "graphics_enabled": False,
         "graphics_auto": False,
         "subtitles": True,
@@ -214,6 +215,7 @@ def update_project(project_id: str, data: dict = Body(...)):
     else:
         project["resolved_voice_tone"] = data.get("resolved_voice_tone") if data.get("resolved_voice_tone") in editing_styles.VOICE_TONES - {"auto"} else project.get("resolved_voice_tone", "natural")
     project["audio_master"] = bool(data.get("audio_master", project.get("audio_master", True)))
+    project["transcription_provider"] = data.get("transcription_provider") if data.get("transcription_provider") in ("local", "elevenlabs", "auto") else project.get("transcription_provider", "local")
     project["graphics_enabled"] = bool(data.get("graphics_enabled", project.get("graphics_enabled", False)))
     project["graphics_auto"] = bool(data.get("graphics_auto", project.get("graphics_auto", False)))
     project["subtitles"] = bool(data.get("subtitles", project.get("subtitles", True)))
@@ -525,7 +527,9 @@ def waveform(project_id: str, kind: str, points: int = 700):
 
 @router.get("/whisper/info")
 def whisper_info():
-    return local_whisper.info()
+    out = local_whisper.info()
+    out["elevenlabs"] = bool(load_settings().get("elevenlabs_key"))
+    return out
 
 
 def _transcript_cues(project: dict) -> list:
@@ -549,21 +553,41 @@ def _set_transcript(project_id: str, **changes):
         _write(project)
 
 
-def _transcribe_worker(project_id: str, model: str, language: str):
+def _transcribe_worker(project_id: str, model: str, language: str, provider: str):
     try:
         project = _read(project_id)
         voice = project.get("voice")
         if not voice:
             raise UserError("Сначала добавьте озвучку.")
         source = _project_dir(project_id) / "media" / voice["source"]
-        text, words, detected = local_whisper.transcribe(
-            source, model, language,
-            on_status=lambda step: _set_transcript(project_id, step=step),
-        )
+        used_provider = provider
+        api_error = None
+        settings = load_settings()
+        if provider in ("elevenlabs", "auto") and settings.get("elevenlabs_key"):
+            try:
+                _set_transcript(project_id, step="ElevenLabs Scribe быстро расшифровывает дорожку…")
+                text, words, detected = tts.transcribe_detailed(settings, source, language)
+                used_provider = "elevenlabs"
+            except Exception as exc:
+                if provider == "elevenlabs":
+                    raise
+                api_error = exc
+                _set_transcript(project_id, step="ElevenLabs недоступен — продолжаю бесплатно на этом Mac…")
+        if provider == "local" or (provider == "auto" and (not settings.get("elevenlabs_key") or api_error)):
+            try:
+                text, words, detected = local_whisper.transcribe(
+                    source, model, language,
+                    on_status=lambda step: _set_transcript(project_id, step=step),
+                )
+                used_provider = "local"
+            except Exception as local_error:
+                if api_error:
+                    raise UserError(f"ElevenLabs не сработал ({api_error}); локальный Whisper тоже не завершился ({local_error}).") from local_error
+                raise
         project = _read(project_id)
         project["transcript"] = {
             "status": "done", "text": text, "words": words, "language": detected,
-            "model": model, "error": "", "step": "Готово", "finished": _now(),
+            "model": model, "provider": used_provider, "error": "", "step": "Готово", "finished": _now(),
         }
         if project.get("scenes"):
             cuts = _sync_cuts(project)
@@ -582,23 +606,32 @@ def _transcribe_worker(project_id: str, model: str, language: str):
 
 
 @router.post("/{project_id}/transcribe")
-def start_transcription(project_id: str, model: str = "small", language: str = ""):
+def start_transcription(project_id: str, model: str = "small", language: str = "", provider: str = "local"):
     project = _read(project_id)
     if not project.get("voice"):
         raise UserError("Сначала добавьте озвучку.")
     if model not in local_whisper.MODELS:
         model = "small"
+    if provider not in ("local", "elevenlabs", "auto"):
+        provider = "local"
+    if provider == "elevenlabs" and not load_settings().get("elevenlabs_key"):
+        raise UserError("Сначала добавьте ключ ElevenLabs в Настройках.")
+    if provider == "local" and not local_whisper.available():
+        raise UserError("Локальный Whisper не установлен. Выберите ElevenLabs или обновите библиотеки программы.")
     with _lock:
         if project_id in _transcribing:
             raise UserError("Эта озвучка уже расшифровывается.")
         if project_id in _rendering:
             raise UserError("Сначала дождитесь окончания сборки видео.")
         _transcribing.add(project_id)
+    project["transcription_provider"] = provider
+    first_step = "Отправляю дорожку в ElevenLabs Scribe…" if provider == "elevenlabs" else (
+        "Пробую быстро через ElevenLabs…" if provider == "auto" and load_settings().get("elevenlabs_key") else "Запускаю локальный Whisper…")
     project["transcript"] = {"status": "running", "text": "", "words": [], "language": language,
-                             "model": model, "error": "", "step": "Запускаю локальный Whisper…", "started": _now()}
+                             "model": model, "provider": provider, "error": "", "step": first_step, "started": _now()}
     _write(project)
-    threading.Thread(target=_transcribe_worker, args=(project_id, model, language), daemon=True,
-                     name=f"local-whisper-{project_id}").start()
+    threading.Thread(target=_transcribe_worker, args=(project_id, model, language, provider), daemon=True,
+                     name=f"speech-to-text-{project_id}").start()
     return {"ok": True, "status": "running"}
 
 

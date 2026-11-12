@@ -380,9 +380,9 @@ def align(settings, audio: Path, text: str) -> list:
     return words
 
 
-def transcribe(settings, audio: Path, language: str = "") -> tuple:
-    """The owner's own narration turned into text with the time of every word: (text, [(word, start, end)])."""
-    data = {"model_id": "scribe_v2", "timestamps_granularity": "word", "tag_audio_events": "false"}
+def transcribe_detailed(settings, audio: Path, language: str = "", model_id: str = "scribe_v3") -> tuple:
+    """Speech-to-text through ElevenLabs: text, word timestamps and detected language."""
+    data = {"model_id": model_id, "timestamps_granularity": "word", "tag_audio_events": "false"}
     if language:
         data["language_code"] = language
     r = net.request("ElevenLabs", "POST", f"{BASE}/speech-to-text", headers={"xi-api-key": _key(settings)},
@@ -393,4 +393,11 @@ def transcribe(settings, audio: Path, language: str = "") -> tuple:
     words = _words(d.get("words"))
     if not words:
         raise UserError("В вашей озвучке не нашлось речи. Проверьте файл.")
-    return (d.get("text") or " ".join(w[0] for w in words)).strip(), words
+    text = (d.get("text") or " ".join(w[0] for w in words)).strip()
+    return text, words, str(d.get("language_code") or language or "")
+
+
+def transcribe(settings, audio: Path, language: str = "") -> tuple:
+    """Backward-compatible text and word timestamps for the automatic pipeline."""
+    text, words, _language = transcribe_detailed(settings, audio, language, "scribe_v2")
+    return text, words

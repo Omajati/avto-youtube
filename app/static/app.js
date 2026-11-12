@@ -3498,7 +3498,7 @@ async function viewLocalEditor(id) {
   };
   const transcriptState = () => {
     const t = p.transcript || {};
-    if (t.status === "running") return `<div class="banner info le-transcribe-state"><b>Whisper работает локально…</b><div class="small" style="margin-top:5px">${esc(t.step || "Распознаю речь и таймкоды слов…")}</div></div>`;
+    if (t.status === "running") return `<div class="banner info le-transcribe-state"><b>Расшифровываю речь…</b><div class="small" style="margin-top:5px">${esc(t.step || "Распознаю речь и таймкоды слов…")}</div></div>`;
     if (t.status === "error") return `<div class="banner bad le-transcribe-state"><b>Расшифровка не завершилась.</b> ${esc(t.error || "Неизвестная ошибка")}</div>`;
     return `<div class="le-transcribe-state"></div>`;
   };
@@ -3530,7 +3530,7 @@ async function viewLocalEditor(id) {
   const draw = () => {
     const total = p.scenes.reduce((n, s) => n + Number(s.duration || 0), 0); p.duration = total;
     const imageCount = p.scenes.filter(s => s.kind === "image").length, videoCount = p.scenes.length - imageCount;
-    const tr = p.transcript || {}, modelOptions = Object.entries(whisper.models || {}).map(([k, v]) => `<option value="${k}" ${k === (tr.model || "small") ? "selected" : ""}>${esc(v.name)} · ${esc(v.size)}</option>`).join("");
+    const tr = p.transcript || {}, sttProvider = p.transcription_provider || "local", sttReady = sttProvider === "local" ? whisper.installed : sttProvider === "elevenlabs" ? whisper.elevenlabs : (whisper.installed || whisper.elevenlabs), modelOptions = Object.entries(whisper.models || {}).map(([k, v]) => `<option value="${k}" ${k === (tr.model || "small") ? "selected" : ""}>${esc(v.name)} · ${esc(v.size)}</option>`).join("");
     main.innerHTML = `<div class="row le-titlebar"><a class="btn sm" href="#/local-editor">← Все монтажи</a><input id="le-title" class="grow" type="text" value="${esc(p.title)}"><span id="le-saved" class="muted small">✓ Сохранено</span></div>
     <div class="le-toolbar card"><div class="row"><label>Формат <select id="le-format"><option value="long" ${p.format === "long" ? "selected" : ""}>YouTube 16:9</option><option value="short" ${p.format === "short" ? "selected" : ""}>Shorts / Reels 9:16</option></select></label>
       <label>Кадров/сек <select id="le-fps">${[24, 25, 30, 50, 60].map(x => `<option ${x === p.fps ? "selected" : ""}>${x}</option>`).join("")}</select></label>
@@ -3557,13 +3557,14 @@ async function viewLocalEditor(id) {
       <div class="row le-musicline">${p.music ? `<span class="grow small">♫ ${esc(p.music.name)} (${fmtTime(p.music.duration)}) · автоматически повторяется до конца ролика</span><label>Громкость музыки <input id="le-music-volume" type="range" min="0" max="1" step=".01" value="${p.music_volume}"><b id="le-music-value">${Math.round(p.music_volume * 100)}%</b></label><button class="sm danger" data-audio-remove="music">Убрать</button>` : `<span class="muted small">Музыка не добавлена · короткий трек будет автоматически зациклен</span>`}</div>
       ${p.ambience ? `<div class="row le-musicline"><span class="grow small">🌊 ${esc(p.ambience.name)} (${fmtTime(p.ambience.duration)}) · атмосфера повторяется до конца ролика</span><label>Громкость <input id="le-ambience-volume" type="range" min="0" max=".5" step=".01" value="${p.ambience_volume ?? .06}"><b id="le-ambience-value">${Math.round((p.ambience_volume ?? .06) * 100)}%</b></label><button class="sm danger" data-audio-remove="ambience">Убрать</button></div>` : ""}
       <div class="row le-audio-auto"><select id="le-voice-tone">${options(voiceTones, p.voice_tone || "auto")}</select><label class="check le-mastercheck"><input id="le-auto-duck" type="checkbox" ${p.auto_duck !== false ? "checked" : ""}> Приглушать музыку под голос</label><label class="check le-mastercheck"><input id="le-voice-cleanup" type="checkbox" ${p.voice_cleanup !== false ? "checked" : ""}> Улучшать разборчивость голоса</label><label class="check le-mastercheck"><input id="le-audio-master" type="checkbox" ${p.audio_master !== false ? "checked" : ""}> Выравнивать итоговую громкость</label><label class="check le-mastercheck"><input id="le-auto-sfx" type="checkbox" ${p.auto_sfx !== false ? "checked" : ""}> Смысловые вжухи и удары</label><label class="le-sfx-volume">Эффекты <input id="le-sfx-volume" type="range" min="0" max=".8" step=".01" value="${p.sfx_volume ?? .18}"><b id="le-sfx-value">${Math.round((p.sfx_volume ?? .18) * 100)}%</b></label></div>
-      ${p.voice ? `<div class="le-whisper"><h3>Локальный Whisper</h3><div class="row">
-        <select id="le-whisper-model" ${busy() ? "disabled" : ""}>${modelOptions || `<option value="small">Whisper Small</option>`}</select>
+      ${p.voice ? `<div class="le-whisper"><h3>Расшифровка речи</h3><div class="row">
+        <select id="le-stt-provider" ${busy() ? "disabled" : ""}>${options([["local", "Локальный Whisper — бесплатно"], ["elevenlabs", "ElevenLabs Scribe — быстро, ≈ $0,22/час"], ["auto", "Автоматически: ElevenLabs → локально"]], sttProvider)}</select>
+        <select id="le-whisper-model" ${busy() || sttProvider === "elevenlabs" ? "disabled" : ""}>${modelOptions || `<option value="small">Whisper Small</option>`}</select>
         <select id="le-whisper-lang" ${busy() ? "disabled" : ""}>${options([["", "Язык: определить автоматически"], ["ru", "Русский"], ["en", "Английский"], ["de", "Немецкий"], ["es", "Испанский"], ["fr", "Французский"]], tr.language || "")}</select>
-        <button id="le-transcribe" ${busy() || !whisper.installed ? "disabled" : ""}>${tr.status === "done" ? "Расшифровать заново" : "Расшифровать голос"}</button>
-        ${!whisper.installed ? `<span class="muted small">Библиотека Whisper ещё не установлена.</span>` : `<span class="muted small">Без API: звук не покидает Mac. Модель загружается один раз.</span>`}
+        <button id="le-transcribe" ${busy() || !sttReady ? "disabled" : ""}>${tr.status === "done" ? "Расшифровать заново" : "Расшифровать голос"}</button>
+        <span class="muted small">${sttProvider === "elevenlabs" ? (whisper.elevenlabs ? "Быстро через API: аудиофайл отправляется в ElevenLabs и оплачивается по длительности." : "Сначала добавьте ключ ElevenLabs в Настройках.") : sttProvider === "auto" ? "Сначала быстрый API; если он недоступен, программа продолжит локально." : (!whisper.installed ? "Библиотека Whisper ещё не установлена." : "Бесплатно: звук не покидает Mac. Модель загружается один раз.")}</span>
       </div>${transcriptState()}
-      ${tr.status === "done" ? `<div class="row le-transcript-tools"><b>${(tr.words || []).length} слов · язык ${esc(tr.language || "определён")}</b><span class="badge done">${p.scenes_synced ? "Сцены синхронизированы" : "Нужна синхронизация"}</span><button id="le-sync" ${!p.scenes.length ? "disabled" : ""}>Синхронизировать заново</button></div><textarea class="le-transcript" readonly>${esc(tr.text)}</textarea>` : ""}</div>` : ""}</div>
+      ${tr.status === "done" ? `<div class="row le-transcript-tools"><b>${(tr.words || []).length} слов · язык ${esc(tr.language || "определён")} · ${tr.provider === "elevenlabs" ? "ElevenLabs Scribe" : "локальный Whisper"}</b><span class="badge done">${p.scenes_synced ? "Сцены синхронизированы" : "Нужна синхронизация"}</span><button id="le-sync" ${!p.scenes.length ? "disabled" : ""}>Синхронизировать заново</button></div><textarea class="le-transcript" readonly>${esc(tr.text)}</textarea>` : ""}</div>` : ""}</div>
     <div class="card le-subtitles"><div class="row"><h2 class="grow">Субтитры</h2><label class="check le-subcheck"><input id="le-subs" type="checkbox" ${p.subtitles !== false ? "checked" : ""}> Показывать на видео</label>
       <select id="le-subs-preset">${options(subtitlePresets, p.subtitle_preset || "documentary")}</select>
       <select id="le-subs-font">${options(subtitleFonts, p.subtitle_font || "auto")}</select>
@@ -3613,13 +3614,13 @@ async function viewLocalEditor(id) {
     catch (e) { toast(e.message, true); draw(); }
   };
   const startTranscription = async () => {
-    const model = $("#le-whisper-model")?.value || "small", language = $("#le-whisper-lang")?.value || "";
-    try { await api(`/api/local-editor/${id}/transcribe?model=${encodeURIComponent(model)}&language=${encodeURIComponent(language)}`, { method: "POST" }); p = await api(`/api/local-editor/${id}`); draw(); poll(); }
+    const model = $("#le-whisper-model")?.value || "small", language = $("#le-whisper-lang")?.value || "", provider = $("#le-stt-provider")?.value || "local";
+    try { await api(`/api/local-editor/${id}/transcribe?model=${encodeURIComponent(model)}&language=${encodeURIComponent(language)}&provider=${encodeURIComponent(provider)}`, { method: "POST" }); p = await api(`/api/local-editor/${id}`); draw(); poll(); }
     catch (e) { toast(e.message, true); }
   };
   const poll = () => {
     clearInterval(timer); timer = setInterval(async () => {
-      try { const wasRender = p.render?.status === "running", wasWhisper = p.transcript?.status === "running"; p = await api(`/api/local-editor/${id}`); if (!busy()) { clearInterval(timer); timer = null; draw(); if (wasRender && p.render.status === "done") toast(p.render.quality === "final" ? "Готовый ролик собран" : "Предпросмотр готов"); if (wasWhisper && p.transcript.status === "done") toast(p.scenes_synced ? "Whisper готов, сцены автоматически подогнаны к речи" : "Whisper закончил расшифровку"); } else { const rb = $(".le-render .banner"); if (rb && p.render?.status === "running") rb.outerHTML = renderState(); const tb = $(".le-transcribe-state"); if (tb) tb.outerHTML = transcriptState(); } }
+      try { const wasRender = p.render?.status === "running", wasWhisper = p.transcript?.status === "running"; p = await api(`/api/local-editor/${id}`); if (!busy()) { clearInterval(timer); timer = null; draw(); if (wasRender && p.render.status === "done") toast(p.render.quality === "final" ? "Готовый ролик собран" : "Предпросмотр готов"); if (wasWhisper && p.transcript.status === "done") toast(p.scenes_synced ? "Расшифровка готова, сцены автоматически подогнаны к речи" : "Расшифровка готова"); } else { const rb = $(".le-render .banner"); if (rb && p.render?.status === "running") rb.outerHTML = renderState(); const tb = $(".le-transcribe-state"); if (tb) tb.outerHTML = transcriptState(); } }
       catch (e) { clearInterval(timer); timer = null; toast(e.message, true); }
     }, 1200);
   };
@@ -3647,6 +3648,7 @@ async function viewLocalEditor(id) {
     $("#le-voice-tone")?.addEventListener("change", e => { p.voice_tone = e.target.value; if (e.target.value !== "auto") p.resolved_voice_tone = e.target.value; saveSoon(); });
     $("#le-audio-master")?.addEventListener("change", e => { p.audio_master = e.target.checked; saveSoon(); });
     $("#le-transcribe")?.addEventListener("click", startTranscription);
+    $("#le-stt-provider")?.addEventListener("change", e => { p.transcription_provider = e.target.value; saveSoon(); draw(); });
     $("#le-sync")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/sync-scenes`, { method: "POST" }); draw(); toast("Сцены подогнаны к паузам и длине озвучки"); } catch (e) { toast(e.message, true); } });
     $("#le-subs")?.addEventListener("change", e => { p.subtitles = e.target.checked; saveSoon(); });
     $("#le-subs-preset")?.addEventListener("change", e => { p.subtitle_preset = e.target.value; saveSoon(); });
