@@ -10,7 +10,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, animate, atmos, motion, captions, cta, exporter, balance, db, effects, images, instagram, llm, media, music as musiclib, pipeline, producer, projects, remake, thumb, tts, updater, uploader, worker, youtube
+from . import analytics, animate, atmos, motion, captions, cta, exporter, balance, db, effects, images, instagram, llm, local_editor, media, music as musiclib, pipeline, producer, projects, remake, thumb, tts, updater, uploader, worker, youtube
 from .config import (DATA_DIR, DEFAULTS, MUSIC_DIR, PROMPTS_DEFAULT_DIR, PROMPTS_DIR, load_settings,
                      public_settings, save_settings)
 from .net import UserError
@@ -18,6 +18,7 @@ from .net import UserError
 STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="Авто ютуб")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.include_router(local_editor.router)
 
 
 @app.get("/favicon.ico", include_in_schema=False)

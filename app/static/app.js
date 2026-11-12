@@ -64,6 +64,7 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
     new: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/>',
     jobs: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>',
     montage: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>',
+    "local-editor": '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16M17 4v16M2 9h5M2 15h5M17 9h5M17 15h5"/>',
     remake: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
     producer: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
     library: '<path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>',
@@ -80,7 +81,7 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
   };
   nav.querySelectorAll("a[data-nav]").forEach(a => { const d = P[a.dataset.nav]; if (d) a.insertAdjacentHTML("afterbegin", `<svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`); });
   const GROUPS = { new: "Создание", producer: "Знания", settings: "Система" };
-  const DEFAULT = ["new", "jobs", "channels", "montage", "remake", "producer", "library", "insta", "projects", "characters", "items", "settings", "prompts", "music", "balance", "help"];
+  const DEFAULT = ["new", "jobs", "channels", "montage", "local-editor", "remake", "producer", "library", "insta", "projects", "characters", "items", "settings", "prompts", "music", "balance", "help"];
   const heads = () => {
     nav.querySelectorAll(".ngrp").forEach(x => x.remove());
     if (nav.classList.contains("editing")) return;
@@ -216,6 +217,7 @@ async function route() {
     else if (page === "prompts") await viewPrompts(id);
     else if (page === "music") await viewMusic();
     else if (page === "montage") await viewMontage();
+    else if (page === "local-editor") await viewLocalEditor(id);
     else if (page === "remake") await viewRemake(id);
     else if (page === "producer") await viewProducer(id);
     else if (page === "library") await viewLibrary(id);
@@ -298,13 +300,13 @@ function draftRestore() {
 }
 
 // ------------------------------------------------------------------ recent pages as tabs
-const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", projects: "📁", characters: "🧑‍🎨", items: "📦", settings: "⚙️", prompts: "📝", music: "🎵", remake: "🔁", producer: "🎓", library: "📚", help: "❓", balance: "💰" };
+const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", "local-editor": "🎞️", projects: "📁", characters: "🧑‍🎨", items: "📦", settings: "⚙️", prompts: "📝", music: "🎵", remake: "🔁", producer: "🎓", library: "📚", help: "❓", balance: "💰" };
 function getTabs() { try { return JSON.parse(lsGet("ay_tabs", "[]")) || []; } catch (e) { return []; } }
 function rememberTab() {
   const hash = location.hash || "#/jobs";
   const page = hash.split("/")[1] || "jobs";
   const h1 = main.querySelector("h1");
-  const title = (h1 ? h1.textContent : page).trim().replace(/\s+/g, " ").slice(0, 60);
+  const title = ($("#le-title")?.value || (h1 ? h1.textContent : page)).trim().replace(/\s+/g, " ").slice(0, 60);
   let tabs = getTabs();
   const i = tabs.findIndex(t => t.hash === hash);
   if (i >= 0) tabs[i].title = title; else tabs.push({ hash, title, icon: TAB_ICONS[page] || "📄" });
@@ -3409,6 +3411,164 @@ async function viewLibrary(id) {
   });
 }
 
+
+// ---------------------------------------------------------------- local editor: timeline and render on this Mac, no API keys
+async function viewLocalEditor(id) {
+  navActive("local-editor");
+  if (!id) {
+    const projects = await api("/api/local-editor");
+    main.innerHTML = `<h1>🎞️ Локальный монтаж</h1>
+    <p class="muted">Полностью на этом компьютере: ваши фото, видео, озвучка и музыка. Никаких API-ключей и отправки файлов в интернет. Исходники не изменяются.</p>
+    <div class="card le-new"><h2>Новый монтаж</h2><div class="row">
+      <input class="grow" id="le-new-title" type="text" placeholder="Название ролика">
+      <select id="le-new-format" style="width:auto"><option value="long">YouTube 16:9</option><option value="short">Shorts / Reels 9:16</option></select>
+      <button class="primary" id="le-create">Создать</button></div></div>
+    ${projects.length ? `<div class="le-projects">${projects.map(p => `<a class="card le-project" href="#/local-editor/${p.id}">
+      <div><b>${esc(p.title)}</b><div class="muted small">${p.format === "short" ? "9:16" : "16:9"} · ${p.scenes.length} сцен · ${fmtTime(p.duration)}</div></div>
+      <span class="badge ${p.render.status === "error" ? "error" : p.render.status === "running" ? "running" : p.render.final_url ? "done" : "queued"}">${p.render.final_url ? "Готово" : p.render.status === "running" ? "Собирается" : "Черновик"}</span>
+      <button class="sm danger" data-le-delete="${p.id}" data-title="${esc(p.title)}">Удалить</button></a>`).join("")}</div>` : `<div class="card muted">Монтажей пока нет. Создайте первый проект выше.</div>`}`;
+    $("#le-create").onclick = async () => {
+      const b = $("#le-create"); b.disabled = true;
+      try { const p = await api("/api/local-editor", { json: { title: $("#le-new-title").value, format: $("#le-new-format").value } }); location.hash = `#/local-editor/${p.id}`; }
+      catch (e) { toast(e.message, true); b.disabled = false; }
+    };
+    $("#le-new-title").onkeydown = e => { if (e.key === "Enter") $("#le-create").click(); };
+    main.querySelectorAll("[data-le-delete]").forEach(b => b.onclick = async e => {
+      e.preventDefault(); e.stopPropagation();
+      if (!confirm(`Убрать монтаж «${b.dataset.title}»? Он переместится во внутреннюю корзину.`)) return;
+      try { await api(`/api/local-editor/${b.dataset.leDelete}`, { method: "DELETE" }); b.closest(".le-project").remove(); toast("Монтаж перемещён в корзину"); }
+      catch (x) { toast(x.message, true); }
+    });
+    return;
+  }
+
+  let p = await api(`/api/local-editor/${id}`);
+  let saveTimer = null, saving = false;
+  const motionOptions = [["none", "Без движения"], ["zoom_in", "Медленное приближение"], ["zoom_out", "Медленное отдаление"], ["pan_left", "Панорама влево"], ["pan_right", "Панорама вправо"]];
+  const options = (items, value) => items.map(([k, n]) => `<option value="${k}" ${k === value ? "selected" : ""}>${n}</option>`).join("");
+  const busy = () => p.render?.status === "running";
+  const save = async (quiet = false) => {
+    clearTimeout(saveTimer); saveTimer = null;
+    if (busy() || saving) return;
+    saving = true; const lab = $("#le-saved"); if (lab) lab.textContent = "Сохраняю…";
+    try { p = await api(`/api/local-editor/${id}`, { method: "PUT", json: p }); if ($("#le-saved")) $("#le-saved").textContent = "✓ Сохранено"; rememberTab(); if (!quiet) toast("Монтаж сохранён"); }
+    catch (e) { toast(e.message, true); if ($("#le-saved")) $("#le-saved").textContent = "Ошибка сохранения"; }
+    finally { saving = false; }
+  };
+  const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(true), 500); };
+  const mediaBox = s => s.kind === "image"
+    ? `<img src="${s.url}" alt="${esc(s.name)}">`
+    : `<video src="${s.url}#t=${Number(s.trim_start || 0).toFixed(2)}" preload="metadata" muted></video><span class="le-play">▶</span>`;
+  const sceneCard = (s, i) => `<article class="le-scene" data-scene="${s.id}" draggable="${busy() ? "false" : "true"}">
+    <div class="le-handle" title="Перетащите сцену">⋮⋮</div><div class="le-num">${i + 1}</div><div class="le-media">${mediaBox(s)}</div>
+    <div class="le-fields"><b title="${esc(s.name)}">${esc(s.name)}</b><div class="row le-compact">
+      <label>Длительность <input type="number" min=".1" step=".1" data-sf="duration" value="${Number(s.duration).toFixed(2)}"> сек</label>
+      ${s.kind === "video" ? `<label>Начало <input type="number" min="0" max="${s.source_duration}" step=".1" data-sf="trim_start" value="${Number(s.trim_start).toFixed(2)}"></label><label>Конец <input type="number" min=".1" max="${s.source_duration}" step=".1" data-sf="trim_end" value="${Number(s.trim_end).toFixed(2)}"></label>` : ""}
+      <select data-sf="fit">${options([["cover", "Заполнить кадр"], ["contain", "Вписать целиком"]], s.fit)}</select>
+      ${s.kind === "image" ? `<select data-sf="motion">${options(motionOptions, s.motion)}</select>` : ""}
+      <select data-sf="transition">${options([["cut", "Обычный стык"], ["fade", "Через затемнение"]], s.transition)}</select>
+    </div></div><div class="le-actions"><button class="sm" data-up title="Выше">↑</button><button class="sm" data-down title="Ниже">↓</button><button class="sm danger" data-remove title="Убрать с таймлайна">✕</button></div>
+  </article>`;
+  const renderState = () => {
+    const r = p.render || {};
+    if (r.status === "running") return `<div class="banner info"><b>${r.quality === "final" ? "Собираю готовый ролик" : "Собираю предпросмотр"}…</b><div class="bar" style="margin-top:9px"><div style="width:${Math.round((r.progress || 0) * 100)}%"></div></div><div class="small muted" style="margin-top:5px">${Math.round((r.progress || 0) * 100)}% · окно можно оставить открытым</div></div>`;
+    if (r.status === "error") return `<div class="banner bad"><b>Сборка не завершилась.</b> ${esc(r.error || "Неизвестная ошибка")}</div>`;
+    return "";
+  };
+  const outputBox = () => {
+    const r = p.render || {}, url = r.final_url || r.preview_url;
+    if (!url) return "";
+    const q = r.final_url ? "final" : "preview";
+    return `<div class="card le-output"><h2>${q === "final" ? "Готовый ролик" : "Предпросмотр"}</h2><video controls src="${url}?v=${p.updated || Date.now()}" class="${p.format === "short" ? "vert" : ""}"></video>
+      <div class="row" style="margin-top:10px"><a class="btn primary" href="/api/local-editor/${p.id}/output/${q}?download=true">Скачать MP4</a><span class="muted small">Файл хранится только на этом компьютере.</span></div></div>`;
+  };
+  const waveform = async () => {
+    const canvas = $("#le-wave"); if (!canvas || !p.voice) return;
+    try {
+      const w = await api(`/api/local-editor/${id}/waveform/voice?points=900`); if (!$("#le-wave")) return;
+      const rect = canvas.getBoundingClientRect(), scale = devicePixelRatio || 1;
+      canvas.width = Math.max(300, rect.width * scale); canvas.height = 92 * scale;
+      const c = canvas.getContext("2d"), W = canvas.width, H = canvas.height; c.clearRect(0, 0, W, H);
+      c.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--field") || "#eee"; c.fillRect(0, 0, W, H);
+      c.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--accent") || "#0a84ff"; c.lineWidth = Math.max(scale, 1); c.beginPath();
+      w.peaks.forEach((v, i) => { const x = i / Math.max(w.peaks.length - 1, 1) * W, h = Math.max(1, v * H * .46); c.moveTo(x, H / 2 - h); c.lineTo(x, H / 2 + h); }); c.stroke();
+      const total = p.duration || p.scenes.reduce((n, s) => n + +s.duration, 0); if (total) {
+        c.strokeStyle = "rgba(255,255,255,.75)"; c.fillStyle = "rgba(0,0,0,.65)"; c.font = `${11 * scale}px sans-serif`; let at = 0;
+        p.scenes.slice(0, -1).forEach((s, i) => { at += +s.duration; const x = at / total * W; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke(); c.fillText(String(i + 2), x + 3 * scale, 13 * scale); });
+      }
+    } catch (e) { /* A waveform is helpful, but never blocks editing. */ }
+  };
+  const draw = () => {
+    const total = p.scenes.reduce((n, s) => n + Number(s.duration || 0), 0); p.duration = total;
+    main.innerHTML = `<div class="row le-titlebar"><a class="btn sm" href="#/local-editor">← Все монтажи</a><input id="le-title" class="grow" type="text" value="${esc(p.title)}"><span id="le-saved" class="muted small">✓ Сохранено</span></div>
+    <div class="le-toolbar card"><div class="row"><label>Формат <select id="le-format"><option value="long" ${p.format === "long" ? "selected" : ""}>YouTube 16:9</option><option value="short" ${p.format === "short" ? "selected" : ""}>Shorts / Reels 9:16</option></select></label>
+      <label>Кадров/сек <select id="le-fps">${[24, 25, 30, 50, 60].map(x => `<option ${x === p.fps ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+      <span class="le-total"><b>${fmtTime(total)}</b> · ${p.scenes.length} сцен</span></div>
+      <div class="row" style="margin-top:12px"><label class="btn">＋ Фото и видео<input id="le-files" type="file" accept="image/*,video/*" multiple hidden></label>
+        <label class="btn">🎙 Озвучка<input id="le-voice" type="file" accept="audio/*,video/mp4,video/quicktime" hidden></label>
+        <label class="btn">♫ Музыка<input id="le-music" type="file" accept="audio/*" hidden></label>
+        <span id="le-uploading" class="muted small"></span></div></div>
+    <div class="card le-audio"><div class="row"><h2 class="grow">Звук</h2>${p.voice ? `<span class="small">🎙 ${esc(p.voice.name)} (${fmtTime(p.voice.duration)})</span><button class="sm danger" data-audio-remove="voice">Убрать</button>` : `<span class="muted small">Озвучка не добавлена — ролик будет без голоса</span>`}</div>
+      ${p.voice ? `<canvas id="le-wave"></canvas>` : ""}
+      <div class="row le-musicline">${p.music ? `<span class="grow small">♫ ${esc(p.music.name)} (${fmtTime(p.music.duration)})</span><label>Громкость музыки <input id="le-music-volume" type="range" min="0" max="1" step=".01" value="${p.music_volume}"><b id="le-music-value">${Math.round(p.music_volume * 100)}%</b></label><button class="sm danger" data-audio-remove="music">Убрать</button>` : `<span class="muted small">Музыка не добавлена</span>`}</div></div>
+    <div class="row le-timeline-head"><h2 class="grow">Таймлайн</h2><span class="muted small">Перетаскивайте сцены за ⋮⋮ или используйте стрелки</span></div>
+    <div id="le-timeline" class="le-timeline">${p.scenes.length ? p.scenes.map(sceneCard).join("") : `<label class="le-empty">Перетащите сюда фото и видео или нажмите «＋ Фото и видео»<input id="le-empty-files" type="file" accept="image/*,video/*" multiple hidden></label>`}</div>
+    <div class="card le-render"><h2>Сборка</h2>${renderState()}<div class="row"><button id="le-preview" ${busy() || !p.scenes.length ? "disabled" : ""}>▶ Быстрый предпросмотр</button><button class="primary" id="le-final" ${busy() || !p.scenes.length ? "disabled" : ""}>Экспорт 1080p MP4</button><span class="muted small">Всё собирает FFmpeg на вашем Mac.</span></div></div>${outputBox()}`;
+    bind(); waveform();
+  };
+  const uploadFiles = async (files, kind) => {
+    files = [...files]; if (!files.length || busy()) return;
+    const lab = $("#le-uploading");
+    try {
+      for (const [i, file] of files.entries()) {
+        if (lab) lab.textContent = `Загружаю ${i + 1} из ${files.length}: ${file.name}`;
+        const r = await fetch(`/api/local-editor/${id}/upload?kind=${kind}&name=${encodeURIComponent(file.name)}`, { method: "POST", body: file });
+        let data = {}; try { data = await r.json(); } catch (e) { }
+        if (!r.ok) throw new Error(data.error || data.detail || `Не удалось загрузить ${file.name}`);
+        p = data;
+      }
+      draw(); toast(kind === "scene" ? "Файлы добавлены на таймлайн" : kind === "voice" ? "Озвучка добавлена" : "Музыка добавлена");
+    } catch (e) { toast(e.message, true); if (lab) lab.textContent = ""; }
+  };
+  const move = async (i, to) => { if (to < 0 || to >= p.scenes.length || i === to) return; const [s] = p.scenes.splice(i, 1); p.scenes.splice(to, 0, s); await save(true); draw(); };
+  const startRender = async quality => {
+    await save(true); const b = quality === "final" ? $("#le-final") : $("#le-preview"); if (b) b.disabled = true;
+    try { await api(`/api/local-editor/${id}/render?quality=${quality}`, { method: "POST" }); p = await api(`/api/local-editor/${id}`); draw(); poll(); }
+    catch (e) { toast(e.message, true); draw(); }
+  };
+  const poll = () => {
+    clearInterval(timer); timer = setInterval(async () => {
+      try { p = await api(`/api/local-editor/${id}`); if (p.render.status !== "running") { clearInterval(timer); timer = null; draw(); if (p.render.status === "done") toast(p.render.quality === "final" ? "Готовый ролик собран" : "Предпросмотр готов"); } else { const box = $(".le-render"); if (box) { const banner = box.querySelector(".banner"); if (banner) banner.outerHTML = renderState(); } } }
+      catch (e) { clearInterval(timer); timer = null; toast(e.message, true); }
+    }, 1000);
+  };
+  const bind = () => {
+    $("#le-title").oninput = e => { p.title = e.target.value; saveSoon(); };
+    $("#le-format").onchange = e => { p.format = e.target.value; saveSoon(); };
+    $("#le-fps").onchange = e => { p.fps = +e.target.value; saveSoon(); };
+    $("#le-files").onchange = e => uploadFiles(e.target.files, "scene");
+    $("#le-empty-files")?.addEventListener("change", e => uploadFiles(e.target.files, "scene"));
+    $("#le-voice").onchange = e => uploadFiles([e.target.files[0]], "voice");
+    $("#le-music").onchange = e => uploadFiles([e.target.files[0]], "music");
+    $("#le-music-volume")?.addEventListener("input", e => { p.music_volume = +e.target.value; $("#le-music-value").textContent = `${Math.round(p.music_volume * 100)}%`; saveSoon(); });
+    main.querySelectorAll("[data-audio-remove]").forEach(b => b.onclick = async () => { try { p = await api(`/api/local-editor/${id}/audio/${b.dataset.audioRemove}`, { method: "DELETE" }); draw(); } catch (e) { toast(e.message, true); } });
+    $("#le-preview").onclick = () => startRender("preview"); $("#le-final").onclick = () => startRender("final");
+    const rows = [...main.querySelectorAll(".le-scene")];
+    rows.forEach((row, i) => {
+      row.querySelectorAll("[data-sf]").forEach(el => el.onchange = () => { const s = p.scenes[i], k = el.dataset.sf; s[k] = el.type === "number" ? +el.value : el.value; saveSoon(); });
+      row.querySelector("[data-up]").onclick = () => move(i, i - 1); row.querySelector("[data-down]").onclick = () => move(i, i + 1);
+      row.querySelector("[data-remove]").onclick = async () => { p.scenes.splice(i, 1); await save(true); draw(); };
+      row.querySelector("video")?.addEventListener("click", e => { if (e.target.paused) e.target.play(); else e.target.pause(); });
+      row.addEventListener("dragstart", e => { row.classList.add("drag"); e.dataTransfer.setData("text/plain", String(i)); e.dataTransfer.effectAllowed = "move"; });
+      row.addEventListener("dragend", () => row.classList.remove("drag"));
+      row.addEventListener("dragover", e => { e.preventDefault(); row.classList.add("over"); }); row.addEventListener("dragleave", () => row.classList.remove("over"));
+      row.addEventListener("drop", e => { if (e.dataTransfer?.files?.length) return; e.preventDefault(); row.classList.remove("over"); const raw = e.dataTransfer.getData("text/plain"); if (raw !== "") move(+raw, i); });
+    });
+    const timeline = $("#le-timeline"); ["dragenter", "dragover"].forEach(n => timeline.addEventListener(n, e => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); timeline.classList.add("fileover"); } }));
+    timeline.addEventListener("dragleave", () => timeline.classList.remove("fileover")); timeline.addEventListener("drop", e => { if (e.dataTransfer?.files?.length) { e.preventDefault(); timeline.classList.remove("fileover"); uploadFiles(e.dataTransfer.files, "scene"); } });
+  };
+  draw(); if (busy()) poll();
+}
 
 // ---------------------------------------------------------------- montage: the owner's own text and pictures
 async function viewMontage() {
