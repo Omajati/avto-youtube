@@ -2881,7 +2881,7 @@ function viewHelp() {
     </ol>
     <h2>Полезно знать</h2>
     <ul>
-      <li><b>Локальный монтаж и Авторежиссёр.</b> Добавьте свои фото, оживлённые видео, голос и музыку в «Локальном монтаже», затем нажмите «Создать монтажный план». Программа без API подберёт один из семи стилей, цвет, движения, переходы, субтитры, тембр голоса и звуковые акценты. Кнопка «Создать другой вариант» меняет рисунок монтажа, а готовые ролики запоминаются, чтобы следующие не повторялись.</li>
+      <li><b>Локальный монтаж и Авторежиссёр.</b> Добавьте свои фото, оживлённые видео, голос и музыку в «Локальном монтаже», затем нажмите «Создать монтажный план». Программа без API подберёт один из семи стилей, цвет, движения, переходы, субтитры, тембр голоса и звуковые акценты. Кнопка «Создать другой вариант» меняет рисунок монтажа, а готовые ролики запоминаются, чтобы следующие не повторялись. Быстрый режим собирает несколько сцен параллельно и запоминает готовый видеоряд: при замене озвучки, музыки или субтитров картинки не просчитываются заново.</li>
       <li>Программа открывается в своём окне. Закрыли окно, и программа выключилась; если в этот момент делается ролик, она спросит, и при следующем запуске продолжит с того же места. Выключить можно и кнопкой «Выключить программу» слева внизу.</li>
       <li>Если выключить программу или Mac, работа продолжится с того же места при следующем запуске.</li>
       <li>Пока делается ролик, Mac не уснёт сам. Не закрывайте крышку, если ноутбук не на зарядке.</li>
@@ -3492,7 +3492,7 @@ async function viewLocalEditor(id) {
   </article>`; };
   const renderState = () => {
     const r = p.render || {};
-    if (r.status === "running") return `<div class="banner info"><b>${r.quality === "final" ? "Собираю готовый ролик" : "Собираю предпросмотр"}…</b><div class="bar" style="margin-top:9px"><div style="width:${Math.round((r.progress || 0) * 100)}%"></div></div><div class="small muted" style="margin-top:5px">${Math.round((r.progress || 0) * 100)}% · окно можно оставить открытым</div></div>`;
+    if (r.status === "running") return `<div class="banner info"><b>${r.quality === "final" ? "Собираю готовый ролик" : "Собираю предпросмотр"}…</b><div class="bar" style="margin-top:9px"><div style="width:${Math.round((r.progress || 0) * 100)}%"></div></div><div class="small muted" style="margin-top:5px">${Math.round((r.progress || 0) * 100)}%${r.workers > 1 ? ` · ${r.workers} сцены параллельно` : ""}${r.cached ? ` · из кэша: ${r.cached}` : ""} · ${esc(r.step || "обрабатываю сцены…")} · окно можно оставить открытым</div></div>`;
     if (r.status === "error") return `<div class="banner bad"><b>Сборка не завершилась.</b> ${esc(r.error || "Неизвестная ошибка")}</div>`;
     return "";
   };
@@ -3540,7 +3540,7 @@ async function viewLocalEditor(id) {
         <label class="btn">♫ Музыка<input id="le-music" type="file" accept="audio/*" hidden></label>
         <label class="btn">🌊 Атмосфера<input id="le-ambience" type="file" accept="audio/*" hidden></label>
         <span id="le-uploading" class="muted small"></span></div></div>
-    <div class="card le-render le-render-top"><div class="row"><h2 class="grow">Сборка</h2><span class="muted small">Всегда наверху · всё собирает FFmpeg на вашем Mac</span></div>${renderState()}<div class="row"><button id="le-preview" ${busy() || !p.scenes.length ? "disabled" : ""}>▶ Быстрый предпросмотр</button><button class="primary" id="le-final" ${busy() || !p.scenes.length ? "disabled" : ""}>Экспорт 1080p MP4</button></div></div>
+    <div class="card le-render le-render-top"><div class="row"><h2 class="grow">Сборка</h2><label>Скорость <select id="le-render-speed" ${busy() ? "disabled" : ""}>${options([["fast", "Быстро — параллельно"], ["quality", "Максимальное качество — медленнее"]], p.render_speed || "fast")}</select></label><span class="muted small">Всегда наверху · всё собирает FFmpeg на вашем Mac</span></div>${renderState()}<div class="row"><button id="le-preview" ${busy() || !p.scenes.length ? "disabled" : ""}>▶ Быстрый предпросмотр</button><button class="primary" id="le-final" ${busy() || !p.scenes.length ? "disabled" : ""}>Экспорт 1080p MP4</button><span class="muted small">Быстрый режим обрабатывает до трёх сцен одновременно без изменения разрешения.</span></div></div>
     ${outputBox()}
     <div class="card le-director"><div class="row"><h2 class="grow">✨ Авторежиссёр</h2><span class="badge done">Локально · без API</span></div>
       <p class="muted small">Собирает единый образ ролика и меняет рисунок монтажа от выпуска к выпуску. Ручные настройки сцен остаются доступны ниже.</p>
@@ -3628,6 +3628,7 @@ async function viewLocalEditor(id) {
     $("#le-title").oninput = e => { p.title = e.target.value; saveSoon(); };
     $("#le-format").onchange = e => { p.format = e.target.value; saveSoon(); };
     $("#le-fps").onchange = e => { p.fps = +e.target.value; saveSoon(); };
+    $("#le-render-speed")?.addEventListener("change", e => { p.render_speed = e.target.value; saveSoon(); });
     $("#le-edit-style")?.addEventListener("change", e => { p.edit_style = e.target.value; saveSoon(); });
     $("#le-edit-tempo")?.addEventListener("change", e => { p.edit_tempo = e.target.value; saveSoon(); });
     $("#le-effect-level")?.addEventListener("change", e => { p.effect_level = e.target.value; saveSoon(); });

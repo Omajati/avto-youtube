@@ -7,7 +7,9 @@ No network service or API key is used by this module.
 from __future__ import annotations
 
 import array
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -15,6 +17,7 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from pathlib import Path
 
@@ -137,6 +140,7 @@ def _default_project(project_id: str, title: str, format_: str) -> dict:
         "scenes": [],
         "transcript": {"status": "idle", "text": "", "words": [], "language": "", "model": "small", "error": "", "step": ""},
         "render": {"status": "idle", "progress": 0, "quality": "", "error": ""},
+        "render_speed": "fast",
         "created": _now(),
         "updated": _now(),
     }
@@ -216,6 +220,7 @@ def update_project(project_id: str, data: dict = Body(...)):
         project["resolved_voice_tone"] = data.get("resolved_voice_tone") if data.get("resolved_voice_tone") in editing_styles.VOICE_TONES - {"auto"} else project.get("resolved_voice_tone", "natural")
     project["audio_master"] = bool(data.get("audio_master", project.get("audio_master", True)))
     project["transcription_provider"] = data.get("transcription_provider") if data.get("transcription_provider") in ("local", "elevenlabs", "auto") else project.get("transcription_provider", "local")
+    project["render_speed"] = data.get("render_speed") if data.get("render_speed") in ("fast", "quality") else project.get("render_speed", "fast")
     project["graphics_enabled"] = bool(data.get("graphics_enabled", project.get("graphics_enabled", False)))
     project["graphics_auto"] = bool(data.get("graphics_auto", project.get("graphics_auto", False)))
     project["subtitles"] = bool(data.get("subtitles", project.get("subtitles", True)))
@@ -904,13 +909,17 @@ def _transition_filter(kind: str, duration: float) -> str:
     return ""
 
 
-def _image_filter(scene: dict, width: int, height: int, fps: int, frames: int, look: str) -> str:
+def _image_filter(scene: dict, width: int, height: int, fps: int, frames: int, look: str,
+                  fast: bool = False) -> str:
     fit = scene.get("fit", "cover")
     motion = scene.get("motion", "none")
     if motion == "none" or fit == "contain":
         vf = f"{_fit_filter(width, height, fit)},fps={fps}"
     else:
-        big_w, big_h = width * 2, height * 2
+        # 1.4x still leaves enough real pixels for the strongest 1.32x zoom, but
+        # avoids processing a needless 4K canvas for every 1080p photograph.
+        scale = 1.4 if fast else 2.0
+        big_w, big_h = int(width * scale) // 2 * 2, int(height * scale) // 2 * 2
         p = f"on/{max(frames, 1)}"
         focus_x = _number(scene.get("focus_x"), .5, .05, .95)
         focus_y = _number(scene.get("focus_y"), .5, .05, .95)
@@ -952,8 +961,25 @@ def _video_filter(scene: dict, width: int, height: int, fps: int, look: str) -> 
     return vf + ",setsar=1,format=yuv420p"
 
 
+def _clip_cache_key(project_dir: Path, scene: dict, width: int, height: int, fps: int,
+                    graphics_enabled: bool, color_look: str, fast: bool) -> str:
+    source = project_dir / "media" / str(scene.get("source") or "")
+    try:
+        stat = source.stat()
+        source_state = [stat.st_size, stat.st_mtime_ns]
+    except OSError:
+        source_state = [0, 0]
+    visual = {key: scene.get(key) for key in (
+        "source", "kind", "duration", "fit", "motion", "transition", "trim_start", "trim_end", "focus_x", "focus_y")}
+    if graphics_enabled:
+        visual["graphic"] = scene.get("graphic")
+    payload = [2, visual, source_state, width, height, fps, graphics_enabled, color_look, fast]
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:24]
+
+
 def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: int, fps: int,
-                 graphics_enabled: bool = False, color_look: str = "natural"):
+                 graphics_enabled: bool = False, color_look: str = "natural", fast: bool = False):
     source = project_dir / "media" / scene["source"]
     duration = float(scene["duration"])
     frames = max(round(duration * fps), 1)
@@ -961,12 +987,14 @@ def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: 
     active_graphic = graphics_enabled and graphic.get("type") in LOCAL_GRAPHICS - {"none"}
     base = out.with_name(f".{out.stem}.base.mp4") if active_graphic else out
     if scene["kind"] == "image":
-        args = ["-loop", "1", "-framerate", fps, "-i", source, "-vf", _image_filter(scene, width, height, fps, frames, color_look),
+        args = ["-loop", "1", "-framerate", fps, "-i", source, "-vf", _image_filter(scene, width, height, fps, frames, color_look, fast),
                 "-frames:v", frames]
     else:
         args = ["-ss", f"{float(scene.get('trim_start') or 0):.3f}", "-i", source, "-t", f"{duration:.3f}",
                 "-vf", _video_filter(scene, width, height, fps, color_look)]
-    media.run([*args, "-an", "-r", fps, "-c:v", "libx264", "-preset", "veryfast", "-crf", 22,
+    encode_args = ["-c:v", "libx264", "-preset", "superfast" if fast else "veryfast",
+                   "-crf", 21 if fast else 22, "-threads", 2 if fast else 0]
+    media.run([*args, "-an", "-r", fps, *encode_args,
                "-pix_fmt", "yuv420p", base], "Фрагмент локального монтажа")
     if active_graphic:
         work = out.parent / f".{out.stem}-graphics"
@@ -976,7 +1004,8 @@ def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: 
             graphic["unit"] = caption
         graphic["start"] = min(max(float(graphic.get("start") or 0), 0), max(duration - .1, 0))
         try:
-            graphics.overlay(base, out, [graphic], width, height, work, fps=fps)
+            overlay_args = ["-c:v", "libx264", "-preset", "superfast", "-crf", 18, "-threads", 2] if fast else None
+            graphics.overlay(base, out, [graphic], width, height, work, fps=fps, encode_args=overlay_args)
         finally:
             base.unlink(missing_ok=True)
             shutil.rmtree(work, ignore_errors=True)
@@ -1040,7 +1069,7 @@ def _mix(project_dir: Path, project: dict, video: Path, out: Path, total: float,
                "-t", f"{total:.3f}", "-movflags", "+faststart", out], "Звук локального монтажа")
 
 
-def _burn_subtitles(project: dict, video: Path, out: Path, width: int, height: int):
+def _burn_subtitles(project: dict, video: Path, out: Path, width: int, height: int, fast: bool = False):
     cues = _transcript_cues(project)
     if not cues:
         shutil.copy2(video, out)
@@ -1059,7 +1088,8 @@ def _burn_subtitles(project: dict, video: Path, out: Path, width: int, height: i
                               str(project.get("subtitle_preset") or "documentary"), size)
     rel_fonts = str(Path(fonts).resolve()).replace("\\", "/").replace(":", "\\:")
     media.run(["-i", video.resolve(), "-vf", f"subtitles=filename={ass.name}:fontsdir={rel_fonts}",
-               "-c:v", "libx264", "-preset", "veryfast", "-crf", 20, "-pix_fmt", "yuv420p",
+               "-c:v", "libx264", "-preset", "superfast" if fast else "veryfast", "-crf", 19 if fast else 20,
+               "-threads", 3 if fast else 0, "-pix_fmt", "yuv420p",
                "-c:a", "copy", "-movflags", "+faststart", out.resolve()],
               "Субтитры локального монтажа", cwd=render_dir, exe=media.ffmpeg_with_subtitles())
 
@@ -1077,20 +1107,66 @@ def _render_worker(project_id: str, quality: str):
         else:
             width, height = ((1080, 1920) if project.get("format") == "short" else (1920, 1080))
         fps = int(project.get("fps") or 30)
+        fast = project.get("render_speed", "fast") == "fast"
         work = project_dir / "render" / f".{quality}-work"
         if work.exists():
             shutil.rmtree(work)
         work.mkdir(parents=True)
-        clips = []
+        clips = [work / f"{i:04d}.mp4" for i in range(len(scenes))]
+        cache_dir = project_dir / "render" / ".clip-cache" / quality
+        cache_dir.mkdir(parents=True, exist_ok=True)
         color_look = str(project.get("resolved_color_look") or project.get("color_look") or "natural")
         if color_look == "auto" or color_look not in editing_styles.COLOR_LOOKS:
             color_look = "natural"
-        for i, scene in enumerate(scenes):
-            clip = work / f"{i:04d}.mp4"
-            _render_clip(project_dir, scene, clip, width, height, fps,
-                         bool(project.get("graphics_enabled")), color_look)
-            clips.append(clip)
-            _set_render(project_id, progress=round((i + 1) / (len(scenes) + 1) * .9, 3))
+        graphics_enabled = bool(project.get("graphics_enabled"))
+        cache_keys = [_clip_cache_key(project_dir, scene, width, height, fps, graphics_enabled, color_look, fast)
+                      for scene in scenes]
+        def render_one(index: int):
+            cached = cache_dir / f"{cache_keys[index]}.mp4"
+            if cached.is_file() and cached.stat().st_size > 1000:
+                try:
+                    os.link(cached, clips[index])
+                except OSError:
+                    shutil.copy2(cached, clips[index])
+                return index, True
+            _render_clip(project_dir, scenes[index], clips[index], width, height, fps,
+                         graphics_enabled, color_look, fast)
+            cache_tmp = cache_dir / f".{cache_keys[index]}-{index}.tmp.mp4"
+            cache_tmp.unlink(missing_ok=True)
+            try:
+                os.link(clips[index], cache_tmp)
+            except OSError:
+                shutil.copy2(clips[index], cache_tmp)
+            cache_tmp.replace(cached)
+            return index, False
+
+        if fast and len(scenes) > 2:
+            # zoompan and most colour filters are mostly single-threaded. A few
+            # small FFmpeg jobs therefore use Apple Silicon much better than one
+            # process that renders 150+ scenes serially.
+            workers = min(3, max(2, (os.cpu_count() or 6) // 3))
+            completed = cached_count = 0
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="local-scene") as pool:
+                futures = [pool.submit(render_one, i) for i in range(len(scenes))]
+                try:
+                    for future in as_completed(futures):
+                        _index, was_cached = future.result()
+                        cached_count += int(was_cached)
+                        completed += 1
+                        _set_render(project_id, progress=round(completed / (len(scenes) + 1) * .9, 3),
+                                    cached=cached_count, workers=workers, step="Обрабатываю сцены…")
+                except Exception:
+                    for future in futures:
+                        future.cancel()
+                    raise
+        else:
+            cached_count = 0
+            for i in range(len(scenes)):
+                _index, was_cached = render_one(i)
+                cached_count += int(was_cached)
+                _set_render(project_id, progress=round((i + 1) / (len(scenes) + 1) * .9, 3),
+                            cached=cached_count, workers=1, step="Обрабатываю сцены…")
+        _set_render(project_id, progress=.91, step="Склеиваю готовые сцены…")
         joined = work / "joined.mp4"
         media.concat_clips(clips, joined)
         total = sum(float(s["duration"]) for s in scenes)
@@ -1102,15 +1178,21 @@ def _render_worker(project_id: str, quality: str):
             fx_plan = effects.plan(scenes, "light", project.get("format") == "short")
             has_sfx = effects.build_track(fx_plan, [float(s["duration"]) for s in scenes],
                                           sfx_path, float(project.get("sfx_volume", .18)))
+        _set_render(project_id, progress=.94, step="Смешиваю голос, музыку и звуковые эффекты…")
         _mix(project_dir, project, joined, tmp, total, sfx_path if has_sfx else None)
         if project.get("subtitles") and project.get("transcript", {}).get("words"):
+            _set_render(project_id, progress=.97, step="Накладываю субтитры…")
             burned = project_dir / "render" / f".{quality}.subtitled.tmp.mp4"
-            _burn_subtitles(project, tmp, burned, width, height)
+            _burn_subtitles(project, tmp, burned, width, height, fast)
             burned.replace(target)
             tmp.unlink(missing_ok=True)
         else:
             tmp.replace(target)
         _set_render(project_id, status="done", progress=1, quality=quality, error="", finished=_now())
+        active_cache = {f"{key}.mp4" for key in cache_keys}
+        for old_cache in cache_dir.glob("*.mp4"):
+            if old_cache.name not in active_cache:
+                old_cache.unlink(missing_ok=True)
         if quality == "final":
             _remember_editing_style(_read(project_id))
     except Exception as exc:  # the error must be visible on the editor page, not lost in the background thread
@@ -1135,6 +1217,7 @@ def start_render(project_id: str, quality: str = "preview"):
         if project_id in _transcribing:
             raise UserError("Сначала дождитесь окончания расшифровки Whisper.")
         _rendering.add(project_id)
-    _set_render(project_id, status="running", progress=0, quality=quality, error="", started=_now())
+    _set_render(project_id, status="running", progress=0, quality=quality, error="", cached=0, workers=0,
+                step="Подготавливаю сцены…", started=_now())
     threading.Thread(target=_render_worker, args=(project_id, quality), daemon=True, name=f"local-render-{project_id}").start()
     return {"ok": True, "status": "running", "quality": quality}

@@ -501,6 +501,8 @@ details.mc.st-subs { border-left-color: #2563eb; }
 .le-subtitles h2, .le-render-top h2 { margin: 0; }
 .le-subtitles select { width: auto; max-width: 240px; }
 .le-render-top { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
+.le-render-top label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.le-render-top select { width: auto; }
 .le-director { border-color: color-mix(in srgb, #9b6cff 48%, var(--line)); background: linear-gradient(135deg, color-mix(in srgb, #9b6cff 7%, var(--panel)), var(--panel) 60%); }
 .le-director h2 { margin: 0; }
 .le-director-grid { display: grid; grid-template-columns: 1.5fr repeat(3, minmax(150px, .8fr)); gap: 9px; margin: 12px 0; }

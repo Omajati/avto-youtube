@@ -423,7 +423,8 @@ def _frames(g: dict, folder: Path) -> Path:
     return folder / "f%03d.png"
 
 
-def overlay(video: Path, out: Path, items: list, width: int, height: int, work: Path, fps: int = 0) -> int:
+def overlay(video: Path, out: Path, items: list, width: int, height: int, work: Path, fps: int = 0,
+            encode_args: list | None = None) -> int:
     """items: [{type, label, value, ..., start}] in seconds. Draws them over the silent picture-only video."""
     items = [g for g in items if g.get("type") in TEMPLATES]
     if not items:
@@ -443,8 +444,9 @@ def overlay(video: Path, out: Path, items: list, width: int, height: int, work: 
             fc.append(f"[{last}][g{i}]overlay={x}:{item_y}:eof_action=pass:format=auto[v{i}]")
             last = f"v{i}"
         rate = ["-r", fps] if fps else []  # a scene clip keeps its frame rate, so it joins with the others
-        media.run([*args, "-filter_complex", ";".join(fc), "-map", f"[{last}]", *rate, "-c:v", "libx264",
-                   "-preset", "veryfast", "-crf", 18, "-pix_fmt", "yuv420p", "-an", out], "Анимации данных")
+        codec = encode_args or ["-c:v", "libx264", "-preset", "veryfast", "-crf", 18]
+        media.run([*args, "-filter_complex", ";".join(fc), "-map", f"[{last}]", *rate, *codec,
+                   "-pix_fmt", "yuv420p", "-an", out], "Анимации данных")
     finally:
         for i in range(len(items)):
             shutil.rmtree(work / f"gfx_{i:02d}", ignore_errors=True)
