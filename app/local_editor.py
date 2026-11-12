@@ -11,6 +11,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -411,6 +412,25 @@ def output_file(project_id: str, quality: str, download: bool = False):
         raise HTTPException(404)
     headers = {"Cache-Control": "no-store"}
     return FileResponse(path, filename=f"{_read(project_id)['title']}.mp4" if download else None, headers=headers)
+
+
+@router.post("/{project_id}/reveal/{quality}")
+def reveal_output(project_id: str, quality: str):
+    if quality not in ("preview", "final"):
+        raise HTTPException(404)
+    path = _project_dir(project_id) / "render" / f"{quality}.mp4"
+    if not path.is_file():
+        raise UserError("Сначала соберите ролик.")
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(path)])
+        elif sys.platform.startswith("win"):
+            subprocess.Popen(["explorer", "/select,", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path.parent)])
+    except OSError:
+        raise UserError(f"Не получилось открыть папку. Файл находится здесь: {path}")
+    return {"ok": True, "path": str(path)}
 
 
 @router.get("/{project_id}/waveform/{kind}")

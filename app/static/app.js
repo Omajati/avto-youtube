@@ -3502,7 +3502,7 @@ async function viewLocalEditor(id) {
     if (!url) return "";
     const q = r.final_url ? "final" : "preview";
     return `<div class="card le-output"><h2>${q === "final" ? "Готовый ролик" : "Предпросмотр"}</h2><video controls src="${url}?v=${p.updated || Date.now()}" class="${p.format === "short" ? "vert" : ""}"></video>
-      <div class="row" style="margin-top:10px"><a class="btn primary" href="/api/local-editor/${p.id}/output/${q}?download=true">Скачать MP4</a><span class="muted small">Файл хранится только на этом компьютере.</span></div></div>`;
+      <div class="row" style="margin-top:10px"><button class="primary" id="le-reveal-output" data-quality="${q}">📂 Показать файл в Finder</button><span class="muted small">MP4 уже сохранён на этом компьютере — повторно скачивать его не нужно.</span></div></div>`;
   };
   const waveform = async () => {
     const canvas = $("#le-wave"); if (!canvas || !p.voice) return;
@@ -3627,6 +3627,7 @@ async function viewLocalEditor(id) {
     $("#le-apply-transition")?.addEventListener("click", async () => { const value = $("#le-transition-all").value, cycle = ["fade", "cut"]; p.scenes.forEach((s, i) => { s.transition = value === "auto" ? cycle[i % cycle.length] : value; }); await save(true); draw(); toast(value === "auto" ? "Переходы автоматически чередуются" : value === "fade" ? "Затемнение применено ко всем сценам" : "Обычный стык применён ко всем сценам"); });
     main.querySelectorAll("[data-audio-remove]").forEach(b => b.onclick = async () => { try { p = await api(`/api/local-editor/${id}/audio/${b.dataset.audioRemove}`, { method: "DELETE" }); draw(); } catch (e) { toast(e.message, true); } });
     $("#le-preview").onclick = () => startRender("preview"); $("#le-final").onclick = () => startRender("final");
+    $("#le-reveal-output")?.addEventListener("click", async e => { try { const result = await api(`/api/local-editor/${id}/reveal/${e.currentTarget.dataset.quality}`, { method: "POST" }); toast(`Файл показан в Finder: ${result.path}`); } catch (x) { toast(x.message, true); } });
     const rows = [...main.querySelectorAll(".le-scene")];
     rows.forEach((row, i) => {
       row.querySelectorAll("[data-sf]").forEach(el => el.onchange = () => { const s = p.scenes[i], k = el.dataset.sf; s[k] = el.type === "number" ? +el.value : el.value; saveSoon(); });
