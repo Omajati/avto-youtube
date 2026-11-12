@@ -226,6 +226,39 @@ def _upload_ext(name: str, kind: str) -> tuple[str, str]:
     raise UserError("Для озвучки и музыки подходят MP3, WAV, M4A, AAC, OGG, FLAC, OPUS или звук из видео.")
 
 
+def _media_identity(name: str) -> tuple[str, str]:
+    stem = Path(name).stem.lower().replace("ё", "е")
+    stem = re.sub(
+        r"(?:[\s_.-]*(?:video|vid|clip|animated|animation|motion|image|img|photo|"
+        r"видео|клип|анимация|оживленное|оживленная|оживленный|фото|картинка))+$",
+        "", stem,
+    )
+    core = re.sub(r"[^a-zа-я0-9]+", "", stem)
+    numbers = re.findall(r"\d+", Path(name).stem)
+    number = str(int(numbers[-1])) if numbers else ""
+    return core, number
+
+
+def _matching_scene(scenes: list[dict], name: str, kind: str) -> dict | None:
+    candidates = [scene for scene in scenes if scene.get("kind") == kind]
+    core, number = _media_identity(name)
+    exact = [scene for scene in candidates if core and _media_identity(str(scene.get("name") or ""))[0] == core]
+    if len(exact) == 1:
+        return exact[0]
+    numbered = [scene for scene in candidates if number and _media_identity(str(scene.get("name") or ""))[1] == number]
+    return numbered[0] if len(numbered) == 1 else None
+
+
+def _source_snapshot(scene: dict) -> dict:
+    return {key: scene.get(key) for key in ("source", "name", "kind", "source_duration", "trim_start", "trim_end")}
+
+
+def _activate_source(scene: dict, source: dict):
+    duration = float(scene.get("duration") or source.get("source_duration") or 5)
+    scene.update({key: source.get(key) for key in ("source", "name", "kind", "source_duration", "trim_start", "trim_end")})
+    scene["duration"] = duration
+
+
 @router.post("/{project_id}/upload")
 async def upload(project_id: str, request: Request, name: str, kind: str = "scene"):
     project = _read(project_id)
@@ -241,14 +274,30 @@ async def upload(project_id: str, request: Request, name: str, kind: str = "scen
     try:
         if kind == "scene":
             source_duration = _duration(path) if media_kind == "video" else 5.0
-            scene = {
-                "id": uuid.uuid4().hex[:12], "source": filename, "name": Path(name).name,
-                "kind": media_kind, "source_duration": round(source_duration, 3),
-                "trim_start": 0, "trim_end": round(source_duration, 3),
-                "duration": round(source_duration, 3), "fit": "cover", "motion": "none", "transition": "cut",
-                "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2},
+            source = {
+                "source": filename, "name": Path(name).name, "kind": media_kind,
+                "source_duration": round(source_duration, 3), "trim_start": 0,
+                "trim_end": round(source_duration, 3),
             }
-            project.setdefault("scenes", []).append(scene)
+            opposite = "image" if media_kind == "video" else "video"
+            matched = _matching_scene(project.get("scenes", []), Path(name).name, opposite)
+            replaced = False
+            if matched and media_kind == "video":
+                matched["alternate_source"] = _source_snapshot(matched)
+                _activate_source(matched, source)
+                replaced = True
+            elif matched:  # A photo uploaded after its video is kept as the optional still source.
+                matched["alternate_source"] = source
+                replaced = True
+            else:
+                scene = {
+                    "id": uuid.uuid4().hex[:12], "source": filename, "name": Path(name).name,
+                    "kind": media_kind, "source_duration": round(source_duration, 3),
+                    "trim_start": 0, "trim_end": round(source_duration, 3),
+                    "duration": round(source_duration, 3), "fit": "cover", "motion": "none", "transition": "cut",
+                    "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2},
+                }
+                project.setdefault("scenes", []).append(scene)
         else:
             duration = _duration(path)
             old = project.get(kind)
@@ -260,10 +309,47 @@ async def upload(project_id: str, request: Request, name: str, kind: str = "scen
                 # Replaced files are kept in the media folder until the project is removed. This makes undo/recovery possible.
                 pass
         project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
-        return _public(_write(project))
+        out = _public(_write(project))
+        if kind == "scene":
+            out["media_replaced"] = replaced
+        return out
     except Exception:
         path.unlink(missing_ok=True)
         raise
+
+
+@router.post("/{project_id}/match-media")
+def match_media(project_id: str):
+    project = _read(project_id)
+    scenes = project.get("scenes", [])
+    replaced = 0
+    for video in [scene for scene in scenes if scene.get("kind") == "video"]:
+        image = _matching_scene([scene for scene in scenes if scene is not video], str(video.get("name") or ""), "image")
+        if not image:
+            continue
+        image["alternate_source"] = _source_snapshot(image)
+        _activate_source(image, _source_snapshot(video))
+        scenes.remove(video)
+        replaced += 1
+    if not replaced:
+        raise UserError("Совпадений не найдено. Добавьте одинаковый номер сцены в имена фото и видео, например 012.jpg и 012.mp4.")
+    project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
+    out = _public(_write(project))
+    out["media_replaced"] = replaced
+    return out
+
+
+@router.post("/{project_id}/scene/{scene_id}/swap-source")
+def swap_scene_source(project_id: str, scene_id: str):
+    project = _read(project_id)
+    scene = next((item for item in project.get("scenes", []) if item.get("id") == scene_id), None)
+    if not scene or not isinstance(scene.get("alternate_source"), dict):
+        raise UserError("Для этой сцены нет второго варианта.")
+    current = _source_snapshot(scene)
+    _activate_source(scene, scene["alternate_source"])
+    scene["alternate_source"] = current
+    project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
+    return _public(_write(project))
 
 
 @router.delete("/{project_id}/audio/{kind}")

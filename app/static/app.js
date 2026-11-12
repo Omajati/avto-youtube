@@ -3447,6 +3447,7 @@ async function viewLocalEditor(id) {
   p.transcript = p.transcript || { status: "idle", text: "", words: [], language: "", model: "small", error: "", step: "" };
   let saveTimer = null, saving = false;
   const motionOptions = [["none", "Без движения"], ["zoom_in", "Медленное приближение"], ["zoom_out", "Медленное отдаление"], ["pan_left", "Панорама влево"], ["pan_right", "Панорама вправо"]];
+  const transitionOptions = [["cut", "Обычный стык"], ["fade", "Через затемнение"]];
   const graphicOptions = [["none", "Без моушен-графики"], ["counter", "Крупная цифра / счётчик"], ["money", "Деньги"], ["percent", "Процент в круге"], ["bar", "Шкала заполнения"], ["timer", "Обратный отсчёт"], ["stopwatch", "Секундомер"], ["up", "Стрелка роста"], ["down", "Стрелка падения"], ["date", "Дата"], ["rank", "Место в рейтинге"], ["keyword", "Крупная надпись"]];
   const options = (items, value) => items.map(([k, n]) => `<option value="${k}" ${k === value ? "selected" : ""}>${n}</option>`).join("");
   const busy = () => p.render?.status === "running" || p.transcript?.status === "running";
@@ -3469,14 +3470,14 @@ async function viewLocalEditor(id) {
       ${s.kind === "video" ? `<label>Начало <input type="number" min="0" max="${s.source_duration}" step=".1" data-sf="trim_start" value="${Number(s.trim_start).toFixed(2)}"></label><label>Конец <input type="number" min=".1" max="${s.source_duration}" step=".1" data-sf="trim_end" value="${Number(s.trim_end).toFixed(2)}"></label>` : ""}
       <select data-sf="fit">${options([["cover", "Заполнить кадр"], ["contain", "Вписать целиком"]], s.fit)}</select>
       ${s.kind === "image" ? `<select data-sf="motion">${options(motionOptions, s.motion)}</select>` : ""}
-      <select data-sf="transition">${options([["cut", "Обычный стык"], ["fade", "Через затемнение"]], s.transition)}</select>
+      <select data-sf="transition">${options(transitionOptions, s.transition)}</select>
     </div><details class="le-scene-gfx" ${g.type !== "none" ? "open" : ""}><summary>Моушен-графика: <b>${esc((graphicOptions.find(x => x[0] === g.type) || graphicOptions[0])[1])}</b></summary>
       <div class="row le-gfx-fields"><select data-gf="type">${options(graphicOptions, g.type || "none")}</select>
       <input type="text" data-gf="value" value="${esc(g.value)}" placeholder="Значение: 75 или 1896" ${g.type === "none" ? "disabled" : ""}>
       <input type="text" data-gf="unit" value="${esc(g.unit)}" placeholder="Единица: %, ₽, млн" ${g.type === "none" ? "disabled" : ""}>
       <input type="text" data-gf="label" value="${esc(g.label)}" placeholder="Короткая подпись" ${g.type === "none" ? "disabled" : ""}>
       <label>Старт <input type="number" data-gf="start" min="0" max="${Number(s.duration).toFixed(2)}" step=".1" value="${Number(g.start || 0).toFixed(1)}" ${g.type === "none" ? "disabled" : ""}> сек</label></div></details>
-    </div><div class="le-actions"><button class="sm" data-up title="Выше">↑</button><button class="sm" data-down title="Ниже">↓</button><button class="sm danger" data-remove title="Убрать с таймлайна">✕</button></div>
+    </div><div class="le-actions">${s.alternate_source ? `<button class="sm" data-swap-source title="Переключить фото и видео">${s.kind === "video" ? "Фото" : "Видео"}</button>` : ""}<button class="sm" data-up title="Выше">↑</button><button class="sm" data-down title="Ниже">↓</button><button class="sm danger" data-remove title="Убрать с таймлайна">✕</button></div>
   </article>`; };
   const renderState = () => {
     const r = p.render || {};
@@ -3515,6 +3516,7 @@ async function viewLocalEditor(id) {
   };
   const draw = () => {
     const total = p.scenes.reduce((n, s) => n + Number(s.duration || 0), 0); p.duration = total;
+    const imageCount = p.scenes.filter(s => s.kind === "image").length, videoCount = p.scenes.length - imageCount;
     const tr = p.transcript || {}, modelOptions = Object.entries(whisper.models || {}).map(([k, v]) => `<option value="${k}" ${k === (tr.model || "small") ? "selected" : ""}>${esc(v.name)} · ${esc(v.size)}</option>`).join("");
     main.innerHTML = `<div class="row le-titlebar"><a class="btn sm" href="#/local-editor">← Все монтажи</a><input id="le-title" class="grow" type="text" value="${esc(p.title)}"><span id="le-saved" class="muted small">✓ Сохранено</span></div>
     <div class="le-toolbar card"><div class="row"><label>Формат <select id="le-format"><option value="long" ${p.format === "long" ? "selected" : ""}>YouTube 16:9</option><option value="short" ${p.format === "short" ? "selected" : ""}>Shorts / Reels 9:16</option></select></label>
@@ -3539,22 +3541,33 @@ async function viewLocalEditor(id) {
     <div class="card le-graphics-master"><div class="row"><h2 class="grow">Моушен-графика</h2><label class="check le-mastercheck"><input id="le-gfx-enabled" type="checkbox" ${p.graphics_enabled ? "checked" : ""}> Использовать в ролике</label></div>
       <div class="row"><button id="le-gfx-detect" ${p.transcript?.status !== "done" || !p.scenes.length || busy() ? "disabled" : ""}>Найти цифры в тексте Whisper</button><span class="muted small">Можно отключить всё одним переключателем или настроить только выбранные сцены. Никаких API.</span></div></div>
     <div class="row le-timeline-head"><h2 class="grow">Таймлайн</h2><span class="muted small">Перетаскивайте сцены за ⋮⋮ или используйте стрелки</span></div>
+    <div class="card le-bulk-tools"><div class="row"><b>Видео вместо фото</b>
+      <button id="le-match-media" class="sm" ${busy() || !imageCount || !videoCount ? "disabled" : ""}>Сопоставить по имени или номеру</button>
+      <span class="muted small">Например, 012.jpg и 012.mp4 — видео автоматически займёт место фото. Фото: ${imageCount} · видео: ${videoCount}</span></div>
+      <div class="row le-bulk-motion"><b>Движение камеры для всех фото</b><select id="le-motion-all" ${busy() || !imageCount ? "disabled" : ""}>${options([["auto", "Чередовать автоматически"], ...motionOptions], "auto")}</select>
+      <button id="le-apply-motion" class="sm" ${busy() || !imageCount ? "disabled" : ""}>Применить ко всем фото</button></div>
+      <div class="row le-bulk-transition"><b>Переход для всех сцен</b><select id="le-transition-all" ${busy() || !p.scenes.length ? "disabled" : ""}>${options(transitionOptions, "fade")}</select>
+      <button id="le-apply-transition" class="sm" ${busy() || !p.scenes.length ? "disabled" : ""}>Применить ко всем</button><span class="muted small">Любую сцену потом можно изменить отдельно.</span></div></div>
     <div id="le-timeline" class="le-timeline">${p.scenes.length ? p.scenes.map(sceneCard).join("") : `<label class="le-empty">Перетащите сюда фото и видео или нажмите «＋ Фото и видео»<input id="le-empty-files" type="file" accept="image/*,video/*" multiple hidden></label>`}</div>
     <div class="card le-render"><h2>Сборка</h2>${renderState()}<div class="row"><button id="le-preview" ${busy() || !p.scenes.length ? "disabled" : ""}>▶ Быстрый предпросмотр</button><button class="primary" id="le-final" ${busy() || !p.scenes.length ? "disabled" : ""}>Экспорт 1080p MP4</button><span class="muted small">Всё собирает FFmpeg на вашем Mac.</span></div></div>${outputBox()}`;
     bind(); waveform();
   };
   const uploadFiles = async (files, kind) => {
-    files = [...files]; if (!files.length || busy()) return;
+    files = [...files];
+    if (kind === "scene") files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+    if (!files.length || busy()) return;
     const lab = $("#le-uploading");
+    let replaced = 0;
     try {
       for (const [i, file] of files.entries()) {
         if (lab) lab.textContent = `Загружаю ${i + 1} из ${files.length}: ${file.name}`;
         const r = await fetch(`/api/local-editor/${id}/upload?kind=${kind}&name=${encodeURIComponent(file.name)}`, { method: "POST", body: file });
         let data = {}; try { data = await r.json(); } catch (e) { }
         if (!r.ok) throw new Error(data.error || data.detail || `Не удалось загрузить ${file.name}`);
+        if (data.media_replaced) replaced++;
         p = data;
       }
-      draw(); toast(kind === "scene" ? "Файлы добавлены на таймлайн" : kind === "voice" ? "Озвучка добавлена" : "Музыка добавлена");
+      draw(); toast(kind === "scene" ? (replaced ? `Видео поставлено вместо фото: ${replaced}` : "Файлы добавлены на таймлайн") : kind === "voice" ? "Озвучка добавлена" : "Музыка добавлена");
     } catch (e) { toast(e.message, true); if (lab) lab.textContent = ""; }
   };
   const move = async (i, to) => { if (to < 0 || to >= p.scenes.length || i === to) return; const [s] = p.scenes.splice(i, 1); p.scenes.splice(to, 0, s); await save(true); draw(); };
@@ -3589,6 +3602,9 @@ async function viewLocalEditor(id) {
     $("#le-subs-pos")?.addEventListener("change", e => { p.subtitles_position = e.target.value; saveSoon(); });
     $("#le-gfx-enabled")?.addEventListener("change", e => { p.graphics_enabled = e.target.checked; saveSoon(); });
     $("#le-gfx-detect")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/suggest-graphics`, { method: "POST" }); draw(); toast(`Добавлено анимаций: ${p.graphics_added || 0}`); } catch (e) { toast(e.message, true); } });
+    $("#le-match-media")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/match-media`, { method: "POST" }); const count = p.media_replaced || 0; draw(); toast(`Видео поставлено вместо фото: ${count}`); } catch (e) { toast(e.message, true); } });
+    $("#le-apply-motion")?.addEventListener("click", async () => { const value = $("#le-motion-all").value, cycle = ["zoom_in", "pan_left", "zoom_out", "pan_right"]; let i = 0; p.scenes.forEach(s => { if (s.kind === "image") s.motion = value === "auto" ? cycle[i++ % cycle.length] : value; }); await save(true); draw(); toast(value === "auto" ? "Движения камеры автоматически чередуются" : "Движение применено ко всем фотографиям"); });
+    $("#le-apply-transition")?.addEventListener("click", async () => { const value = $("#le-transition-all").value; p.scenes.forEach(s => { s.transition = value; }); await save(true); draw(); toast(value === "fade" ? "Затемнение применено ко всем сценам" : "Обычный стык применён ко всем сценам"); });
     main.querySelectorAll("[data-audio-remove]").forEach(b => b.onclick = async () => { try { p = await api(`/api/local-editor/${id}/audio/${b.dataset.audioRemove}`, { method: "DELETE" }); draw(); } catch (e) { toast(e.message, true); } });
     $("#le-preview").onclick = () => startRender("preview"); $("#le-final").onclick = () => startRender("final");
     const rows = [...main.querySelectorAll(".le-scene")];
@@ -3599,6 +3615,7 @@ async function viewLocalEditor(id) {
         el.addEventListener(event, () => { const s = p.scenes[i], k = el.dataset.gf; s.graphic = s.graphic || { type: "none", value: "", unit: "", label: "", start: .2 }; s.graphic[k] = el.type === "number" ? +el.value : el.value; saveSoon(); if (k === "type") draw(); });
       });
       row.querySelector("[data-up]").onclick = () => move(i, i - 1); row.querySelector("[data-down]").onclick = () => move(i, i + 1);
+      row.querySelector("[data-swap-source]")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/scene/${p.scenes[i].id}/swap-source`, { method: "POST" }); draw(); toast("Источник сцены переключён"); } catch (e) { toast(e.message, true); } });
       row.querySelector("[data-remove]").onclick = async () => { p.scenes.splice(i, 1); await save(true); draw(); };
       row.querySelector("video")?.addEventListener("click", e => { if (e.target.paused) e.target.play(); else e.target.pause(); });
       row.addEventListener("dragstart", e => { row.classList.add("drag"); e.dataTransfer.setData("text/plain", String(i)); e.dataTransfer.effectAllowed = "move"; });
