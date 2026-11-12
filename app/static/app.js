@@ -3526,18 +3526,20 @@ async function viewLocalEditor(id) {
         <label class="btn">🎙 Озвучка<input id="le-voice" type="file" accept="audio/*,video/mp4,video/quicktime" hidden></label>
         <label class="btn">♫ Музыка<input id="le-music" type="file" accept="audio/*" hidden></label>
         <span id="le-uploading" class="muted small"></span></div></div>
+    <div class="card le-render le-render-top"><div class="row"><h2 class="grow">Сборка</h2><span class="muted small">Всегда наверху · всё собирает FFmpeg на вашем Mac</span></div>${renderState()}<div class="row"><button id="le-preview" ${busy() || !p.scenes.length ? "disabled" : ""}>▶ Быстрый предпросмотр</button><button class="primary" id="le-final" ${busy() || !p.scenes.length ? "disabled" : ""}>Экспорт 1080p MP4</button></div></div>
     <div class="card le-audio"><div class="row"><h2 class="grow">Звук</h2>${p.voice ? `<span class="small">🎙 ${esc(p.voice.name)} (${fmtTime(p.voice.duration)})</span><button class="sm danger" data-audio-remove="voice">Убрать</button>` : `<span class="muted small">Озвучка не добавлена — ролик будет без голоса</span>`}</div>
       ${p.voice ? `<canvas id="le-wave"></canvas>` : ""}
-      <div class="row le-musicline">${p.music ? `<span class="grow small">♫ ${esc(p.music.name)} (${fmtTime(p.music.duration)})</span><label>Громкость музыки <input id="le-music-volume" type="range" min="0" max="1" step=".01" value="${p.music_volume}"><b id="le-music-value">${Math.round(p.music_volume * 100)}%</b></label><button class="sm danger" data-audio-remove="music">Убрать</button>` : `<span class="muted small">Музыка не добавлена</span>`}</div>
+      <div class="row le-musicline">${p.music ? `<span class="grow small">♫ ${esc(p.music.name)} (${fmtTime(p.music.duration)}) · автоматически повторяется до конца ролика</span><label>Громкость музыки <input id="le-music-volume" type="range" min="0" max="1" step=".01" value="${p.music_volume}"><b id="le-music-value">${Math.round(p.music_volume * 100)}%</b></label><button class="sm danger" data-audio-remove="music">Убрать</button>` : `<span class="muted small">Музыка не добавлена · короткий трек будет автоматически зациклен</span>`}</div>
       ${p.voice ? `<div class="le-whisper"><h3>Локальный Whisper</h3><div class="row">
         <select id="le-whisper-model" ${busy() ? "disabled" : ""}>${modelOptions || `<option value="small">Whisper Small</option>`}</select>
         <select id="le-whisper-lang" ${busy() ? "disabled" : ""}>${options([["", "Язык: определить автоматически"], ["ru", "Русский"], ["en", "Английский"], ["de", "Немецкий"], ["es", "Испанский"], ["fr", "Французский"]], tr.language || "")}</select>
         <button id="le-transcribe" ${busy() || !whisper.installed ? "disabled" : ""}>${tr.status === "done" ? "Расшифровать заново" : "Расшифровать голос"}</button>
         ${!whisper.installed ? `<span class="muted small">Библиотека Whisper ещё не установлена.</span>` : `<span class="muted small">Без API: звук не покидает Mac. Модель загружается один раз.</span>`}
       </div>${transcriptState()}
-      ${tr.status === "done" ? `<div class="row le-transcript-tools"><b>${(tr.words || []).length} слов · язык ${esc(tr.language || "определён")}</b><button id="le-sync" ${!p.scenes.length ? "disabled" : ""}>Подогнать сцены к голосу</button><a class="btn sm" href="${tr.srt_url || `/api/local-editor/${p.id}/output/subtitles`}">Скачать SRT</a>
-        <label class="check le-subcheck"><input id="le-subs" type="checkbox" ${p.subtitles !== false ? "checked" : ""}> Субтитры на видео</label>
-        <select id="le-subs-pos">${options([["low", "Субтитры: внизу"], ["mid_low", "Субтитры: ниже середины"], ["mid", "Субтитры: чуть ниже центра"], ["center", "Субтитры: по центру"]], p.subtitles_position || "mid_low")}</select></div><textarea class="le-transcript" readonly>${esc(tr.text)}</textarea>` : ""}</div>` : ""}</div>
+      ${tr.status === "done" ? `<div class="row le-transcript-tools"><b>${(tr.words || []).length} слов · язык ${esc(tr.language || "определён")}</b><span class="badge done">${p.scenes_synced ? "Сцены синхронизированы" : "Нужна синхронизация"}</span><button id="le-sync" ${!p.scenes.length ? "disabled" : ""}>Синхронизировать заново</button></div><textarea class="le-transcript" readonly>${esc(tr.text)}</textarea>` : ""}</div>` : ""}</div>
+    <div class="card le-subtitles"><div class="row"><h2 class="grow">Субтитры</h2><label class="check le-subcheck"><input id="le-subs" type="checkbox" ${p.subtitles !== false ? "checked" : ""}> Показывать на видео</label>
+      <select id="le-subs-pos">${options([["low", "Внизу"], ["mid_low", "Ниже середины"], ["mid", "Чуть ниже центра"], ["center", "По центру"]], p.subtitles_position || "mid_low")}</select>
+      ${tr.status === "done" ? `<a class="btn sm" href="${tr.srt_url || `/api/local-editor/${p.id}/output/subtitles`}">Скачать SRT</a>` : `<span class="muted small">Появятся после расшифровки голоса Whisper.</span>`}</div></div>
     <div class="card le-graphics-master"><div class="row"><h2 class="grow">Моушен-графика</h2><label class="check le-mastercheck"><input id="le-gfx-enabled" type="checkbox" ${p.graphics_enabled ? "checked" : ""}> Использовать в ролике</label></div>
       <div class="row"><button id="le-gfx-detect" ${p.transcript?.status !== "done" || !p.scenes.length || busy() ? "disabled" : ""}>Найти цифры в тексте Whisper</button><span class="muted small">Можно отключить всё одним переключателем или настроить только выбранные сцены. Никаких API.</span></div></div>
     <div class="row le-timeline-head"><h2 class="grow">Таймлайн</h2><span class="muted small">Перетаскивайте сцены за ⋮⋮ или используйте стрелки</span></div>
@@ -3546,10 +3548,10 @@ async function viewLocalEditor(id) {
       <span class="muted small">Например, 012.jpg и 012.mp4 — видео автоматически займёт место фото. Фото: ${imageCount} · видео: ${videoCount}</span></div>
       <div class="row le-bulk-motion"><b>Движение камеры для всех фото</b><select id="le-motion-all" ${busy() || !imageCount ? "disabled" : ""}>${options([["auto", "Чередовать автоматически"], ...motionOptions], "auto")}</select>
       <button id="le-apply-motion" class="sm" ${busy() || !imageCount ? "disabled" : ""}>Применить ко всем фото</button></div>
-      <div class="row le-bulk-transition"><b>Переход для всех сцен</b><select id="le-transition-all" ${busy() || !p.scenes.length ? "disabled" : ""}>${options(transitionOptions, "fade")}</select>
+      <div class="row le-bulk-transition"><b>Переход для всех сцен</b><select id="le-transition-all" ${busy() || !p.scenes.length ? "disabled" : ""}>${options([["auto", "Чередовать автоматически"], ...transitionOptions], "auto")}</select>
       <button id="le-apply-transition" class="sm" ${busy() || !p.scenes.length ? "disabled" : ""}>Применить ко всем</button><span class="muted small">Любую сцену потом можно изменить отдельно.</span></div></div>
     <div id="le-timeline" class="le-timeline">${p.scenes.length ? p.scenes.map(sceneCard).join("") : `<label class="le-empty">Перетащите сюда фото и видео или нажмите «＋ Фото и видео»<input id="le-empty-files" type="file" accept="image/*,video/*" multiple hidden></label>`}</div>
-    <div class="card le-render"><h2>Сборка</h2>${renderState()}<div class="row"><button id="le-preview" ${busy() || !p.scenes.length ? "disabled" : ""}>▶ Быстрый предпросмотр</button><button class="primary" id="le-final" ${busy() || !p.scenes.length ? "disabled" : ""}>Экспорт 1080p MP4</button><span class="muted small">Всё собирает FFmpeg на вашем Mac.</span></div></div>${outputBox()}`;
+    ${outputBox()}`;
     bind(); waveform();
   };
   const uploadFiles = async (files, kind) => {
@@ -3567,7 +3569,11 @@ async function viewLocalEditor(id) {
         if (data.media_replaced) replaced++;
         p = data;
       }
-      draw(); toast(kind === "scene" ? (replaced ? `Видео поставлено вместо фото: ${replaced}` : "Файлы добавлены на таймлайн") : kind === "voice" ? "Озвучка добавлена" : "Музыка добавлена");
+      let synced = false;
+      if (kind === "scene" && p.transcript?.status === "done" && p.scenes.length) {
+        p = await api(`/api/local-editor/${id}/sync-scenes`, { method: "POST" }); synced = true;
+      }
+      draw(); toast(kind === "scene" ? (synced ? "Файлы добавлены, сцены синхронизированы с голосом" : replaced ? `Видео поставлено вместо фото: ${replaced}` : "Файлы добавлены на таймлайн") : kind === "voice" ? "Озвучка добавлена" : "Музыка добавлена");
     } catch (e) { toast(e.message, true); if (lab) lab.textContent = ""; }
   };
   const move = async (i, to) => { if (to < 0 || to >= p.scenes.length || i === to) return; const [s] = p.scenes.splice(i, 1); p.scenes.splice(to, 0, s); await save(true); draw(); };
@@ -3583,7 +3589,7 @@ async function viewLocalEditor(id) {
   };
   const poll = () => {
     clearInterval(timer); timer = setInterval(async () => {
-      try { const wasRender = p.render?.status === "running", wasWhisper = p.transcript?.status === "running"; p = await api(`/api/local-editor/${id}`); if (!busy()) { clearInterval(timer); timer = null; draw(); if (wasRender && p.render.status === "done") toast(p.render.quality === "final" ? "Готовый ролик собран" : "Предпросмотр готов"); if (wasWhisper && p.transcript.status === "done") toast("Whisper закончил расшифровку"); } else { const rb = $(".le-render .banner"); if (rb && p.render?.status === "running") rb.outerHTML = renderState(); const tb = $(".le-transcribe-state"); if (tb) tb.outerHTML = transcriptState(); } }
+      try { const wasRender = p.render?.status === "running", wasWhisper = p.transcript?.status === "running"; p = await api(`/api/local-editor/${id}`); if (!busy()) { clearInterval(timer); timer = null; draw(); if (wasRender && p.render.status === "done") toast(p.render.quality === "final" ? "Готовый ролик собран" : "Предпросмотр готов"); if (wasWhisper && p.transcript.status === "done") toast(p.scenes_synced ? "Whisper готов, сцены автоматически подогнаны к речи" : "Whisper закончил расшифровку"); } else { const rb = $(".le-render .banner"); if (rb && p.render?.status === "running") rb.outerHTML = renderState(); const tb = $(".le-transcribe-state"); if (tb) tb.outerHTML = transcriptState(); } }
       catch (e) { clearInterval(timer); timer = null; toast(e.message, true); }
     }, 1200);
   };
@@ -3602,9 +3608,9 @@ async function viewLocalEditor(id) {
     $("#le-subs-pos")?.addEventListener("change", e => { p.subtitles_position = e.target.value; saveSoon(); });
     $("#le-gfx-enabled")?.addEventListener("change", e => { p.graphics_enabled = e.target.checked; saveSoon(); });
     $("#le-gfx-detect")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/suggest-graphics`, { method: "POST" }); draw(); toast(`Добавлено анимаций: ${p.graphics_added || 0}`); } catch (e) { toast(e.message, true); } });
-    $("#le-match-media")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/match-media`, { method: "POST" }); const count = p.media_replaced || 0; draw(); toast(`Видео поставлено вместо фото: ${count}`); } catch (e) { toast(e.message, true); } });
+    $("#le-match-media")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/match-media`, { method: "POST" }); const count = p.media_replaced || 0; if (p.transcript?.status === "done") p = await api(`/api/local-editor/${id}/sync-scenes`, { method: "POST" }); draw(); toast(`Видео поставлено вместо фото: ${count}`); } catch (e) { toast(e.message, true); } });
     $("#le-apply-motion")?.addEventListener("click", async () => { const value = $("#le-motion-all").value, cycle = ["zoom_in", "pan_left", "zoom_out", "pan_right"]; let i = 0; p.scenes.forEach(s => { if (s.kind === "image") s.motion = value === "auto" ? cycle[i++ % cycle.length] : value; }); await save(true); draw(); toast(value === "auto" ? "Движения камеры автоматически чередуются" : "Движение применено ко всем фотографиям"); });
-    $("#le-apply-transition")?.addEventListener("click", async () => { const value = $("#le-transition-all").value; p.scenes.forEach(s => { s.transition = value; }); await save(true); draw(); toast(value === "fade" ? "Затемнение применено ко всем сценам" : "Обычный стык применён ко всем сценам"); });
+    $("#le-apply-transition")?.addEventListener("click", async () => { const value = $("#le-transition-all").value, cycle = ["fade", "cut"]; p.scenes.forEach((s, i) => { s.transition = value === "auto" ? cycle[i % cycle.length] : value; }); await save(true); draw(); toast(value === "auto" ? "Переходы автоматически чередуются" : value === "fade" ? "Затемнение применено ко всем сценам" : "Обычный стык применён ко всем сценам"); });
     main.querySelectorAll("[data-audio-remove]").forEach(b => b.onclick = async () => { try { p = await api(`/api/local-editor/${id}/audio/${b.dataset.audioRemove}`, { method: "DELETE" }); draw(); } catch (e) { toast(e.message, true); } });
     $("#le-preview").onclick = () => startRender("preview"); $("#le-final").onclick = () => startRender("final");
     const rows = [...main.querySelectorAll(".le-scene")];

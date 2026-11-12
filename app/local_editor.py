@@ -103,6 +103,7 @@ def _default_project(project_id: str, title: str, format_: str) -> dict:
         "graphics_enabled": False,
         "subtitles": True,
         "subtitles_position": "mid_low",
+        "scenes_synced": False,
         "voice": None,
         "music": None,
         "scenes": [],
@@ -298,12 +299,14 @@ async def upload(project_id: str, request: Request, name: str, kind: str = "scen
                     "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2},
                 }
                 project.setdefault("scenes", []).append(scene)
+                project["scenes_synced"] = False
         else:
             duration = _duration(path)
             old = project.get(kind)
             project[kind] = {"source": filename, "name": Path(name).name, "duration": round(duration, 3)}
             if kind == "voice":
                 project["transcript"] = {"status": "idle", "text": "", "words": [], "language": "", "model": "small", "error": "", "step": ""}
+                project["scenes_synced"] = False
                 (path.parent.parent / "render" / "subtitles.srt").unlink(missing_ok=True)
             if old and FILE_ID.fullmatch(str(old.get("source") or "")):
                 # Replaced files are kept in the media folder until the project is removed. This makes undo/recovery possible.
@@ -333,6 +336,7 @@ def match_media(project_id: str):
         replaced += 1
     if not replaced:
         raise UserError("Совпадений не найдено. Добавьте одинаковый номер сцены в имена фото и видео, например 012.jpg и 012.mp4.")
+    project["scenes_synced"] = False
     project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
     out = _public(_write(project))
     out["media_replaced"] = replaced
@@ -360,6 +364,7 @@ def remove_audio(project_id: str, kind: str):
     project[kind] = None
     if kind == "voice":
         project["transcript"] = {"status": "idle", "text": "", "words": [], "language": "", "model": "small", "error": "", "step": ""}
+        project["scenes_synced"] = False
         (_project_dir(project_id) / "render" / "subtitles.srt").unlink(missing_ok=True)
     project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
     return _public(_write(project))
@@ -455,6 +460,11 @@ def _transcribe_worker(project_id: str, model: str, language: str):
             "status": "done", "text": text, "words": words, "language": detected,
             "model": model, "error": "", "step": "Готово", "finished": _now(),
         }
+        if project.get("scenes"):
+            cuts = _sync_cuts(project)
+            for scene, start, end in zip(project["scenes"], cuts, cuts[1:]):
+                scene["duration"] = round(end - start, 3)
+            project["scenes_synced"] = True
         _write_srt(project)
         _write(project)
     except Exception as exc:
@@ -522,6 +532,7 @@ def sync_scenes(project_id: str):
     cuts = _sync_cuts(project)
     for scene, start, end in zip(project["scenes"], cuts, cuts[1:]):
         scene["duration"] = round(end - start, 3)
+    project["scenes_synced"] = True
     project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
     return _public(_write(project))
 

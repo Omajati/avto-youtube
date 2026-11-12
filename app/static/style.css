@@ -498,6 +498,8 @@ details.mc.st-subs { border-left-color: #2563eb; }
 .le-transcript { min-height: 120px; font-size: 13px; line-height: 1.5; }
 .le-subcheck { display: inline-flex; grid-template-columns: none; gap: 6px; align-items: center; margin: 0; font-size: 13px; }
 .le-subcheck input { grid-row: auto; }
+.le-subtitles h2, .le-render-top h2 { margin: 0; }
+.le-render-top { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
 .le-transcribe-state:empty { display: none; }
 .le-graphics-master h2 { margin: 0; }
 .le-mastercheck { display: inline-flex; grid-template-columns: none; gap: 7px; align-items: center; margin: 0; }
