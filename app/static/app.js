@@ -3531,6 +3531,7 @@ async function viewLocalEditor(id) {
         <label class="btn">♫ Музыка<input id="le-music" type="file" accept="audio/*" hidden></label>
         <span id="le-uploading" class="muted small"></span></div></div>
     <div class="card le-render le-render-top"><div class="row"><h2 class="grow">Сборка</h2><span class="muted small">Всегда наверху · всё собирает FFmpeg на вашем Mac</span></div>${renderState()}<div class="row"><button id="le-preview" ${busy() || !p.scenes.length ? "disabled" : ""}>▶ Быстрый предпросмотр</button><button class="primary" id="le-final" ${busy() || !p.scenes.length ? "disabled" : ""}>Экспорт 1080p MP4</button></div></div>
+    ${outputBox()}
     <div class="card le-audio"><div class="row"><h2 class="grow">Звук</h2>${p.voice ? `<span class="small">🎙 ${esc(p.voice.name)} (${fmtTime(p.voice.duration)})</span><button class="sm danger" data-audio-remove="voice">Убрать</button>` : `<span class="muted small">Озвучка не добавлена — ролик будет без голоса</span>`}</div>
       ${p.voice ? `<canvas id="le-wave"></canvas>` : ""}
       <div class="row le-musicline">${p.music ? `<span class="grow small">♫ ${esc(p.music.name)} (${fmtTime(p.music.duration)}) · автоматически повторяется до конца ролика</span><label>Громкость музыки <input id="le-music-volume" type="range" min="0" max="1" step=".01" value="${p.music_volume}"><b id="le-music-value">${Math.round(p.music_volume * 100)}%</b></label><button class="sm danger" data-audio-remove="music">Убрать</button>` : `<span class="muted small">Музыка не добавлена · короткий трек будет автоматически зациклен</span>`}</div>
@@ -3554,8 +3555,7 @@ async function viewLocalEditor(id) {
       <button id="le-apply-motion" class="sm" ${busy() || !imageCount ? "disabled" : ""}>Применить ко всем фото</button></div>
       <div class="row le-bulk-transition"><b>Переход для всех сцен</b><select id="le-transition-all" ${busy() || !p.scenes.length ? "disabled" : ""}>${options([["auto", "Чередовать автоматически"], ...transitionOptions], "auto")}</select>
       <button id="le-apply-transition" class="sm" ${busy() || !p.scenes.length ? "disabled" : ""}>Применить ко всем</button><span class="muted small">Любую сцену потом можно изменить отдельно.</span></div></div>
-    <div id="le-timeline" class="le-timeline">${p.scenes.length ? p.scenes.map(sceneCard).join("") : `<label class="le-empty">Перетащите сюда фото и видео или нажмите «＋ Фото и видео»<input id="le-empty-files" type="file" accept="image/*,video/*" multiple hidden></label>`}</div>
-    ${outputBox()}`;
+    <div id="le-timeline" class="le-timeline">${p.scenes.length ? p.scenes.map(sceneCard).join("") : `<label class="le-empty">Перетащите сюда фото и видео или нажмите «＋ Фото и видео»<input id="le-empty-files" type="file" accept="image/*,video/*" multiple hidden></label>`}</div>`;
     bind(); waveform();
   };
   const uploadFiles = async (files, kind) => {
