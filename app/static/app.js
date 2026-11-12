@@ -3447,6 +3447,7 @@ async function viewLocalEditor(id) {
   p.transcript = p.transcript || { status: "idle", text: "", words: [], language: "", model: "small", error: "", step: "" };
   let saveTimer = null, saving = false;
   const motionOptions = [["none", "Без движения"], ["zoom_in", "Медленное приближение"], ["zoom_out", "Медленное отдаление"], ["pan_left", "Панорама влево"], ["pan_right", "Панорама вправо"]];
+  const graphicOptions = [["none", "Без моушен-графики"], ["counter", "Крупная цифра / счётчик"], ["money", "Деньги"], ["percent", "Процент в круге"], ["bar", "Шкала заполнения"], ["timer", "Обратный отсчёт"], ["stopwatch", "Секундомер"], ["up", "Стрелка роста"], ["down", "Стрелка падения"], ["date", "Дата"], ["rank", "Место в рейтинге"], ["keyword", "Крупная надпись"]];
   const options = (items, value) => items.map(([k, n]) => `<option value="${k}" ${k === value ? "selected" : ""}>${n}</option>`).join("");
   const busy = () => p.render?.status === "running" || p.transcript?.status === "running";
   const save = async (quiet = false) => {
@@ -3461,7 +3462,7 @@ async function viewLocalEditor(id) {
   const mediaBox = s => s.kind === "image"
     ? `<img src="${s.url}" alt="${esc(s.name)}">`
     : `<video src="${s.url}#t=${Number(s.trim_start || 0).toFixed(2)}" preload="metadata" muted></video><span class="le-play">▶</span>`;
-  const sceneCard = (s, i) => `<article class="le-scene" data-scene="${s.id}" draggable="${busy() ? "false" : "true"}">
+  const sceneCard = (s, i) => { const g = s.graphic || { type: "none", value: "", unit: "", label: "", start: .2 }; return `<article class="le-scene" data-scene="${s.id}" draggable="${busy() ? "false" : "true"}">
     <div class="le-handle" title="Перетащите сцену">⋮⋮</div><div class="le-num">${i + 1}</div><div class="le-media">${mediaBox(s)}</div>
     <div class="le-fields"><b title="${esc(s.name)}">${esc(s.name)}</b><div class="row le-compact">
       <label>Длительность <input type="number" min=".1" step=".1" data-sf="duration" value="${Number(s.duration).toFixed(2)}"> сек</label>
@@ -3469,8 +3470,14 @@ async function viewLocalEditor(id) {
       <select data-sf="fit">${options([["cover", "Заполнить кадр"], ["contain", "Вписать целиком"]], s.fit)}</select>
       ${s.kind === "image" ? `<select data-sf="motion">${options(motionOptions, s.motion)}</select>` : ""}
       <select data-sf="transition">${options([["cut", "Обычный стык"], ["fade", "Через затемнение"]], s.transition)}</select>
-    </div></div><div class="le-actions"><button class="sm" data-up title="Выше">↑</button><button class="sm" data-down title="Ниже">↓</button><button class="sm danger" data-remove title="Убрать с таймлайна">✕</button></div>
-  </article>`;
+    </div><details class="le-scene-gfx" ${g.type !== "none" ? "open" : ""}><summary>Моушен-графика: <b>${esc((graphicOptions.find(x => x[0] === g.type) || graphicOptions[0])[1])}</b></summary>
+      <div class="row le-gfx-fields"><select data-gf="type">${options(graphicOptions, g.type || "none")}</select>
+      <input type="text" data-gf="value" value="${esc(g.value)}" placeholder="Значение: 75 или 1896" ${g.type === "none" ? "disabled" : ""}>
+      <input type="text" data-gf="unit" value="${esc(g.unit)}" placeholder="Единица: %, ₽, млн" ${g.type === "none" ? "disabled" : ""}>
+      <input type="text" data-gf="label" value="${esc(g.label)}" placeholder="Короткая подпись" ${g.type === "none" ? "disabled" : ""}>
+      <label>Старт <input type="number" data-gf="start" min="0" max="${Number(s.duration).toFixed(2)}" step=".1" value="${Number(g.start || 0).toFixed(1)}" ${g.type === "none" ? "disabled" : ""}> сек</label></div></details>
+    </div><div class="le-actions"><button class="sm" data-up title="Выше">↑</button><button class="sm" data-down title="Ниже">↓</button><button class="sm danger" data-remove title="Убрать с таймлайна">✕</button></div>
+  </article>`; };
   const renderState = () => {
     const r = p.render || {};
     if (r.status === "running") return `<div class="banner info"><b>${r.quality === "final" ? "Собираю готовый ролик" : "Собираю предпросмотр"}…</b><div class="bar" style="margin-top:9px"><div style="width:${Math.round((r.progress || 0) * 100)}%"></div></div><div class="small muted" style="margin-top:5px">${Math.round((r.progress || 0) * 100)}% · окно можно оставить открытым</div></div>`;
@@ -3529,6 +3536,8 @@ async function viewLocalEditor(id) {
       ${tr.status === "done" ? `<div class="row le-transcript-tools"><b>${(tr.words || []).length} слов · язык ${esc(tr.language || "определён")}</b><button id="le-sync" ${!p.scenes.length ? "disabled" : ""}>Подогнать сцены к голосу</button><a class="btn sm" href="${tr.srt_url || `/api/local-editor/${p.id}/output/subtitles`}">Скачать SRT</a>
         <label class="check le-subcheck"><input id="le-subs" type="checkbox" ${p.subtitles !== false ? "checked" : ""}> Субтитры на видео</label>
         <select id="le-subs-pos">${options([["low", "Субтитры: внизу"], ["mid_low", "Субтитры: ниже середины"], ["mid", "Субтитры: чуть ниже центра"], ["center", "Субтитры: по центру"]], p.subtitles_position || "mid_low")}</select></div><textarea class="le-transcript" readonly>${esc(tr.text)}</textarea>` : ""}</div>` : ""}</div>
+    <div class="card le-graphics-master"><div class="row"><h2 class="grow">Моушен-графика</h2><label class="check le-mastercheck"><input id="le-gfx-enabled" type="checkbox" ${p.graphics_enabled ? "checked" : ""}> Использовать в ролике</label></div>
+      <div class="row"><button id="le-gfx-detect" ${p.transcript?.status !== "done" || !p.scenes.length || busy() ? "disabled" : ""}>Найти цифры в тексте Whisper</button><span class="muted small">Можно отключить всё одним переключателем или настроить только выбранные сцены. Никаких API.</span></div></div>
     <div class="row le-timeline-head"><h2 class="grow">Таймлайн</h2><span class="muted small">Перетаскивайте сцены за ⋮⋮ или используйте стрелки</span></div>
     <div id="le-timeline" class="le-timeline">${p.scenes.length ? p.scenes.map(sceneCard).join("") : `<label class="le-empty">Перетащите сюда фото и видео или нажмите «＋ Фото и видео»<input id="le-empty-files" type="file" accept="image/*,video/*" multiple hidden></label>`}</div>
     <div class="card le-render"><h2>Сборка</h2>${renderState()}<div class="row"><button id="le-preview" ${busy() || !p.scenes.length ? "disabled" : ""}>▶ Быстрый предпросмотр</button><button class="primary" id="le-final" ${busy() || !p.scenes.length ? "disabled" : ""}>Экспорт 1080p MP4</button><span class="muted small">Всё собирает FFmpeg на вашем Mac.</span></div></div>${outputBox()}`;
@@ -3578,11 +3587,17 @@ async function viewLocalEditor(id) {
     $("#le-sync")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/sync-scenes`, { method: "POST" }); draw(); toast("Сцены подогнаны к паузам и длине озвучки"); } catch (e) { toast(e.message, true); } });
     $("#le-subs")?.addEventListener("change", e => { p.subtitles = e.target.checked; saveSoon(); });
     $("#le-subs-pos")?.addEventListener("change", e => { p.subtitles_position = e.target.value; saveSoon(); });
+    $("#le-gfx-enabled")?.addEventListener("change", e => { p.graphics_enabled = e.target.checked; saveSoon(); });
+    $("#le-gfx-detect")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/suggest-graphics`, { method: "POST" }); draw(); toast(`Добавлено анимаций: ${p.graphics_added || 0}`); } catch (e) { toast(e.message, true); } });
     main.querySelectorAll("[data-audio-remove]").forEach(b => b.onclick = async () => { try { p = await api(`/api/local-editor/${id}/audio/${b.dataset.audioRemove}`, { method: "DELETE" }); draw(); } catch (e) { toast(e.message, true); } });
     $("#le-preview").onclick = () => startRender("preview"); $("#le-final").onclick = () => startRender("final");
     const rows = [...main.querySelectorAll(".le-scene")];
     rows.forEach((row, i) => {
       row.querySelectorAll("[data-sf]").forEach(el => el.onchange = () => { const s = p.scenes[i], k = el.dataset.sf; s[k] = el.type === "number" ? +el.value : el.value; saveSoon(); });
+      row.querySelectorAll("[data-gf]").forEach(el => {
+        const event = el.tagName === "INPUT" && el.type !== "number" ? "input" : "change";
+        el.addEventListener(event, () => { const s = p.scenes[i], k = el.dataset.gf; s.graphic = s.graphic || { type: "none", value: "", unit: "", label: "", start: .2 }; s.graphic[k] = el.type === "number" ? +el.value : el.value; saveSoon(); if (k === "type") draw(); });
+      });
       row.querySelector("[data-up]").onclick = () => move(i, i - 1); row.querySelector("[data-down]").onclick = () => move(i, i + 1);
       row.querySelector("[data-remove]").onclick = async () => { p.scenes.splice(i, 1); await save(true); draw(); };
       row.querySelector("video")?.addEventListener("click", e => { if (e.target.paused) e.target.play(); else e.target.pause(); });

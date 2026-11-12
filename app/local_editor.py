@@ -20,7 +20,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from . import captions, local_whisper, media
+from . import captions, graphics, local_whisper, media
 from .config import DATA_DIR
 from .net import UserError
 
@@ -36,6 +36,7 @@ FILE_ID = re.compile(r"[0-9a-f]{12}\.[a-z0-9]{2,6}")
 _lock = threading.RLock()
 _rendering: set[str] = set()
 _transcribing: set[str] = set()
+LOCAL_GRAPHICS = {"none", "counter", "money", "percent", "bar", "timer", "stopwatch", "up", "down", "date", "rank", "keyword"}
 
 
 def _now() -> int:
@@ -99,6 +100,7 @@ def _default_project(project_id: str, title: str, format_: str) -> dict:
         "format": "short" if format_ == "short" else "long",
         "fps": 30,
         "music_volume": 0.12,
+        "graphics_enabled": False,
         "subtitles": True,
         "subtitles_position": "mid_low",
         "voice": None,
@@ -164,6 +166,7 @@ def update_project(project_id: str, data: dict = Body(...)):
     project["format"] = "short" if data.get("format") == "short" else "long"
     project["fps"] = int(_number(data.get("fps", project.get("fps", 30)), 30, 24, 60))
     project["music_volume"] = _number(data.get("music_volume", project.get("music_volume", .12)), .12, 0, 1)
+    project["graphics_enabled"] = bool(data.get("graphics_enabled", project.get("graphics_enabled", False)))
     project["subtitles"] = bool(data.get("subtitles", project.get("subtitles", True)))
     project["subtitles_position"] = data.get("subtitles_position") if data.get("subtitles_position") in captions.POSITIONS else "mid_low"
     current = {s["id"]: s for s in project.get("scenes", [])}
@@ -177,6 +180,17 @@ def update_project(project_id: str, data: dict = Body(...)):
             scene["fit"] = sent.get("fit") if sent.get("fit") in ("cover", "contain") else "cover"
             scene["motion"] = sent.get("motion") if sent.get("motion") in ("none", "zoom_in", "zoom_out", "pan_left", "pan_right") else "none"
             scene["transition"] = sent.get("transition") if sent.get("transition") in ("cut", "fade") else "cut"
+            raw_graphic = sent.get("graphic") if isinstance(sent.get("graphic"), dict) else {}
+            graphic_type = str(raw_graphic.get("type") or "none")
+            if graphic_type not in LOCAL_GRAPHICS:
+                graphic_type = "none"
+            scene["graphic"] = {
+                "type": graphic_type,
+                "value": str(raw_graphic.get("value") or "")[:30],
+                "unit": str(raw_graphic.get("unit") or "")[:12],
+                "label": str(raw_graphic.get("label") or "")[:60],
+                "start": round(_number(raw_graphic.get("start"), .2, 0, 3600), 2),
+            }
             scene["duration"] = _number(sent.get("duration"), float(old.get("duration") or 5), .1, 3600)
             if scene["kind"] == "video":
                 source_duration = float(scene.get("source_duration") or scene["duration"])
@@ -232,6 +246,7 @@ async def upload(project_id: str, request: Request, name: str, kind: str = "scen
                 "kind": media_kind, "source_duration": round(source_duration, 3),
                 "trim_start": 0, "trim_end": round(source_duration, 3),
                 "duration": round(source_duration, 3), "fit": "cover", "motion": "none", "transition": "cut",
+                "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2},
             }
             project.setdefault("scenes", []).append(scene)
         else:
@@ -425,6 +440,88 @@ def sync_scenes(project_id: str):
     return _public(_write(project))
 
 
+def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
+    """Find numeric facts in the local Whisper transcript. No model or network call is used."""
+    words = project.get("transcript", {}).get("words", [])
+    scenes = project.get("scenes", [])
+    if not words or not scenes:
+        raise UserError("Сначала расшифруйте озвучку Whisper и добавьте сцены.")
+    ends, total = [], 0.0
+    for scene in scenes:
+        total += float(scene.get("duration") or 0)
+        ends.append(total)
+    suggestions, used_scenes, last_time = [], set(), -99.0
+    limit = 3 if project.get("format") == "short" else min(10, max(3, len(scenes) // 3))
+    for wi, raw in enumerate(words):
+        token = str(raw[0]).strip()
+        match = re.search(r"(?<!\w)([+−-]?[€$₽]?\d+(?:[.,]\d+)?[%€$₽]?)(?!\w)", token)
+        if not match:
+            continue
+        at = float(raw[1])
+        if at - last_time < (4 if project.get("format") == "short" else 8):
+            continue
+        scene_i = next((i for i, end in enumerate(ends) if at < end), len(scenes) - 1)
+        if scene_i in used_scenes:
+            continue
+        shown = match.group(1).replace("−", "-")
+        clean = re.sub(r"[^\d.,+-]", "", shown).replace(",", ".")
+        try:
+            number = float(clean)
+        except ValueError:
+            continue
+        following = []
+        for next_word in words[wi + 1:wi + 4]:
+            raw_next = str(next_word[0])
+            cleaned_next = re.sub(r"^[\W_]+|[\W_]+$", "", raw_next)
+            if cleaned_next and not re.search(r"\d", cleaned_next):
+                following.append(cleaned_next)
+            if re.search(r"[.!?…]", raw_next):
+                break
+        context = " ".join(following[:2])[:40]
+        low = (token + " " + context).lower()
+        if "%" in shown or "процент" in low:
+            kind, unit = "percent", "%"
+        elif any(x in shown for x in ("₽", "$", "€")):
+            kind = "money"
+            unit = next((x for x in ("₽", "$", "€") if x in shown), "")
+        elif number.is_integer() and 1000 <= number <= 2100:
+            kind, unit = "date", ""
+        elif any(x in low for x in ("место", "топ")):
+            kind, unit = "rank", ""
+        else:
+            kind, unit = "counter", ""
+        start = sum(float(s.get("duration") or 0) for s in scenes[:scene_i])
+        graphic = {"type": kind, "value": clean, "unit": unit, "label": context,
+                   "start": round(min(max(at - start - .15, 0), max(float(scenes[scene_i].get("duration") or 0) - .2, 0)), 2)}
+        suggestions.append((scene_i, graphic))
+        used_scenes.add(scene_i)
+        last_time = at
+        if len(suggestions) >= limit:
+            break
+    return suggestions
+
+
+@router.post("/{project_id}/suggest-graphics")
+def suggest_graphics(project_id: str):
+    project = _read(project_id)
+    suggestions = _graphic_suggestions(project)
+    added = 0
+    for scene_i, graphic in suggestions:
+        scene = project["scenes"][scene_i]
+        current = scene.get("graphic") or {}
+        if current.get("type") not in (None, "", "none"):
+            continue
+        scene["graphic"] = graphic
+        added += 1
+    if not added:
+        raise UserError("Новых подходящих цифр не найдено. Моушен можно настроить вручную в любой сцене.")
+    project["graphics_enabled"] = True
+    project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
+    out = _public(_write(project))
+    out["graphics_added"] = added
+    return out
+
+
 def _set_render(project_id: str, **changes):
     with _lock:
         try:
@@ -477,10 +574,14 @@ def _video_filter(scene: dict, width: int, height: int, fps: int) -> str:
     return vf + ",setsar=1,format=yuv420p"
 
 
-def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: int, fps: int):
+def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: int, fps: int,
+                 graphics_enabled: bool = False):
     source = project_dir / "media" / scene["source"]
     duration = float(scene["duration"])
     frames = max(round(duration * fps), 1)
+    graphic = deepcopy(scene.get("graphic") or {})
+    active_graphic = graphics_enabled and graphic.get("type") in LOCAL_GRAPHICS - {"none"}
+    base = out.with_name(f".{out.stem}.base.mp4") if active_graphic else out
     if scene["kind"] == "image":
         args = ["-loop", "1", "-framerate", fps, "-i", source, "-vf", _image_filter(scene, width, height, fps, frames),
                 "-frames:v", frames]
@@ -488,7 +589,19 @@ def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: 
         args = ["-ss", f"{float(scene.get('trim_start') or 0):.3f}", "-i", source, "-t", f"{duration:.3f}",
                 "-vf", _video_filter(scene, width, height, fps)]
     media.run([*args, "-an", "-r", fps, "-c:v", "libx264", "-preset", "veryfast", "-crf", 22,
-               "-pix_fmt", "yuv420p", out], "Фрагмент локального монтажа")
+               "-pix_fmt", "yuv420p", base], "Фрагмент локального монтажа")
+    if active_graphic:
+        work = out.parent / f".{out.stem}-graphics"
+        if graphic["type"] == "date":
+            caption = graphic.get("label", "")
+            graphic["label"] = graphic.get("value", "")
+            graphic["unit"] = caption
+        graphic["start"] = min(max(float(graphic.get("start") or 0), 0), max(duration - .1, 0))
+        try:
+            graphics.overlay(base, out, [graphic], width, height, work, fps=fps)
+        finally:
+            base.unlink(missing_ok=True)
+            shutil.rmtree(work, ignore_errors=True)
 
 
 def _mix(project_dir: Path, project: dict, video: Path, out: Path, total: float):
@@ -561,7 +674,7 @@ def _render_worker(project_id: str, quality: str):
         clips = []
         for i, scene in enumerate(scenes):
             clip = work / f"{i:04d}.mp4"
-            _render_clip(project_dir, scene, clip, width, height, fps)
+            _render_clip(project_dir, scene, clip, width, height, fps, bool(project.get("graphics_enabled")))
             clips.append(clip)
             _set_render(project_id, progress=round((i + 1) / (len(scenes) + 1) * .9, 3))
         joined = work / "joined.mp4"
