@@ -3417,6 +3417,41 @@ const FB_STATUS = {
   pausing: "Ставится на паузу", paused: "На паузе",
   stopping: "Останавливается", stopped: "Остановлен", done: "Готово", error: "Ошибка"
 };
+const folderSeenErrors = new Set();
+
+function showFolderErrors(jobs) {
+  const fresh = (jobs || []).filter(job => {
+    if (job.status !== "error" || !job.error) return false;
+    const key = `${job.id}:${job.updated || ""}:${job.error}`;
+    if (folderSeenErrors.has(key)) return false;
+    folderSeenErrors.add(key);
+    return true;
+  });
+  if (!fresh.length) return;
+  const old = $("#fb-error-popup"); if (old) old.remove();
+  const popup = document.createElement("div");
+  popup.id = "fb-error-popup";
+  popup.className = "vlib fb-error-popup";
+  popup.setAttribute("role", "alertdialog");
+  popup.setAttribute("aria-modal", "true");
+  popup.innerHTML = `<div class="box">
+    <button class="x" data-fb-error-close aria-label="Закрыть">×</button>
+    <div class="fb-error-title">⚠️ Сборка остановилась с ошибкой</div>
+    ${fresh.map(job => `<div class="fb-error-item">
+      <b>${esc(job.title || "Проект")}</b>
+      <div>${esc(job.error)}</div>
+      <div class="row"><span class="muted small">Остановлено на ${Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100)}%</span><button class="primary sm" data-fb-error-retry="${esc(job.id)}">▶ Повторить</button></div>
+    </div>`).join("")}
+    <div class="row" style="justify-content:flex-end"><button data-fb-error-close>Закрыть</button></div>
+  </div>`;
+  document.body.appendChild(popup);
+  popup.querySelectorAll("[data-fb-error-close]").forEach(button => button.onclick = () => popup.remove());
+  popup.querySelectorAll("[data-fb-error-retry]").forEach(button => button.onclick = () => {
+    const id = button.dataset.fbErrorRetry;
+    popup.remove();
+    startFolderQueue([id]);
+  });
+}
 
 function folderJobHtml(job) {
   const a = job.analysis || {}, status = job.status || "ready", e = job.estimate || {}, o = job.options || {};
@@ -3424,6 +3459,8 @@ function folderJobHtml(job) {
   const settingsLabel = Object.keys(o).length ? "Последний запуск" : "Текущие настройки";
   const cls = status === "ready" ? "queued" : status === "stopped" ? "paused" : ["pausing", "stopping"].includes(status) ? "running" : status;
   const active = ["running", "queued", "pausing", "stopping"].includes(status);
+  const percent = status === "done" ? 100 : Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100);
+  const showProgress = status !== "ready" || percent > 0;
   const details = a.scenes ? `${a.scenes} сцен · свой стиль у ${a.styled_scenes || 0} · найдено ${a.existing_videos || 0} видео и ${a.existing_images || 0} фото · создать ${a.missing_images || 0} изображений` : "Папка ещё не проверена";
   const notes = [
     ...(job.problems || []).map(x => `<div class="banner bad small">⚠️ ${esc(x)}</div>`),
@@ -3437,7 +3474,7 @@ function folderJobHtml(job) {
       <span class="badge ${cls}">${esc(FB_STATUS[status] || status)}</span></div>
     <div class="fb-stats">${esc(details)}${a.words ? ` · ${a.words.toLocaleString("ru")} слов EN` : ""}</div>
     <div class="muted small" style="margin-top:4px">${settingsLabel}: референсы <b>${refsEnabled ? "включены" : "выключены"}</b>${e.images != null ? ` · к генерации ${e.images} · референсных сцен ${e.reference_scenes || 0} · примерно $${Number(e.cost || 0).toFixed(2)}` : ""}</div>
-    ${active || ["paused", "stopped"].includes(status) ? `<div class="bar" style="margin-top:9px"><div style="width:${Math.round((job.progress || 0) * 100)}%"></div></div><div class="muted small" style="margin-top:5px">${esc(job.step || "Работаю…")}</div>` : ""}
+    ${showProgress ? `<div class="fb-progress"><div class="fb-progress-head"><b>${percent}%</b><span>${esc(job.step || (active ? "Работаю…" : FB_STATUS[status] || ""))}</span></div><div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><div style="width:${percent}%"></div></div></div>` : ""}
     ${notes}
     <div class="row" style="margin-top:10px">
       ${status === "done" ? `<button class="primary sm" data-fb-reveal>📂 Показать готовое видео</button><span class="muted small">${esc(job.output || a.output || "")}</span>` : ""}
@@ -3468,6 +3505,7 @@ function drawFolderJobs(data) {
       } catch (e) { toast(e.message, true); button.disabled = false; }
     }));
   });
+  showFolderErrors(data.jobs);
 }
 
 function folderOptions() {

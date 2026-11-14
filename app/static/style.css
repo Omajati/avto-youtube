@@ -487,6 +487,16 @@ details.mc.st-subs { border-left-color: #2563eb; }
 .fb-stats { margin-top: 9px; font-size: 13px; }
 .fb-job .banner { margin: 8px 0 0; padding: 8px 10px; }
 .fb-settings .check span > .small { display: block; margin-top: 2px; }
+.fb-progress { margin-top: 10px; }
+.fb-progress-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 5px; }
+.fb-progress-head b { min-width: 42px; font-size: 17px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.fb-progress-head span { color: var(--muted); font-size: 13px; }
+.fb-error-popup { z-index: 90; align-items: center; }
+.fb-error-popup .box { max-width: 720px; border: 2px solid var(--bad); box-shadow: 0 20px 60px rgba(0,0,0,.38); }
+.fb-error-title { color: var(--bad); font-size: 22px; font-weight: 800; padding-right: 35px; margin-bottom: 14px; }
+.fb-error-item { border-radius: 10px; background: var(--badbg); padding: 12px 14px; margin: 10px 0; overflow-wrap: anywhere; }
+.fb-error-item > div:not(.row) { margin: 6px 0 10px; white-space: pre-wrap; }
+.fb-error-item .row { justify-content: space-between; }
 
 .le-projects { display: grid; gap: 10px; }
 .le-project { display: flex; align-items: center; gap: 14px; color: inherit; text-decoration: none; margin: 0; padding: 14px 16px; }
