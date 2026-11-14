@@ -66,6 +66,7 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
     jobs: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>',
     montage: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>',
     "local-editor": '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16M17 4v16M2 9h5M2 15h5M17 9h5M17 15h5"/>',
+    "folder-builder": '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/>',
     remake: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
     producer: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
     library: '<path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>',
@@ -76,7 +77,7 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
   };
   nav.querySelectorAll("a[data-nav]").forEach(a => { const d = P[a.dataset.nav]; if (d) a.insertAdjacentHTML("afterbegin", `<svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`); });
   const GROUPS = { new: "Создание", producer: "Знания", settings: "Система" };
-  const DEFAULT = ["new", "jobs", "montage", "local-editor", "remake", "producer", "library", "projects", "settings", "prompts", "music"];
+  const DEFAULT = ["new", "jobs", "montage", "local-editor", "folder-builder", "remake", "producer", "library", "projects", "settings", "prompts", "music"];
   const heads = () => {
     nav.querySelectorAll(".ngrp").forEach(x => x.remove());
     if (nav.classList.contains("editing")) return;
@@ -212,6 +213,7 @@ async function route() {
     else if (page === "music") await viewMusic();
     else if (page === "montage") await viewMontage();
     else if (page === "local-editor") await viewLocalEditor(id);
+    else if (page === "folder-builder") await viewFolderBuilder();
     else if (page === "remake") await viewRemake(id);
     else if (page === "producer") await viewProducer(id);
     else if (page === "library") await viewLibrary(id);
@@ -290,7 +292,7 @@ function draftRestore() {
 }
 
 // ------------------------------------------------------------------ recent pages as tabs
-const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", "local-editor": "🎞️", projects: "📁", settings: "⚙️", prompts: "📝", music: "🎵", remake: "🔁", producer: "🎓", library: "📚" };
+const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", "local-editor": "🎞️", "folder-builder": "📂", projects: "📁", settings: "⚙️", prompts: "📝", music: "🎵", remake: "🔁", producer: "🎓", library: "📚" };
 function getTabs() {
   try { return (JSON.parse(lsGet("ay_tabs", "[]")) || []).filter(t => t && !REMOVED_PAGES.has((t.hash || "").split("/")[1])); }
   catch (e) { return []; }
@@ -3409,6 +3411,123 @@ async function viewLibrary(id) {
 
 
 // ---------------------------------------------------------------- local editor: timeline and render on this Mac, no API keys
+// ------------------------------------------------------------------ one-click assembly from prepared project folders
+const FB_STATUS = { ready: "Готов к запуску", queued: "В очереди", running: "Собирается", done: "Готово", error: "Ошибка" };
+
+function folderJobHtml(job) {
+  const a = job.analysis || {}, status = job.status || "ready";
+  const cls = status === "ready" ? "queued" : status;
+  const details = a.scenes ? `${a.scenes} сцен · свой стиль у ${a.styled_scenes || 0} · найдено ${a.existing_videos || 0} видео и ${a.existing_images || 0} фото · создать ${a.missing_images || 0} изображений` : "Папка ещё не проверена";
+  const notes = [
+    ...(job.problems || []).map(x => `<div class="banner bad small">⚠️ ${esc(x)}</div>`),
+    ...(job.warnings || []).map(x => `<div class="banner warn small">${esc(x)}</div>`),
+    job.scan_error ? `<div class="banner bad small">${esc(job.scan_error)}</div>` : "",
+    job.error ? `<div class="banner bad small">${esc(job.error)}</div>` : "",
+  ].join("");
+  return `<div class="card fb-job" data-fb-id="${esc(job.id)}">
+    <div class="row"><div class="grow"><h2 style="margin:0">📁 ${esc(job.title || a.title || "Проект")}</h2>
+      <div class="muted small fb-path" title="${esc(job.path)}">${esc(job.path)}</div></div>
+      <span class="badge ${cls}">${esc(FB_STATUS[status] || status)}</span></div>
+    <div class="fb-stats">${esc(details)}${a.words ? ` · ${a.words.toLocaleString("ru")} слов EN` : ""}</div>
+    ${status === "running" || status === "queued" ? `<div class="bar" style="margin-top:9px"><div style="width:${Math.round((job.progress || 0) * 100)}%"></div></div><div class="muted small" style="margin-top:5px">${esc(job.step || "Работаю…")}</div>` : ""}
+    ${notes}
+    <div class="row" style="margin-top:10px">
+      ${status === "done" ? `<button class="primary sm" data-fb-reveal>📂 Показать готовое видео</button><span class="muted small">${esc(job.output || a.output || "")}</span>` : ""}
+      ${status === "error" || status === "ready" ? `<button class="sm ${status === "error" ? "primary" : ""}" data-fb-one ${job.problems?.length || job.scan_error ? "disabled" : ""}>${status === "error" ? "▶ Повторить" : "▶ Собрать этот проект"}</button>` : ""}
+      ${status !== "running" && status !== "queued" ? `<button class="sm danger" data-fb-remove>Убрать из очереди</button>` : ""}
+    </div></div>`;
+}
+
+function drawFolderJobs(data) {
+  const box = $("#fb-jobs"); if (!box) return;
+  box.innerHTML = data.jobs.length ? data.jobs.map(folderJobHtml).join("") : `<div class="card le-empty">Очередь пуста. Нажмите «Добавить папки» и выберите один или несколько проектов.</div>`;
+  box.querySelectorAll("[data-fb-id]").forEach(card => {
+    const id = card.dataset.fbId;
+    card.querySelector("[data-fb-remove]")?.addEventListener("click", async () => {
+      await api(`/api/folder-builder/${id}`, { method: "DELETE" }).then(() => refreshFolderBuilder()).catch(e => toast(e.message, true));
+    });
+    card.querySelector("[data-fb-reveal]")?.addEventListener("click", () => api(`/api/folder-builder/${id}/reveal`, { json: {} }).catch(e => toast(e.message, true)));
+    card.querySelector("[data-fb-one]")?.addEventListener("click", () => startFolderQueue([id]));
+  });
+}
+
+function folderOptions() {
+  const out = {};
+  main.querySelectorAll("[data-fbo]").forEach(el => out[el.dataset.fbo] = el.type === "checkbox" ? el.checked : el.value);
+  const voice = $("#fb-voice");
+  if (voice) {
+    out.folder_voice_en_id = voice.value;
+    out.folder_voice_en_name = voice.options[voice.selectedIndex]?.dataset.name || voice.options[voice.selectedIndex]?.text || "";
+  }
+  return out;
+}
+
+async function startFolderQueue(ids = null) {
+  const btn = $("#fb-start"); if (btn) btn.disabled = true;
+  try {
+    const r = await api("/api/folder-builder/start", { json: { ids, options: folderOptions() } });
+    if (!r.queued.length) toast("Нечего запускать: проверьте предупреждения у проектов", true); else toast(`Поставлено в очередь: ${r.queued.length}`);
+    await refreshFolderBuilder();
+  } catch (e) { toast(e.message, true); }
+  if (btn) btn.disabled = false;
+}
+
+async function refreshFolderBuilder() {
+  const data = await api("/api/folder-builder");
+  drawFolderJobs(data);
+  const active = data.jobs.some(x => x.status === "running" || x.status === "queued");
+  if (!active && timer) { clearInterval(timer); timer = null; }
+  return data;
+}
+
+async function viewFolderBuilder() {
+  clearInterval(timer); timer = null;
+  const data = await api("/api/folder-builder");
+  const s = data.settings, q = (k, fallback = "") => s[k] ?? fallback;
+  const checks = [
+    ["folder_references", "Референсы персонажей и объектов", "Сначала создаются R1, R2… и используются в подходящих сценах. Если выключить — каждая картинка рисуется только по своему описанию."],
+    ["folder_chapters", "Названия глав", "Текст главы автоматически появляется на сценах «КАРТОЧКА ГЛАВЫ»."],
+    ["folder_subtitles", "Караоке-субтитры на видео", "Слова подсвечиваются точно по озвучке."],
+    ["folder_music", "Музыка из библиотеки", "Подходящий трек выбирается автоматически, зацикливается и приглушается под голос."],
+    ["folder_auto_graphics", "Автоматический моушен", "Названия, даты, числа и смысловые акценты появляются там, где подходят."],
+  ];
+  main.innerHTML = `<h1>📂 Сборка роликов из папок</h1>
+  <p class="muted">Выберите готовые папки проектов и нажмите одну кнопку. Программа возьмёт окончательный английский текст, готовые файлы <code>S001…</code>, создаст недостающие изображения и вернёт готовый MP4 в папку <code>EN</code>.</p>
+  <div class="card fb-settings"><div class="row"><h2 class="grow" style="margin:0">Перед запуском — все настройки</h2><a class="btn sm" href="#/settings">⚙️ Открыть полные настройки и ключи</a></div>
+    <div class="grid2"><div>
+      <label class="f">Сервис и модель изображений</label><div class="fb-readonly"><b>${esc(data.summary.image_provider)}</b><br><span>${esc(data.summary.image_model)}</span></div>
+      <label class="f">Языковая модель для распределения текста</label><div class="fb-readonly"><b>${esc(data.summary.llm_provider)}</b><br><span>${esc(data.summary.llm_model || "не выбрана")}</span></div>
+      <label class="f">Английский голос</label>
+      <div class="row" style="gap:6px;flex-wrap:nowrap"><select id="fb-voice"><option value="${esc(q("folder_voice_en_id") || data.summary.voice_id || "")}" data-name="${esc(q("folder_voice_en_name") || data.summary.voice_name || "")}">${esc(q("folder_voice_en_name") || data.summary.voice_name || "Выберите английский голос")}</option></select><button class="sm" id="fb-load-voices">Загрузить</button><button class="sm" id="fb-voice-lib">🌍 Библиотека</button></div>
+      <label class="f">Стиль монтажа</label><select data-fbo="folder_edit_style">${[["auto","Подбирать автоматически и не повторяться"],["science","Научпоп"],["cinematic","Кинодокументалистика"],["investigation","Расследование"],["archive","Архивная хроника"],["dynamic","Динамичный YouTube"],["minimal","Премиальный минимализм"]].map(([v,n])=>`<option value="${v}" ${q("folder_edit_style","auto")===v?"selected":""}>${n}</option>`).join("")}</select>
+      <div class="grid2"><div><label class="f">Темп</label><select data-fbo="folder_edit_tempo">${[["calm","Спокойный"],["balanced","Сбалансированный"],["dynamic","Динамичный"]].map(([v,n])=>`<option value="${v}" ${q("folder_edit_tempo","balanced")===v?"selected":""}>${n}</option>`).join("")}</select></div>
+      <div><label class="f">Эффекты</label><select data-fbo="folder_effect_level">${[["low","Минимум"],["normal","Нормально"],["juicy","Сочно"]].map(([v,n])=>`<option value="${v}" ${q("folder_effect_level","normal")===v?"selected":""}>${n}</option>`).join("")}</select></div></div>
+    </div><div>
+      ${checks.map(([k,n,h])=>`<label class="check"><input type="checkbox" data-fbo="${k}" ${q(k,true)?"checked":""}><span><b>${n}</b><span class="muted small">${h}</span></span></label>`).join("")}
+      <div class="grid2"><div><label class="f">Стиль субтитров</label><select data-fbo="folder_subtitle_preset">${[["karaoke","Караоке с подсветкой"],["documentary","Документальные"],["words","По одному слову"],["clean","Чистые"],["box","В плашке"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_preset","karaoke")===v?"selected":""}>${n}</option>`).join("")}</select></div>
+      <div><label class="f">Размер субтитров</label><select data-fbo="folder_subtitle_size">${[["small","Небольшие"],["medium","Средние"],["large","Крупные"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_size","medium")===v?"selected":""}>${n}</option>`).join("")}</select></div></div>
+      <label class="f">Громкость музыки: <span id="fb-music-v">${Math.round(+q("folder_music_volume",.12)*100)}%</span></label><input type="range" data-fbo="folder_music_volume" id="fb-music" min="0" max="0.35" step="0.01" value="${esc(q("folder_music_volume",.12))}">
+      <div class="grid2"><div><label class="f">Изображений одновременно</label><input type="number" min="1" max="8" data-fbo="image_parallel" value="${esc(q("image_parallel",4))}"></div>
+      <div><label class="f">Проектов одновременно</label><input type="number" min="1" max="3" data-fbo="folder_jobs_parallel" value="${esc(q("folder_jobs_parallel",2))}"></div></div>
+      <label class="f">Скорость финальной сборки</label><select data-fbo="folder_render_speed"><option value="fast" ${q("folder_render_speed","fast")==="fast"?"selected":""}>Быстро</option><option value="quality" ${q("folder_render_speed")==="quality"?"selected":""}>Максимальное качество</option></select>
+      <div class="muted small" style="margin-top:10px">Музыкальных треков в библиотеке: ${data.summary.music_tracks}. Готовые изображения не перерисовываются. Видео всегда важнее фотографии с тем же номером сцены.</div>
+    </div></div>
+  </div>
+  <div class="row fb-actions"><button class="primary big" id="fb-add">＋ Добавить папки</button><button class="blue big" id="fb-start" ${data.jobs.length ? "" : "disabled"}>▶ Собрать всю очередь</button><span class="muted small">Можно выбрать несколько папок сразу. Все готовые этапы кэшируются.</span></div>
+  <div id="fb-jobs" style="margin-top:16px"></div>`;
+  drawFolderJobs(data);
+  $("#fb-music").oninput = e => $("#fb-music-v").textContent = `${Math.round(+e.target.value*100)}%`;
+  $("#fb-add").onclick = async () => {
+    const b=$("#fb-add"); b.disabled=true; b.textContent="Выбираю…";
+    try { const picked=await api("/api/folder-builder/pick",{json:{}}); if(picked.paths.length){ await api("/api/folder-builder/add",{json:{paths:picked.paths}}); toast(`Добавлено папок: ${picked.paths.length}`); await viewFolderBuilder(); } }
+    catch(e){ toast(e.message,true); } finally { if(document.body.contains(b)){ b.disabled=false; b.textContent="＋ Добавить папки"; } }
+  };
+  $("#fb-start").onclick = () => startFolderQueue();
+  $("#fb-load-voices").onclick = async () => { const b=$("#fb-load-voices"); b.disabled=true; try { const vs=await loadVoices(true), sel=$("#fb-voice"), cur=sel.value; sel.innerHTML=voiceOptions(vs,cur,"en"); sel.value=cur; } catch(e){toast(e.message,true);} b.disabled=false; };
+  $("#fb-voice-lib").onclick = () => openVoiceLibrary((id,name)=>{ const sel=$("#fb-voice"); pickIntoSelect(sel,id,name); },"en");
+  if (data.jobs.some(x => x.status === "running" || x.status === "queued")) timer = setInterval(() => refreshFolderBuilder().catch(() => null), 2000);
+}
+
 async function viewLocalEditor(id) {
   navActive("local-editor");
   if (!id) {

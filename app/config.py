@@ -116,6 +116,25 @@ DEFAULTS = {
     "auto_check": True,  # the logic checker (scene descriptions) and the picture checker (each finished picture)
     "ref_model": "nano",
     "sfx_volume": 0.5,
+    # One-click assembly of prepared project folders (first version: English, horizontal 1080p).
+    "folder_voice_en_id": "",
+    "folder_voice_en_name": "",
+    "folder_references": True,
+    "folder_chapters": True,
+    "folder_subtitles": True,
+    "folder_subtitle_preset": "karaoke",
+    "folder_subtitle_font": "auto",
+    "folder_subtitle_size": "medium",
+    "folder_subtitles_position": "mid_low",
+    "folder_music": True,
+    "folder_music_volume": 0.12,
+    "folder_auto_graphics": True,
+    "folder_edit_style": "auto",
+    "folder_edit_tempo": "balanced",
+    "folder_effect_level": "normal",
+    "folder_render_speed": "fast",
+    "folder_jobs_parallel": 2,
+    "folder_voice_parallel": 3,
 }
 
 _lock = threading.Lock()
