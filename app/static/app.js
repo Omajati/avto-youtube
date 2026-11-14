@@ -3541,6 +3541,7 @@ async function refreshFolderBuilder() {
   const data = await api("/api/folder-builder");
   drawFolderJobs(data);
   const active = data.jobs.some(x => ["running", "queued", "pausing", "stopping"].includes(x.status));
+  if (active && !timer) timer = setInterval(() => refreshFolderBuilder().catch(() => null), 2000);
   if (!active && timer) { clearInterval(timer); timer = null; }
   return data;
 }
