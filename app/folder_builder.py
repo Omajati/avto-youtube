@@ -39,6 +39,14 @@ _jobs: dict[str, dict] = {}
 _scheduler: threading.Thread | None = None
 
 
+class _PauseRequested(Exception):
+    pass
+
+
+class _StopRequested(Exception):
+    pass
+
+
 def _now() -> int:
     return int(time.time())
 
@@ -68,8 +76,15 @@ def _load_queue():
     _jobs = data if isinstance(data, dict) else {}
     changed = False
     for job in _jobs.values():
-        if job.get("status") in ("running", "queued"):
+        status = job.get("status")
+        if status in ("running", "queued"):
             job.update(status="error", step="", error="Сборка была прервана. Нажмите «Запустить» — готовые этапы повторяться не будут.")
+            changed = True
+        elif status == "pausing":
+            job.update(status="paused", step="На паузе", error="")
+            changed = True
+        elif status == "stopping":
+            job.update(status="stopped", step="Остановлено", error="")
             changed = True
     if changed:
         _save_queue()
@@ -87,6 +102,16 @@ def _update(job_id: str, **changes):
             return
         _jobs[job_id].update(changes, updated=_now())
         _save_queue()
+
+
+def _check_control(job_id: str):
+    """Stop only between durable operations, so completed API results stay cached."""
+    with _lock:
+        status = (_jobs.get(job_id) or {}).get("status")
+    if status == "pausing":
+        raise _PauseRequested()
+    if status == "stopping":
+        raise _StopRequested()
 
 
 def _extract_code(block: str, marker: str) -> str:
@@ -247,9 +272,10 @@ def _problems(settings: dict, analysis: dict) -> tuple[list[str], list[str]]:
 def _public_job(job: dict) -> dict:
     out = {k: v for k, v in job.items() if not k.startswith("_")}
     try:
-        analysis = _analyze(Path(job["path"])) if job.get("status") not in ("running", "queued") else job.get("analysis", {})
+        active = ("running", "queued", "pausing", "stopping")
+        analysis = _analyze(Path(job["path"])) if job.get("status") not in active else job.get("analysis", {})
         out["analysis"] = analysis
-        if job.get("status") not in ("running", "queued"):
+        if job.get("status") not in active:
             job["analysis"] = analysis
     except Exception as exc:
         out["analysis"] = job.get("analysis", {})
@@ -266,7 +292,7 @@ def list_queue():
         if job.get("analysis"):
             job["problems"], job["warnings"] = _problems(settings, job["analysis"])
     return {"jobs": jobs, "settings": {k: settings.get(k) for k in (
-        "folder_voice_en_id", "folder_voice_en_name", "folder_references", "folder_chapters", "folder_subtitles",
+        "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
         "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
         "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
         "folder_effect_level", "folder_render_speed", "folder_jobs_parallel", "image_parallel", "render_parallel")},
@@ -319,8 +345,8 @@ def remove_job(job_id: str):
         job = _jobs.get(job_id)
         if not job:
             raise UserError("Проект не найден в очереди.")
-        if job.get("status") in ("running", "queued"):
-            raise UserError("Сначала дождитесь окончания сборки.")
+        if job.get("status") in ("running", "queued", "pausing", "stopping"):
+            raise UserError("Сначала остановите проект.")
         _jobs.pop(job_id, None)
         _save_queue()
     return {"ok": True}
@@ -330,7 +356,7 @@ def remove_job(job_id: str):
 def start_queue(data: dict = Body(...)):
     options = data.get("options") or {}
     allowed = {k for k in (
-        "folder_voice_en_id", "folder_voice_en_name", "folder_references", "folder_chapters", "folder_subtitles",
+        "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
         "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
         "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
         "folder_effect_level", "folder_render_speed", "folder_jobs_parallel", "image_parallel", "render_parallel")}
@@ -340,7 +366,7 @@ def start_queue(data: dict = Body(...)):
     queued = []
     with _lock:
         for jid, job in _jobs.items():
-            if jid not in ids or job.get("status") == "running":
+            if jid not in ids or job.get("status") in ("running", "pausing", "stopping"):
                 continue
             analysis = _analyze(Path(job["path"]))
             problems, warnings = _problems(settings, analysis)
@@ -353,6 +379,41 @@ def start_queue(data: dict = Body(...)):
         _save_queue()
     _kick_scheduler()
     return {"queued": queued}
+
+
+@router.post("/{job_id}/action")
+def control_job(job_id: str, data: dict = Body(...)):
+    action = str(data.get("action") or "").lower()
+    with _lock:
+        job = _jobs.get(job_id)
+        if not job:
+            raise UserError("Проект не найден в очереди.")
+        status = job.get("status") or "ready"
+        if action == "pause":
+            if status == "queued":
+                job.update(status="paused", step="На паузе", error="")
+            elif status == "running":
+                job.update(status="pausing", step="Завершаю текущую операцию и ставлю на паузу…", error="")
+            elif status not in ("paused", "pausing"):
+                raise UserError("Сейчас этот проект нельзя поставить на паузу.")
+        elif action == "stop":
+            if status in ("queued", "paused"):
+                job.update(status="stopped", step="Остановлено", error="")
+            elif status in ("running", "pausing"):
+                job.update(status="stopping", step="Завершаю текущую операцию и останавливаю…", error="")
+            elif status not in ("stopped", "stopping"):
+                raise UserError("Сейчас этот проект уже не выполняется.")
+        elif action == "resume":
+            if status not in ("paused", "stopped", "error"):
+                raise UserError("Этот проект сейчас нельзя продолжить.")
+            job.update(status="queued", step="Ждёт своей очереди…", error="")
+        else:
+            raise UserError("Неизвестная команда управления проектом.")
+        job["updated"] = _now()
+        _save_queue()
+    if action in ("stop", "resume"):
+        _kick_scheduler()
+    return {"ok": True, "status": job.get("status")}
 
 
 @router.post("/{job_id}/reveal")
@@ -370,44 +431,148 @@ def _sentences(text: str) -> list[str]:
     return [x for x in items if x]
 
 
+def _fast_mapping(scenes: list[dict], narration: str) -> tuple[list[str], int]:
+    """Map scene starts to the exact `Голос:` fragments locally; no model or transcription call."""
+    raw_words = narration.split()
+    norm_words, owners = [], []
+    for raw_index, word in enumerate(raw_words):
+        for token in re.findall(r"[a-z0-9]+", word.lower().replace("’", "'")):
+            norm_words.append(token)
+            owners.append(raw_index)
+
+    def segments(hint: str) -> list[list[str]]:
+        hint = re.sub(r"(?i)\bauthor\s*:\s*", "", hint)
+        chunks = re.split(r"(?:…+|\.{2,})", hint)
+        result = []
+        for chunk in chunks:
+            tokens = re.findall(r"[a-z0-9]+", chunk.lower().replace("’", "'"))
+            if tokens:
+                result.append(tokens)
+        return sorted(result, key=len, reverse=True)
+
+    def exact(seq: list[str], start: int) -> int | None:
+        if not seq:
+            return None
+        last = len(norm_words) - len(seq) + 1
+        for pos in range(max(start, 0), max(last, 0)):
+            if norm_words[pos:pos + len(seq)] == seq:
+                return pos
+        return None
+
+    starts: list[int | None] = [None] * len(scenes)
+    cursor, matched = 0, 0
+    for index, scene in enumerate(scenes):
+        if scene.get("preview"):
+            starts[index] = 0
+            continue
+        found = None
+        for seq in segments(scene.get("voice_hint") or ""):
+            found = exact(seq, cursor)
+            if found is not None:
+                break
+            # A changed word should not lose the whole anchor: try distinctive consecutive fragments.
+            for width in range(min(6, len(seq)), 2, -1):
+                for offset in range(0, len(seq) - width + 1):
+                    found = exact(seq[offset:offset + width], cursor)
+                    if found is not None:
+                        break
+                if found is not None:
+                    break
+            if found is not None:
+                break
+        if found is not None:
+            starts[index] = owners[found]
+            cursor = found
+            matched += 1
+
+    # Fill scenes without a usable English hint between the neighbouring exact anchors.
+    known = [i for i, value in enumerate(starts) if value is not None]
+    for index in range(len(starts)):
+        if starts[index] is not None:
+            continue
+        before = max((i for i in known if i < index), default=-1)
+        after = min((i for i in known if i > index), default=len(starts))
+        left = int(starts[before]) if before >= 0 else 0
+        right = int(starts[after]) if after < len(starts) else len(raw_words)
+        span = max(after - before, 1)
+        starts[index] = round(left + (right - left) * (index - before) / span)
+
+    starts = [min(len(raw_words), max(0, int(value or 0))) for value in starts]
+    for index in range(1, len(starts)):
+        starts[index] = max(starts[index], starts[index - 1])
+
+    # Chapter cards share the opening phrase of the next chapter while the voice continues normally.
+    for index, scene in enumerate(scenes[:-1]):
+        if not scene.get("chapter"):
+            continue
+        opening = starts[index + 1]
+        following = starts[index + 2] if index + 2 < len(starts) else len(raw_words)
+        take = min(5, max(1, (following - opening) // 3)) if following > opening else 0
+        starts[index] = opening
+        starts[index + 1] = min(following, opening + take)
+    for index in range(1, len(starts)):
+        starts[index] = max(starts[index], starts[index - 1])
+
+    ends = starts[1:] + [len(raw_words)]
+    texts = [" ".join(raw_words[start:end]).strip() for start, end in zip(starts, ends)]
+    return texts, matched
+
+
 def _mapping(job_id: str, scenes: list[dict], narration: str, settings: dict, cache: Path) -> list[str]:
+    smart = bool(settings.get("folder_smart_mapping", False))
     sentences = _sentences(narration)
-    fingerprint = hashlib.sha256((narration + json.dumps(scenes, ensure_ascii=False, sort_keys=True)).encode()).hexdigest()
+    fingerprint = hashlib.sha256((narration + json.dumps(scenes, ensure_ascii=False, sort_keys=True) + str(smart)).encode()).hexdigest()
     saved = _read_json(cache / "mapping.json", {})
     if saved.get("fingerprint") == fingerprint and len(saved.get("texts") or []) == len(scenes):
         return saved["texts"]
-    _update(job_id, progress=.04, step="Распределяю текст озвучки по сценам…")
+    if not smart:
+        _update(job_id, progress=.04, step="Быстро привязываю сцены к подсказкам «Голос:»…")
+        texts, matched = _fast_mapping(scenes, narration)
+        _write_json(cache / "mapping.json", {"fingerprint": fingerprint, "texts": texts, "mode": "fast", "matched": matched})
+        return texts
+    _update(job_id, progress=.04, step="OpenAI уточняет распределение текста по сценам…")
     scene_lines = []
     for scene in scenes:
         short_prompt = re.sub(r"\s+", " ", scene.get("prompt") or "")[:260]
         scene_lines.append(f"{scene['id']} | voice hint: {scene.get('voice_hint') or '-'} | picture: {short_prompt}")
     numbered = "\n".join(f"{i + 1}. {text}" for i, text in enumerate(sentences))
-    schema = {"type": "object", "properties": {"boundaries": {"type": "array", "items": {
-        "type": "object", "properties": {"id": {"type": "string"}, "end_sentence": {"type": "integer"}}
-    }}}}
+    schema = {"type": "object", "properties": {"boundaries": {"type": "array", "items": {"type": "integer"}}}}
     usage = {}
-    result = llm.call_json(
-        settings,
-        "You are a documentary picture editor. Return only the requested JSON.",
-        "Match the final English narration to the visual scenes. For every scene return the number of the LAST narration "
-        "sentence shown with it. Numbers must be non-decreasing, between 0 and the sentence count, and the final scene "
-        "must end at the final sentence. A title card or preview with no spoken narration may keep the preceding number. "
-        "Do not rewrite or translate anything. Match meaning, voice hints and picture descriptions. Every narration sentence "
-        "must be used exactly once and in its original order.\n\nSCENES:\n" + "\n".join(scene_lines) +
-        "\n\nNUMBERED NARRATION SENTENCES:\n" + numbered,
-        schema, usage, max_tokens=12000,
-    )
-    got = {str(x.get("id") or "").upper(): x.get("end_sentence") for x in result.get("boundaries") or []}
+    try:
+        result = llm.call_json(
+            settings,
+            "You are a documentary picture editor. Return only a compact JSON array of integers; do not explain.",
+            f"Match {len(sentences)} numbered narration sentences to {len(scenes)} visual scenes in the listed order. "
+            f"Return boundaries with EXACTLY {len(scenes)} integers. Integer i is the number of the LAST narration sentence "
+            "shown with scene i. Values are non-decreasing, between 0 and the sentence count; the last value equals the "
+            "sentence count. Only an explicitly silent preview may repeat the preceding value. A chapter card carries the "
+            "first sentence of its chapter. Match meaning, voice hints and picture descriptions. Do not rewrite text.\n\n"
+            "SCENES:\n" + "\n".join(scene_lines) + "\n\nNARRATION:\n" + numbered,
+            schema, usage, max_tokens=24000,
+        )
+        got = result.get("boundaries") or []
+    except UserError as exc:
+        if "лимит длины ответа" not in str(exc):
+            raise
+        # Scene alignment is helpful, but a reasoning-token limit must not kill a full one-click build.
+        texts, matched = _fast_mapping(scenes, narration)
+        _update(job_id, step="OpenAI исчерпал лимит ответа — использую быстрые подсказки «Голос:»…")
+        _write_json(cache / "mapping.json", {"fingerprint": fingerprint, "texts": texts, "mode": "fast-fallback", "matched": matched})
+        return texts
     ends, prev, total = [], 0, len(sentences)
     for index, scene in enumerate(scenes):
         fallback = round(total * (index + 1) / max(len(scenes), 1))
         try:
-            end = int(got.get(scene["id"], fallback))
+            end = int(got[index] if index < len(got) else fallback)
         except (TypeError, ValueError):
             end = fallback
-        if scene.get("chapter") or scene.get("preview"):
+        if scene.get("preview"):
             end = prev
-        end = min(max(end, prev), total)
+        else:
+            future_spoken = sum(not item.get("preview") for item in scenes[index + 1:])
+            minimum = min(prev + 1, total)
+            maximum = max(minimum, total - future_spoken)
+            end = min(max(end, minimum), maximum)
         ends.append(end)
         prev = end
     if ends:
@@ -426,6 +591,7 @@ def _reference_keywords(ref: dict) -> list[str]:
 
 
 def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dict], settings: dict, options: dict) -> dict[str, Path]:
+    _check_control(job_id)
     root = Path(analysis["path"])
     frame_dir = Path(analysis["frame_dir"])
     frame_dir.mkdir(parents=True, exist_ok=True)
@@ -436,11 +602,13 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
         ref_dir = frame_dir / "референсы"
         ref_dir.mkdir(parents=True, exist_ok=True)
         for index, ref in enumerate(refs):
+            _check_control(job_id)
             out = ref_dir / f"{ref['id']}.png"
             if not out.exists():
                 _update(job_id, progress=.06 + .04 * (index / max(len(refs), 1)), step=f"Создаю референс {ref['id']}…")
                 prompt = ref.get("prompt") or ref.get("name")
                 media.to_png(images.generate(settings, prompt, False), out)
+                _check_control(job_id)
             ref_paths[ref["id"]] = out
     missing = [scene for scene in scenes if scene["id"] not in media_map]
     if not missing:
@@ -448,6 +616,7 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
     done = [0]
 
     def work(scene: dict):
+        _check_control(job_id)
         out = frame_dir / f"{scene['id']}.png"
         if out.exists():
             return scene["id"], out
@@ -463,21 +632,31 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
                     selected.append(ref_paths[ref["id"]])
         raw = images.generate_with_reference(settings, prompt, selected[:3], False) if selected else images.generate(settings, prompt, False)
         media.to_png(raw, out)
+        _check_control(job_id)
         return scene["id"], out
 
     workers = max(1, min(int(options.get("image_parallel") or settings.get("image_parallel") or 4), 8))
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"folder-images-{job_id}") as pool:
         futures = [pool.submit(work, scene) for scene in missing]
-        for future in as_completed(futures):
-            sid, out = future.result()
-            media_map[sid] = out
-            done[0] += 1
-            _update(job_id, progress=.10 + .38 * done[0] / len(missing),
-                    step=f"Создаю недостающие изображения: {done[0]} из {len(missing)}…")
+        try:
+            for future in as_completed(futures):
+                sid, out = future.result()
+                media_map[sid] = out
+                done[0] += 1
+                _update(job_id, progress=.10 + .38 * done[0] / len(missing),
+                        step=f"Создаю недостающие изображения: {done[0]} из {len(missing)}…")
+                _check_control(job_id)
+        except (_PauseRequested, _StopRequested):
+            for future in futures:
+                future.cancel()
+            raise
     return media_map
 
 
-def _make_voice(job_id: str, scenes: list[dict], texts: list[str], settings: dict, options: dict, cache: Path):
+def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: str,
+                settings: dict, options: dict, cache: Path):
+    """Voice the complete narration with exactly one TTS request, then fit scenes to its word timings."""
+    _check_control(job_id)
     audio = cache / "audio"
     audio.mkdir(parents=True, exist_ok=True)
     voice_settings = dict(settings)
@@ -485,42 +664,52 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], settings: dic
     voice_settings["elevenlabs_voice_name"] = options.get("folder_voice_en_name") or settings.get("folder_voice_en_name") or settings.get("elevenlabs_voice_name")
     manifest_path = audio / "manifest.json"
     manifest = _read_json(manifest_path, {})
-    done = [0]
-    total = len(scenes)
-
-    def work(i: int):
-        text = texts[i].strip()
-        mp3, wav = audio / f"scene_{i:03d}.mp3", audio / f"scene_{i:03d}.wav"
-        signature = hashlib.sha256(json.dumps([
-            text, voice_settings.get("elevenlabs_voice_id"), voice_settings.get("elevenlabs_model"),
-            voice_settings.get("voice_speed"), voice_settings.get("voice_stability"), voice_settings.get("voice_style"),
-        ], ensure_ascii=False).encode()).hexdigest()
-        if manifest.get(str(i)) == signature and wav.exists():
-            return i
-        if not text:
-            media.silence(wav, 3.0 if scenes[i].get("preview") else 2.2)
-            mp3.unlink(missing_ok=True)
-            mp3.with_suffix(".json").unlink(missing_ok=True)
+    mp3, spoken = audio / "narration.mp3", audio / "narration.wav"
+    signature = hashlib.sha256(json.dumps([
+        narration, voice_settings.get("elevenlabs_voice_id"), voice_settings.get("elevenlabs_model"),
+        voice_settings.get("voice_speed"), voice_settings.get("voice_stability"), voice_settings.get("voice_style"),
+    ], ensure_ascii=False).encode()).hexdigest()
+    if manifest.get("narration") != signature or not spoken.exists():
+        _update(job_id, progress=.49, step="Озвучиваю весь файл одним запросом…")
+        tts.synthesize(voice_settings, narration, mp3, "", "", "en")
+        media.to_wav(mp3, spoken)
+        manifest = {"narration": signature}
+        _write_json(manifest_path, manifest)
+        _check_control(job_id)
+    speech_duration = media.wav_duration(spoken)
+    spoken_words = captions._scene_words(narration, mp3.with_suffix(".json"), speech_duration)
+    intro = 3.0 if scenes and scenes[0].get("preview") else 0.0
+    parts = []
+    if intro:
+        intro_wav = audio / "intro.wav"
+        if not intro_wav.exists() or abs(media.wav_duration(intro_wav) - intro) > .02:
+            media.silence(intro_wav, intro)
+        parts.append((intro_wav, 0.0))
+    parts.append((spoken, 0.0))
+    media.concat_wavs(parts, cache / "narration.wav")
+    words = [(word, intro + start, intro + end, 0) for word, start, end in spoken_words]
+    total = intro + speech_duration
+    total_text_words = sum(len(text.split()) for text in texts) or 1
+    cumulative_text_words = 0
+    cuts, previous = [0.0], 0.0
+    for index, text in enumerate(texts):
+        if index == 0 and intro and scenes[index].get("preview"):
+            boundary = intro
         else:
-            prev = next((texts[j] for j in range(i - 1, -1, -1) if texts[j].strip()), "")
-            nxt = next((texts[j] for j in range(i + 1, total) if texts[j].strip()), "")
-            tts.synthesize(voice_settings, text, mp3, prev, nxt, "en")
-            media.to_wav(mp3, wav)
-        with _lock:
-            manifest[str(i)] = signature
-            _write_json(manifest_path, manifest)
-        return i
-
-    workers = max(1, min(int(settings.get("folder_voice_parallel") or 3), 4))
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"folder-voice-{job_id}") as pool:
-        futures = [pool.submit(work, i) for i in range(total)]
-        for future in as_completed(futures):
-            future.result()
-            done[0] += 1
-            _update(job_id, progress=.49 + .21 * done[0] / total, step=f"Озвучиваю сцены: {done[0]} из {total}…")
-    durations = media.concat_wavs([(audio / f"scene_{i:03d}.wav", 0.10 if texts[i].strip() else 0.0)
-                                   for i in range(total)], cache / "narration.wav")
-    words = captions.timeline(cache, "scene", [{"text": text} for text in texts], durations)
+            cumulative_text_words += len(text.split())
+            word_index = round(cumulative_text_words / total_text_words * len(spoken_words))
+            if word_index <= 0:
+                boundary = previous
+            elif word_index >= len(spoken_words):
+                boundary = total
+            else:
+                boundary = intro + (spoken_words[word_index - 1][2] + spoken_words[word_index][1]) / 2
+        boundary = min(max(boundary, previous), total)
+        cuts.append(boundary)
+        previous = boundary
+    if cuts:
+        cuts[-1] = total
+    durations = [round(end - start, 3) for start, end in zip(cuts, cuts[1:])]
     return durations, words
 
 
@@ -598,6 +787,7 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
 
 def _build(job_id: str):
     try:
+        _check_control(job_id)
         job = _jobs[job_id]
         analysis = _analyze(Path(job["path"]))
         settings = load_settings()
@@ -607,16 +797,21 @@ def _build(job_id: str):
         scenes, refs = _parse_scenes(Path(analysis["scene_file"]))
         narration = Path(analysis["narration_file"]).read_text("utf-8", errors="replace").strip()
         texts = _mapping(job_id, scenes, narration, settings, cache)
+        _check_control(job_id)
         _update(job_id, progress=.05, step="Проверяю готовые кадры и создаю недостающие…")
         media_map = _make_images(job_id, analysis, scenes, refs, settings, options)
-        _update(job_id, progress=.49, step="Готовлю английскую озвучку…")
-        durations, words = _make_voice(job_id, scenes, texts, settings, options, cache)
+        _check_control(job_id)
+        _update(job_id, progress=.49, step="Готовлю единую английскую озвучку…")
+        durations, words = _make_voice(job_id, scenes, texts, narration, settings, options, cache)
+        _check_control(job_id)
         _update(job_id, progress=.72, step="Распределяю движения, переходы, главы и моушен…")
         pid, project_dir = _local_project(job_id, analysis, scenes, texts, media_map, durations, words, settings, options, cache)
+        _check_control(job_id)
         _update(job_id, progress=.75, step="Собираю финальное видео 1080p…")
         with local_editor._lock:
             local_editor._rendering.add(pid)
         local_editor._render_worker(pid, "final")
+        _check_control(job_id)
         rendered = project_dir / "render" / "final.mp4"
         result = _read_json(project_dir / "edit.json", {}).get("render", {})
         if result.get("status") != "done" or not rendered.is_file():
@@ -627,6 +822,10 @@ def _build(job_id: str):
         shutil.copy2(rendered, tmp)
         tmp.replace(output)
         _update(job_id, status="done", progress=1, step="Готово", error="", output=str(output), finished=_now(), analysis=_analyze(Path(job["path"])))
+    except _PauseRequested:
+        _update(job_id, status="paused", step="На паузе", error="")
+    except _StopRequested:
+        _update(job_id, status="stopped", step="Остановлено", error="")
     except Exception as exc:
         _update(job_id, status="error", progress=0, step="", error=str(exc))
 
@@ -637,7 +836,7 @@ def _schedule():
         settings = load_settings()
         limit = max(1, min(int(settings.get("folder_jobs_parallel") or 2), 3))
         with _lock:
-            running = sum(job.get("status") == "running" for job in _jobs.values())
+            running = sum(job.get("status") in ("running", "pausing", "stopping") for job in _jobs.values())
             queued = [job for job in _jobs.values() if job.get("status") == "queued"]
             while queued and running < limit:
                 job = queued.pop(0)

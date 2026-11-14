@@ -3412,11 +3412,16 @@ async function viewLibrary(id) {
 
 // ---------------------------------------------------------------- local editor: timeline and render on this Mac, no API keys
 // ------------------------------------------------------------------ one-click assembly from prepared project folders
-const FB_STATUS = { ready: "Готов к запуску", queued: "В очереди", running: "Собирается", done: "Готово", error: "Ошибка" };
+const FB_STATUS = {
+  ready: "Готов к запуску", queued: "В очереди", running: "Собирается",
+  pausing: "Ставится на паузу", paused: "На паузе",
+  stopping: "Останавливается", stopped: "Остановлен", done: "Готово", error: "Ошибка"
+};
 
 function folderJobHtml(job) {
   const a = job.analysis || {}, status = job.status || "ready";
-  const cls = status === "ready" ? "queued" : status;
+  const cls = status === "ready" ? "queued" : status === "stopped" ? "paused" : ["pausing", "stopping"].includes(status) ? "running" : status;
+  const active = ["running", "queued", "pausing", "stopping"].includes(status);
   const details = a.scenes ? `${a.scenes} сцен · свой стиль у ${a.styled_scenes || 0} · найдено ${a.existing_videos || 0} видео и ${a.existing_images || 0} фото · создать ${a.missing_images || 0} изображений` : "Папка ещё не проверена";
   const notes = [
     ...(job.problems || []).map(x => `<div class="banner bad small">⚠️ ${esc(x)}</div>`),
@@ -3429,12 +3434,15 @@ function folderJobHtml(job) {
       <div class="muted small fb-path" title="${esc(job.path)}">${esc(job.path)}</div></div>
       <span class="badge ${cls}">${esc(FB_STATUS[status] || status)}</span></div>
     <div class="fb-stats">${esc(details)}${a.words ? ` · ${a.words.toLocaleString("ru")} слов EN` : ""}</div>
-    ${status === "running" || status === "queued" ? `<div class="bar" style="margin-top:9px"><div style="width:${Math.round((job.progress || 0) * 100)}%"></div></div><div class="muted small" style="margin-top:5px">${esc(job.step || "Работаю…")}</div>` : ""}
+    ${active || ["paused", "stopped"].includes(status) ? `<div class="bar" style="margin-top:9px"><div style="width:${Math.round((job.progress || 0) * 100)}%"></div></div><div class="muted small" style="margin-top:5px">${esc(job.step || "Работаю…")}</div>` : ""}
     ${notes}
     <div class="row" style="margin-top:10px">
       ${status === "done" ? `<button class="primary sm" data-fb-reveal>📂 Показать готовое видео</button><span class="muted small">${esc(job.output || a.output || "")}</span>` : ""}
       ${status === "error" || status === "ready" ? `<button class="sm ${status === "error" ? "primary" : ""}" data-fb-one ${job.problems?.length || job.scan_error ? "disabled" : ""}>${status === "error" ? "▶ Повторить" : "▶ Собрать этот проект"}</button>` : ""}
-      ${status !== "running" && status !== "queued" ? `<button class="sm danger" data-fb-remove>Убрать из очереди</button>` : ""}
+      ${["running", "queued"].includes(status) ? `<button class="sm" data-fb-action="pause">⏸ Пауза</button><button class="sm danger" data-fb-action="stop">⏹ Остановить</button>` : ""}
+      ${status === "pausing" ? `<button class="sm danger" data-fb-action="stop">⏹ Остановить</button>` : ""}
+      ${["paused", "stopped"].includes(status) ? `<button class="primary sm" data-fb-action="resume">▶ Продолжить</button>` : ""}
+      ${!["running", "queued", "pausing", "stopping"].includes(status) ? `<button class="sm danger" data-fb-remove>Убрать из очереди</button>` : ""}
     </div></div>`;
 }
 
@@ -3448,6 +3456,13 @@ function drawFolderJobs(data) {
     });
     card.querySelector("[data-fb-reveal]")?.addEventListener("click", () => api(`/api/folder-builder/${id}/reveal`, { json: {} }).catch(e => toast(e.message, true)));
     card.querySelector("[data-fb-one]")?.addEventListener("click", () => startFolderQueue([id]));
+    card.querySelectorAll("[data-fb-action]").forEach(button => button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await api(`/api/folder-builder/${id}/action`, { json: { action: button.dataset.fbAction } });
+        await refreshFolderBuilder();
+      } catch (e) { toast(e.message, true); button.disabled = false; }
+    }));
   });
 }
 
@@ -3475,7 +3490,7 @@ async function startFolderQueue(ids = null) {
 async function refreshFolderBuilder() {
   const data = await api("/api/folder-builder");
   drawFolderJobs(data);
-  const active = data.jobs.some(x => x.status === "running" || x.status === "queued");
+  const active = data.jobs.some(x => ["running", "queued", "pausing", "stopping"].includes(x.status));
   if (!active && timer) { clearInterval(timer); timer = null; }
   return data;
 }
@@ -3485,6 +3500,7 @@ async function viewFolderBuilder() {
   const data = await api("/api/folder-builder");
   const s = data.settings, q = (k, fallback = "") => s[k] ?? fallback;
   const checks = [
+    ["folder_smart_mapping", "Уточнять сцены через OpenAI", "Опционально: точнее сверяет смысл описаний, но добавляет отдельный долгий запрос. Для максимальной скорости оставьте выключенным.", false],
     ["folder_references", "Референсы персонажей и объектов", "Сначала создаются R1, R2… и используются в подходящих сценах. Если выключить — каждая картинка рисуется только по своему описанию."],
     ["folder_chapters", "Названия глав", "Текст главы автоматически появляется на сценах «КАРТОЧКА ГЛАВЫ»."],
     ["folder_subtitles", "Караоке-субтитры на видео", "Слова подсвечиваются точно по озвучке."],
@@ -3503,7 +3519,7 @@ async function viewFolderBuilder() {
       <div class="grid2"><div><label class="f">Темп</label><select data-fbo="folder_edit_tempo">${[["calm","Спокойный"],["balanced","Сбалансированный"],["dynamic","Динамичный"]].map(([v,n])=>`<option value="${v}" ${q("folder_edit_tempo","balanced")===v?"selected":""}>${n}</option>`).join("")}</select></div>
       <div><label class="f">Эффекты</label><select data-fbo="folder_effect_level">${[["low","Минимум"],["normal","Нормально"],["juicy","Сочно"]].map(([v,n])=>`<option value="${v}" ${q("folder_effect_level","normal")===v?"selected":""}>${n}</option>`).join("")}</select></div></div>
     </div><div>
-      ${checks.map(([k,n,h])=>`<label class="check"><input type="checkbox" data-fbo="${k}" ${q(k,true)?"checked":""}><span><b>${n}</b><span class="muted small">${h}</span></span></label>`).join("")}
+      ${checks.map(([k,n,h,d=true])=>`<label class="check"><input type="checkbox" data-fbo="${k}" ${q(k,d)?"checked":""}><span><b>${n}</b><span class="muted small">${h}</span></span></label>`).join("")}
       <div class="grid2"><div><label class="f">Стиль субтитров</label><select data-fbo="folder_subtitle_preset">${[["karaoke","Караоке с подсветкой"],["documentary","Документальные"],["words","По одному слову"],["clean","Чистые"],["box","В плашке"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_preset","karaoke")===v?"selected":""}>${n}</option>`).join("")}</select></div>
       <div><label class="f">Размер субтитров</label><select data-fbo="folder_subtitle_size">${[["small","Небольшие"],["medium","Средние"],["large","Крупные"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_size","medium")===v?"selected":""}>${n}</option>`).join("")}</select></div></div>
       <label class="f">Громкость музыки: <span id="fb-music-v">${Math.round(+q("folder_music_volume",.12)*100)}%</span></label><input type="range" data-fbo="folder_music_volume" id="fb-music" min="0" max="0.35" step="0.01" value="${esc(q("folder_music_volume",.12))}">
@@ -3525,7 +3541,7 @@ async function viewFolderBuilder() {
   $("#fb-start").onclick = () => startFolderQueue();
   $("#fb-load-voices").onclick = async () => { const b=$("#fb-load-voices"); b.disabled=true; try { const vs=await loadVoices(true), sel=$("#fb-voice"), cur=sel.value; sel.innerHTML=voiceOptions(vs,cur,"en"); sel.value=cur; } catch(e){toast(e.message,true);} b.disabled=false; };
   $("#fb-voice-lib").onclick = () => openVoiceLibrary((id,name)=>{ const sel=$("#fb-voice"); pickIntoSelect(sel,id,name); },"en");
-  if (data.jobs.some(x => x.status === "running" || x.status === "queued")) timer = setInterval(() => refreshFolderBuilder().catch(() => null), 2000);
+  if (data.jobs.some(x => ["running", "queued", "pausing", "stopping"].includes(x.status))) timer = setInterval(() => refreshFolderBuilder().catch(() => null), 2000);
 }
 
 async function viewLocalEditor(id) {
