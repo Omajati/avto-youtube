@@ -192,6 +192,34 @@ def _number(value, default: float, low: float, high: float) -> float:
         return default
 
 
+def _folder_size(path: Path) -> int:
+    total = 0
+    if not path.is_dir():
+        return 0
+    for root, _dirs, files in os.walk(path, followlinks=False):
+        for name in files:
+            try:
+                total += (Path(root) / name).stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def _forget_project_history(project_id: str):
+    history_path = ROOT / ".editing-history.json"
+    try:
+        history = json.loads(history_path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(history, list):
+        return
+    kept = [item for item in history if item.get("project_id") != project_id]
+    if kept:
+        history_path.write_text(json.dumps(kept, ensure_ascii=False, indent=2), "utf-8")
+    else:
+        history_path.unlink(missing_ok=True)
+
+
 @router.put("/{project_id}")
 def update_project(project_id: str, data: dict = Body(...)):
     project = _read(project_id)
@@ -271,10 +299,25 @@ def delete_project(project_id: str):
     path = _project_dir(project_id)
     if project_id in _rendering or project_id in _transcribing:
         raise UserError("Сначала дождитесь окончания текущей обработки.")
-    TRASH.mkdir(parents=True, exist_ok=True)
-    target = TRASH / f"{project_id}-{_now()}"
-    shutil.move(str(path), str(target))
-    return {"ok": True, "recoverable": True}
+    freed = _folder_size(path)
+    shutil.rmtree(path)
+    _forget_project_history(project_id)
+    return {"ok": True, "recoverable": False, "bytes_freed": freed}
+
+
+@router.get("/maintenance/trash")
+def trash_info():
+    count = sum(1 for path in TRASH.iterdir() if path.is_dir()) if TRASH.is_dir() else 0
+    return {"count": count, "bytes": _folder_size(TRASH)}
+
+
+@router.delete("/maintenance/trash")
+def empty_old_trash():
+    freed = _folder_size(TRASH)
+    count = sum(1 for path in TRASH.iterdir() if path.is_dir()) if TRASH.is_dir() else 0
+    if TRASH.is_dir():
+        shutil.rmtree(TRASH)
+    return {"ok": True, "count": count, "bytes_freed": freed}
 
 
 def _upload_ext(name: str, kind: str) -> tuple[str, str]:

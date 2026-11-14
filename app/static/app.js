@@ -3417,13 +3417,15 @@ async function viewLibrary(id) {
 async function viewLocalEditor(id) {
   navActive("local-editor");
   if (!id) {
-    const projects = await api("/api/local-editor");
+    const [projects, trash] = await Promise.all([api("/api/local-editor"), api("/api/local-editor/maintenance/trash").catch(() => ({ count: 0, bytes: 0 }))]);
+    const sizeText = bytes => bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(1)} ГБ` : `${Math.max(bytes / 1048576, .1).toFixed(1)} МБ`;
     main.innerHTML = `<h1>🎞️ Локальный монтаж</h1>
     <p class="muted">Полностью на этом компьютере: ваши фото, видео, озвучка и музыка. Никаких API-ключей и отправки файлов в интернет. Исходники не изменяются.</p>
     <div class="card le-new"><h2>Новый монтаж</h2><div class="row">
       <input class="grow" id="le-new-title" type="text" placeholder="Название ролика">
       <select id="le-new-format" style="width:auto"><option value="long">YouTube 16:9</option><option value="short">Shorts / Reels 9:16</option></select>
       <button class="primary" id="le-create">Создать</button></div></div>
+    ${trash.bytes ? `<div class="banner warn"><b>Старая внутренняя корзина занимает ${sizeText(trash.bytes)}.</b> В ней ${trash.count} ранее удалённых монтажей. <button class="sm danger" id="le-empty-trash">Удалить их окончательно и освободить место</button></div>` : ""}
     ${projects.length ? `<div class="le-projects">${projects.map(p => `<a class="card le-project" href="#/local-editor/${p.id}">
       <div><b>${esc(p.title)}</b><div class="muted small">${p.format === "short" ? "9:16" : "16:9"} · ${p.scenes.length} сцен · ${fmtTime(p.duration)}</div></div>
       <span class="badge ${p.render.status === "error" ? "error" : p.render.status === "running" ? "running" : p.render.final_url ? "done" : "queued"}">${p.render.final_url ? "Готово" : p.render.status === "running" ? "Собирается" : "Черновик"}</span>
@@ -3434,10 +3436,16 @@ async function viewLocalEditor(id) {
       catch (e) { toast(e.message, true); b.disabled = false; }
     };
     $("#le-new-title").onkeydown = e => { if (e.key === "Enter") $("#le-create").click(); };
+    $("#le-empty-trash")?.addEventListener("click", async e => {
+      if (!confirm(`Окончательно удалить старую корзину (${sizeText(trash.bytes)})? Восстановить эти монтажи будет невозможно.`)) return;
+      e.currentTarget.disabled = true;
+      try { const result = await api("/api/local-editor/maintenance/trash", { method: "DELETE" }); toast(`Освобождено ${sizeText(result.bytes_freed || 0)}`); viewLocalEditor(); }
+      catch (x) { toast(x.message, true); e.currentTarget.disabled = false; }
+    });
     main.querySelectorAll("[data-le-delete]").forEach(b => b.onclick = async e => {
       e.preventDefault(); e.stopPropagation();
-      if (!confirm(`Убрать монтаж «${b.dataset.title}»? Он переместится во внутреннюю корзину.`)) return;
-      try { await api(`/api/local-editor/${b.dataset.leDelete}`, { method: "DELETE" }); b.closest(".le-project").remove(); toast("Монтаж перемещён в корзину"); }
+      if (!confirm(`Окончательно удалить монтаж «${b.dataset.title}» вместе со всеми исходниками, кэшем и готовыми MP4? Восстановить его будет невозможно.`)) return;
+      try { const result = await api(`/api/local-editor/${b.dataset.leDelete}`, { method: "DELETE" }); b.closest(".le-project").remove(); const tabs = getTabs().filter(t => t.hash !== `#/local-editor/${b.dataset.leDelete}`); lsSet("ay_tabs", JSON.stringify(tabs)); renderTabs(); toast(`Монтаж удалён. Освобождено ${sizeText(result.bytes_freed || 0)}`); }
       catch (x) { toast(x.message, true); }
     });
     return;
