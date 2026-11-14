@@ -941,19 +941,43 @@ def _look_filter(look: str) -> str:
 
 
 def _transition_filter(kind: str, duration: float) -> str:
-    """Transitions stay intentionally short; the ordinary cut remains the default."""
-    out_at = max(duration - .3, 0)
-    if kind == "fade":
-        return f",fade=t=in:st=0:d=0.32,fade=t=out:st={out_at:.3f}:d=0.30"
-    if kind == "dissolve":
-        return f",fade=t=in:st=0:d=0.18,fade=t=out:st={max(duration - .18, 0):.3f}:d=0.18"
-    if kind == "flash":
-        return f",fade=t=in:st=0:d=0.14:color=white,fade=t=out:st={max(duration - .14, 0):.3f}:d=0.14:color=white"
-    if kind == "light_leak":
-        return f",fade=t=in:st=0:d=0.22:color=0xffd08a,fade=t=out:st={max(duration - .22, 0):.3f}:d=0.22:color=0xffd08a"
+    """Per-clip texture only; actual transitions are composed between neighbouring clips at join time."""
     if kind == "film":
-        return f",noise=alls=5:allf=t+u,fade=t=in:st=0:d=0.10,fade=t=out:st={max(duration - .10, 0):.3f}:d=0.10"
+        return ",noise=alls=5:allf=t+u"
     return ""
+
+
+def _join_scene_clips(clips: list[Path], scenes: list[dict], out: Path, fast: bool, fps: int):
+    """Real transitions with no time loss: the outgoing frame is padded over the overlap."""
+    if len(clips) < 2 or not any(str(scene.get("transition") or "cut") != "cut" for scene in scenes[1:]):
+        media.concat_clips(clips, out)
+        return
+    xfade = {"fade": "fadeblack", "dissolve": "dissolve", "flash": "fadewhite",
+             "light_leak": "smoothleft", "film": "pixelize"}
+    args = []
+    for clip in clips:
+        args += ["-i", clip]
+    rendered_duration = lambda scene: max(round(float(scene.get("duration") or 0) * fps), 1) / fps
+    filters, current = [], "0:v"
+    cumulative = rendered_duration(scenes[0])
+    for index in range(1, len(clips)):
+        kind = str(scenes[index].get("transition") or "cut")
+        output = f"v{index}"
+        if kind == "cut":
+            filters.append(f"[{current}][{index}:v]concat=n=2:v=1:a=0[{output}]")
+        else:
+            duration = min(.28, max(rendered_duration(scenes[index - 1]) / 3, .08),
+                           max(rendered_duration(scenes[index]) / 3, .08))
+            padded = f"p{index}"
+            filters.append(f"[{current}]tpad=stop_mode=clone:stop_duration={duration:.3f}[{padded}]")
+            filters.append(f"[{padded}][{index}:v]xfade=transition={xfade.get(kind, 'fade')}:"
+                           f"duration={duration:.3f}:offset={cumulative:.3f}[{output}]")
+        current = output
+        cumulative += rendered_duration(scenes[index])
+    media.run([*args, "-filter_complex", ";".join(filters), "-map", f"[{current}]", "-an",
+               "-c:v", "libx264", "-preset", "superfast" if fast else "veryfast",
+               "-crf", 20 if fast else 21, "-threads", 3 if fast else 0,
+               "-pix_fmt", "yuv420p", "-movflags", "+faststart", out], "Переходы локального монтажа")
 
 
 def _image_filter(scene: dict, width: int, height: int, fps: int, frames: int, look: str,
@@ -1020,7 +1044,7 @@ def _clip_cache_key(project_dir: Path, scene: dict, width: int, height: int, fps
         "source", "kind", "duration", "fit", "motion", "transition", "trim_start", "trim_end", "focus_x", "focus_y")}
     if graphics_enabled:
         visual["graphic"] = scene.get("graphic")
-    payload = [2, visual, source_state, width, height, fps, graphics_enabled, color_look, fast]
+    payload = [3, visual, source_state, width, height, fps, graphics_enabled, color_look, fast]
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:24]
 
@@ -1227,7 +1251,7 @@ def _render_worker(project_id: str, quality: str, cancel_check=None):
         check_cancel()
         _set_render(project_id, progress=.91, step="Склеиваю готовые сцены…")
         joined = work / "joined.mp4"
-        media.concat_clips(clips, joined)
+        _join_scene_clips(clips, scenes, joined, fast, fps)
         total = sum(float(s["duration"]) for s in scenes)
         target = project_dir / "render" / f"{quality}.mp4"
         tmp = project_dir / "render" / f".{quality}.tmp.mp4"
