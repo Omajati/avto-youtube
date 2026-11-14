@@ -3419,7 +3419,9 @@ const FB_STATUS = {
 };
 
 function folderJobHtml(job) {
-  const a = job.analysis || {}, status = job.status || "ready";
+  const a = job.analysis || {}, status = job.status || "ready", e = job.estimate || {}, o = job.options || {};
+  const refsEnabled = o.folder_references ?? e.refs_on;
+  const settingsLabel = Object.keys(o).length ? "Последний запуск" : "Текущие настройки";
   const cls = status === "ready" ? "queued" : status === "stopped" ? "paused" : ["pausing", "stopping"].includes(status) ? "running" : status;
   const active = ["running", "queued", "pausing", "stopping"].includes(status);
   const details = a.scenes ? `${a.scenes} сцен · свой стиль у ${a.styled_scenes || 0} · найдено ${a.existing_videos || 0} видео и ${a.existing_images || 0} фото · создать ${a.missing_images || 0} изображений` : "Папка ещё не проверена";
@@ -3434,6 +3436,7 @@ function folderJobHtml(job) {
       <div class="muted small fb-path" title="${esc(job.path)}">${esc(job.path)}</div></div>
       <span class="badge ${cls}">${esc(FB_STATUS[status] || status)}</span></div>
     <div class="fb-stats">${esc(details)}${a.words ? ` · ${a.words.toLocaleString("ru")} слов EN` : ""}</div>
+    <div class="muted small" style="margin-top:4px">${settingsLabel}: референсы <b>${refsEnabled ? "включены" : "выключены"}</b>${e.images != null ? ` · к генерации ${e.images} · референсных сцен ${e.reference_scenes || 0} · примерно $${Number(e.cost || 0).toFixed(2)}` : ""}</div>
     ${active || ["paused", "stopped"].includes(status) ? `<div class="bar" style="margin-top:9px"><div style="width:${Math.round((job.progress || 0) * 100)}%"></div></div><div class="muted small" style="margin-top:5px">${esc(job.step || "Работаю…")}</div>` : ""}
     ${notes}
     <div class="row" style="margin-top:10px">
@@ -3452,7 +3455,8 @@ function drawFolderJobs(data) {
   box.querySelectorAll("[data-fb-id]").forEach(card => {
     const id = card.dataset.fbId;
     card.querySelector("[data-fb-remove]")?.addEventListener("click", async () => {
-      await api(`/api/folder-builder/${id}`, { method: "DELETE" }).then(() => refreshFolderBuilder()).catch(e => toast(e.message, true));
+      if (!confirm("Убрать проект из очереди и удалить его внутреннюю озвучку, монтаж и кэш? Исходная папка, сгенерированные кадры и готовый MP4 останутся.")) return;
+      await api(`/api/folder-builder/${id}`, { method: "DELETE" }).then(r => { toast(`Внутренний кэш удалён${r.bytes_freed ? `: освобождено ${(r.bytes_freed/1048576).toFixed(0)} МБ` : ""}`); refreshFolderBuilder(); }).catch(e => toast(e.message, true));
     });
     card.querySelector("[data-fb-reveal]")?.addEventListener("click", () => api(`/api/folder-builder/${id}/reveal`, { json: {} }).catch(e => toast(e.message, true)));
     card.querySelector("[data-fb-one]")?.addEventListener("click", () => startFolderQueue([id]));
@@ -3511,7 +3515,7 @@ async function viewFolderBuilder() {
   <p class="muted">Выберите готовые папки проектов и нажмите одну кнопку. Программа возьмёт окончательный английский текст, готовые файлы <code>S001…</code>, создаст недостающие изображения и вернёт готовый MP4 в папку <code>EN</code>.</p>
   <div class="card fb-settings"><div class="row"><h2 class="grow" style="margin:0">Перед запуском — все настройки</h2><a class="btn sm" href="#/settings">⚙️ Открыть полные настройки и ключи</a></div>
     <div class="grid2"><div>
-      <label class="f">Сервис и модель изображений</label><div class="fb-readonly"><b>${esc(data.summary.image_provider)}</b><br><span>${esc(data.summary.image_model)}</span></div>
+      <label class="f">Сервис и модель изображений</label><div class="fb-readonly"><b>${esc(data.summary.image_provider)}</b><br><span>${esc(data.summary.image_model)}</span><br><span>С референсом: ${esc(data.summary.reference_model || "недоступна")}</span></div>
       <label class="f">Языковая модель для распределения текста</label><div class="fb-readonly"><b>${esc(data.summary.llm_provider)}</b><br><span>${esc(data.summary.llm_model || "не выбрана")}</span></div>
       <label class="f">Английский голос</label>
       <div class="row" style="gap:6px;flex-wrap:nowrap"><select id="fb-voice"><option value="${esc(q("folder_voice_en_id") || data.summary.voice_id || "")}" data-name="${esc(q("folder_voice_en_name") || data.summary.voice_name || "")}">${esc(q("folder_voice_en_name") || data.summary.voice_name || "Выберите английский голос")}</option></select><button class="sm" id="fb-load-voices">Загрузить</button><button class="sm" id="fb-voice-lib">🌍 Библиотека</button></div>
@@ -3522,11 +3526,14 @@ async function viewFolderBuilder() {
       ${checks.map(([k,n,h,d=true])=>`<label class="check"><input type="checkbox" data-fbo="${k}" ${q(k,d)?"checked":""}><span><b>${n}</b><span class="muted small">${h}</span></span></label>`).join("")}
       <div class="grid2"><div><label class="f">Стиль субтитров</label><select data-fbo="folder_subtitle_preset">${[["karaoke","Караоке с подсветкой"],["documentary","Документальные"],["words","По одному слову"],["clean","Чистые"],["box","В плашке"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_preset","karaoke")===v?"selected":""}>${n}</option>`).join("")}</select></div>
       <div><label class="f">Размер субтитров</label><select data-fbo="folder_subtitle_size">${[["small","Небольшие"],["medium","Средние"],["large","Крупные"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_size","medium")===v?"selected":""}>${n}</option>`).join("")}</select></div></div>
+      <label class="f">Шрифт субтитров</label><select data-fbo="folder_subtitle_font">${[["auto","Автоматически"],["arial_black","Arial Black"],["impact","Impact"],["arial_bold","Arial Bold"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_font","auto")===v?"selected":""}>${n}</option>`).join("")}</select>
+      <label class="f">Положение субтитров</label><select data-fbo="folder_subtitles_position">${[["low","Внизу"],["mid_low","Ниже центра"],["mid","Средняя высота"],["center","По центру"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitles_position","mid_low")===v?"selected":""}>${n}</option>`).join("")}</select>
       <label class="f">Громкость музыки: <span id="fb-music-v">${Math.round(+q("folder_music_volume",.12)*100)}%</span></label><input type="range" data-fbo="folder_music_volume" id="fb-music" min="0" max="0.35" step="0.01" value="${esc(q("folder_music_volume",.12))}">
       <div class="grid2"><div><label class="f">Изображений одновременно</label><input type="number" min="1" max="8" data-fbo="image_parallel" value="${esc(q("image_parallel",4))}"></div>
       <div><label class="f">Проектов одновременно</label><input type="number" min="1" max="3" data-fbo="folder_jobs_parallel" value="${esc(q("folder_jobs_parallel",2))}"></div></div>
+      <label class="f">Сцен монтажа одновременно</label><input type="number" min="1" max="4" data-fbo="render_parallel" value="${esc(q("render_parallel",3))}">
       <label class="f">Скорость финальной сборки</label><select data-fbo="folder_render_speed"><option value="fast" ${q("folder_render_speed","fast")==="fast"?"selected":""}>Быстро</option><option value="quality" ${q("folder_render_speed")==="quality"?"selected":""}>Максимальное качество</option></select>
-      <div class="muted small" style="margin-top:10px">Музыкальных треков в библиотеке: ${data.summary.music_tracks}. Готовые изображения не перерисовываются. Видео всегда важнее фотографии с тем же номером сцены.</div>
+      <div class="muted small" style="margin-top:10px">Музыкальных треков в библиотеке: ${data.summary.music_tracks}. Ваши изображения не перерисовываются; кадры программы обновляются, если изменился промпт, модель или режим референсов. Видео всегда важнее фотографии с тем же номером сцены.</div>
     </div></div>
   </div>
   <div class="row fb-actions"><button class="primary big" id="fb-add">＋ Добавить папки</button><button class="blue big" id="fb-start" ${data.jobs.length ? "" : "disabled"}>▶ Собрать всю очередь</button><span class="muted small">Можно выбрать несколько папок сразу. Все готовые этапы кэшируются.</span></div>

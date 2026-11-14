@@ -48,6 +48,10 @@ SUBTITLE_FONTS = {"auto", "arial_black", "impact", "arial_bold"}
 SUBTITLE_SIZES = {"small", "medium", "large"}
 
 
+class RenderCancelled(Exception):
+    pass
+
+
 def _now() -> int:
     return int(time.time())
 
@@ -764,14 +768,14 @@ def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
                 break
         context = " ".join(following[:2])[:40]
         low = (token + " " + context).lower()
-        if "%" in shown or "процент" in low:
+        if "%" in shown or "процент" in low or "percent" in low:
             kind, unit = "percent", "%"
         elif any(x in shown for x in ("₽", "$", "€")) or any(x in low for x in ("рубл", "доллар", "евро")):
             kind = "money"
             unit = next((x for x in ("₽", "$", "€") if x in shown), "₽" if "рубл" in low else "$" if "доллар" in low else "€")
         elif number.is_integer() and 1000 <= number <= 2100:
             kind, unit = "date", ""
-        elif any(x in low for x in ("место", "топ")):
+        elif any(x in low for x in ("место", "топ", "place", "rank", "top")):
             kind, unit = "rank", ""
         else:
             kind, unit = "counter", ""
@@ -787,18 +791,18 @@ def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
             break
     semantic_last = -99.0
     rules = [
-        (r"опас|угроз|предупр|риск", "warning"),
-        (r"вырос|рост|увелич|поднял|подорож", "up"),
-        (r"упал|паден|сниз|уменьш|сократ|подешев", "down"),
-        (r"люд|человек|жител|населен|аудитор", "people"),
-        (r"город|страна|остров|место|регион|континент", "location"),
-        (r"иде|открыт|изобрел|придум", "idea"),
-        (r"побед|достижен|чемпион|награ", "trophy"),
-        (r"архив|документ|доклад|письмо|записк", "document"),
-        (r"секрет|засекреч|тайн", "secret"),
-        (r"новост|сообщил|данным", "news"),
-        (r"спустя|позже|затем", "timeline"),
-        (r"главн|важн|впервые|никогда", "keyword"),
+        (r"опас|угроз|предупр|риск|danger|threat|warning|risk", "warning"),
+        (r"вырос|рост|увелич|поднял|подорож|grow|grew|increase|rise|rose", "up"),
+        (r"упал|паден|сниз|уменьш|сократ|подешев|fall|fell|drop|decrease|decline", "down"),
+        (r"люд|человек|жител|населен|аудитор|people|person|population|resident", "people"),
+        (r"город|страна|остров|место|регион|континент|city|country|island|place|region|continent|river|ocean", "location"),
+        (r"иде|открыт|изобрел|придум|idea|discover|invent", "idea"),
+        (r"побед|достижен|чемпион|награ|winner|champion|award|achievement", "trophy"),
+        (r"архив|документ|доклад|письмо|записк|archive|document|report|letter|record", "document"),
+        (r"секрет|засекреч|тайн|secret|classified|mystery", "secret"),
+        (r"новост|сообщил|данным|news|reported|according", "news"),
+        (r"спустя|позже|затем|later|afterward|meanwhile|then", "timeline"),
+        (r"главн|важн|впервые|никогда|important|first|never|key", "keyword"),
     ]
     for wi, raw in enumerate(words):
         at = float(raw[1])
@@ -806,11 +810,11 @@ def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
             continue
         token = re.sub(r"^[\W_]+|[\W_]+$", "", str(raw[0])).lower().replace("ё", "е")
         phrase_start, phrase_count, unit = wi, 3, ""
-        if token in ("звали", "имени", "называли") and wi + 1 < len(words):
+        if token in ("звали", "имени", "называли", "named", "called", "name") and wi + 1 < len(words):
             kind, phrase_start, phrase_count, unit = "name", wi + 1, 2, "герой истории"
-        elif re.search(r"сказал|сказала|говорил|заявил|ответил", token) and wi + 1 < len(words):
+        elif re.search(r"сказал|сказала|говорил|заявил|ответил|said|says|stated|replied", token) and wi + 1 < len(words):
             kind, phrase_start, phrase_count = "quote", wi + 1, 5
-        elif re.search(r"глава|часть|далее|тем временем", token):
+        elif re.search(r"глава|часть|далее|тем временем|chapter|part|next|meanwhile", token):
             kind, phrase_start, phrase_count, unit = "chapter", wi + 1, 3, token
         else:
             kind = next((kind for pattern, kind in rules if re.search(pattern, token)), "")
@@ -1137,9 +1141,15 @@ def _burn_subtitles(project: dict, video: Path, out: Path, width: int, height: i
               "Субтитры локального монтажа", cwd=render_dir, exe=media.ffmpeg_with_subtitles())
 
 
-def _render_worker(project_id: str, quality: str):
+def _render_worker(project_id: str, quality: str, cancel_check=None):
     work = None
+
+    def check_cancel():
+        if cancel_check and cancel_check():
+            raise RenderCancelled("Сборка остановлена владельцем.")
+
     try:
+        check_cancel()
         project = _read(project_id)
         project_dir = _project_dir(project_id)
         scenes = project.get("scenes", [])
@@ -1165,6 +1175,7 @@ def _render_worker(project_id: str, quality: str):
         cache_keys = [_clip_cache_key(project_dir, scene, width, height, fps, graphics_enabled, color_look, fast)
                       for scene in scenes]
         def render_one(index: int):
+            check_cancel()
             cached = cache_dir / f"{cache_keys[index]}.mp4"
             if cached.is_file() and cached.stat().st_size > 1000:
                 try:
@@ -1174,6 +1185,7 @@ def _render_worker(project_id: str, quality: str):
                 return index, True
             _render_clip(project_dir, scenes[index], clips[index], width, height, fps,
                          graphics_enabled, color_look, fast)
+            check_cancel()
             cache_tmp = cache_dir / f".{cache_keys[index]}-{index}.tmp.mp4"
             cache_tmp.unlink(missing_ok=True)
             try:
@@ -1187,13 +1199,15 @@ def _render_worker(project_id: str, quality: str):
             # zoompan and most colour filters are mostly single-threaded. A few
             # small FFmpeg jobs therefore use Apple Silicon much better than one
             # process that renders 150+ scenes serially.
-            workers = min(3, max(2, (os.cpu_count() or 6) // 3))
+            requested_workers = max(1, min(int(project.get("render_parallel") or 3), 4))
+            workers = min(requested_workers, max(2, (os.cpu_count() or 6) // 3))
             completed = cached_count = 0
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="local-scene") as pool:
                 futures = [pool.submit(render_one, i) for i in range(len(scenes))]
                 try:
                     for future in as_completed(futures):
                         _index, was_cached = future.result()
+                        check_cancel()
                         cached_count += int(was_cached)
                         completed += 1
                         _set_render(project_id, progress=round(completed / (len(scenes) + 1) * .9, 3),
@@ -1205,10 +1219,12 @@ def _render_worker(project_id: str, quality: str):
         else:
             cached_count = 0
             for i in range(len(scenes)):
+                check_cancel()
                 _index, was_cached = render_one(i)
                 cached_count += int(was_cached)
                 _set_render(project_id, progress=round((i + 1) / (len(scenes) + 1) * .9, 3),
                             cached=cached_count, workers=1, step="Обрабатываю сцены…")
+        check_cancel()
         _set_render(project_id, progress=.91, step="Склеиваю готовые сцены…")
         joined = work / "joined.mp4"
         media.concat_clips(clips, joined)
@@ -1221,8 +1237,10 @@ def _render_worker(project_id: str, quality: str):
             fx_plan = effects.plan(scenes, "light", project.get("format") == "short")
             has_sfx = effects.build_track(fx_plan, [float(s["duration"]) for s in scenes],
                                           sfx_path, float(project.get("sfx_volume", .18)))
+        check_cancel()
         _set_render(project_id, progress=.94, step="Смешиваю голос, музыку и звуковые эффекты…")
         _mix(project_dir, project, joined, tmp, total, sfx_path if has_sfx else None)
+        check_cancel()
         if project.get("subtitles") and project.get("transcript", {}).get("words"):
             _set_render(project_id, progress=.97, step="Накладываю субтитры…")
             burned = project_dir / "render" / f".{quality}.subtitled.tmp.mp4"
@@ -1238,6 +1256,8 @@ def _render_worker(project_id: str, quality: str):
                 old_cache.unlink(missing_ok=True)
         if quality == "final":
             _remember_editing_style(_read(project_id))
+    except RenderCancelled as exc:
+        _set_render(project_id, status="cancelled", error=str(exc), quality=quality)
     except Exception as exc:  # the error must be visible on the editor page, not lost in the background thread
         _set_render(project_id, status="error", error=str(exc), progress=0, quality=quality)
     finally:

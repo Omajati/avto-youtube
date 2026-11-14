@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -173,10 +174,14 @@ def _find_scene_file(root: Path) -> Path:
         except OSError:
             continue
         if count:
-            candidates.append((count, path))
+            rel = path.relative_to(root)
+            priority = (3 if "исходники" in (part.lower() for part in rel.parts) else 0) \
+                       + (2 if "сцен" in path.stem.lower() or "scene" in path.stem.lower() else 0) \
+                       - (2 if any(re.fullmatch(r"[A-Z]{2}", part) for part in rel.parts[:-1]) else 0)
+            candidates.append((count, priority, path))
     if not candidates:
         raise UserError("Не найден Markdown-файл с описаниями сцен S001, S002…")
-    return max(candidates, key=lambda item: item[0])[1]
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
 def _find_narration(root: Path) -> Path:
@@ -198,6 +203,9 @@ def _scan_media(root: Path) -> dict[str, Path]:
             continue
         rel = path.relative_to(root)
         if any(part.startswith((".", "_")) or part.lower() in ("готово", "output", "render") for part in rel.parts[:-1]):
+            continue
+        # The English builder must never silently pick future German scene files.
+        if any(re.fullmatch(r"[A-Z]{2}", part) and part.upper() != "EN" for part in rel.parts[:-1]):
             continue
         match = SCENE_FILE.match(path.name)
         if not match:
@@ -238,6 +246,8 @@ def _setting_summary(settings: dict) -> dict:
     llm_model = settings.get("openai_model") if settings.get("llm_provider") == "openai" else settings.get("anthropic_model")
     return {
         "image_provider": provider["name"], "image_model": image_model,
+        "reference_model": ("Nano Banana Edit (~$0.04 за референсную сцену)" if settings.get("fal_key")
+                            else "Модель выбранного сервиса" if images.royal_refs(settings) else "недоступна"),
         "llm_provider": "OpenAI" if settings.get("llm_provider") == "openai" else "Claude",
         "llm_model": llm_model, "voice_id": settings.get("folder_voice_en_id") or settings.get("elevenlabs_voice_id"),
         "voice_name": settings.get("folder_voice_en_name") or settings.get("elevenlabs_voice_name") or "",
@@ -248,9 +258,14 @@ def _setting_summary(settings: dict) -> dict:
 def _problems(settings: dict, analysis: dict) -> tuple[list[str], list[str]]:
     problems, warnings = [], []
     provider = images.PROVIDERS.get(settings.get("image_provider"), images.PROVIDERS["fal"])
-    if analysis.get("missing_images") and not settings.get(provider["key_field"]):
+    needs_images = int(analysis.get("missing_images") or 0)
+    try:
+        needs_images = int(_generation_estimate(settings, analysis).get("images") or needs_images)
+    except Exception:
+        pass
+    if needs_images and not settings.get(provider["key_field"]):
         problems.append(f"Не указан ключ для {provider['name']}.")
-    if not llm.has_key(settings):
+    if settings.get("folder_smart_mapping", False) and not llm.has_key(settings):
         problems.append("Не указан ключ выбранной языковой модели для распределения текста по сценам.")
     if settings.get("voice_provider") == "royal":
         if not settings.get("royal_key"):
@@ -290,7 +305,12 @@ def list_queue():
         jobs = [_public_job(job) for job in sorted(_jobs.values(), key=lambda x: x.get("added", 0))]
     for job in jobs:
         if job.get("analysis"):
-            job["problems"], job["warnings"] = _problems(settings, job["analysis"])
+            chosen = {**settings, **(job.get("options") or {})}
+            job["problems"], job["warnings"] = _problems(chosen, job["analysis"])
+            try:
+                job["estimate"] = _generation_estimate(chosen, job["analysis"])
+            except Exception:
+                job["estimate"] = {}
     return {"jobs": jobs, "settings": {k: settings.get(k) for k in (
         "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
         "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
@@ -349,7 +369,27 @@ def remove_job(job_id: str):
             raise UserError("Сначала остановите проект.")
         _jobs.pop(job_id, None)
         _save_queue()
-    return {"ok": True}
+    freed = 0
+    cache = ROOT / job_id
+    pid = hashlib.sha256(("folder:" + str(job.get("path") or "")).encode()).hexdigest()[:12]
+    local = local_editor.ROOT / pid
+    for path in (cache, local):
+        if not path.is_dir():
+            continue
+        for base, _dirs, files in os.walk(path, followlinks=False):
+            for name in files:
+                try:
+                    freed += (Path(base) / name).stat().st_size
+                except OSError:
+                    pass
+        shutil.rmtree(path, ignore_errors=True)
+    frame_raw = str((job.get("analysis") or {}).get("frame_dir") or "")
+    frame_dir = Path(frame_raw) if frame_raw else None
+    if frame_dir and frame_dir.is_dir():
+        shutil.rmtree(frame_dir / "референсы", ignore_errors=True)
+        for leftover in [*frame_dir.glob("S*.raw"), *frame_dir.glob("S*.tmp.png")]:
+            leftover.unlink(missing_ok=True)
+    return {"ok": True, "bytes_freed": freed}
 
 
 @router.post("/start")
@@ -362,11 +402,14 @@ def start_queue(data: dict = Body(...)):
         "folder_effect_level", "folder_render_speed", "folder_jobs_parallel", "image_parallel", "render_parallel")}
     save_settings({k: v for k, v in options.items() if k in allowed})
     settings = load_settings()
+    explicit_ids = data.get("ids") is not None
     ids = set(data.get("ids") or _jobs)
     queued = []
     with _lock:
         for jid, job in _jobs.items():
             if jid not in ids or job.get("status") in ("running", "pausing", "stopping"):
+                continue
+            if not explicit_ids and job.get("status") == "done":
                 continue
             analysis = _analyze(Path(job["path"]))
             problems, warnings = _problems(settings, analysis)
@@ -507,7 +550,8 @@ def _fast_mapping(scenes: list[dict], narration: str) -> tuple[list[str], int]:
             continue
         opening = starts[index + 1]
         following = starts[index + 2] if index + 2 < len(starts) else len(raw_words)
-        take = min(5, max(1, (following - opening) // 3)) if following > opening else 0
+        span = following - opening
+        take = min(8, max(5, span // 2), span - 1) if span > 1 else 0
         starts[index] = opening
         starts[index + 1] = min(following, opening + take)
     for index in range(1, len(starts)):
@@ -587,7 +631,84 @@ def _mapping(job_id: str, scenes: list[dict], narration: str, settings: dict, ca
 
 def _reference_keywords(ref: dict) -> list[str]:
     name = re.sub(r"[^a-z0-9 ]", " ", ref.get("name", "").lower())
-    return [x for x in name.split() if len(x) >= 4 and x not in {"reference", "today"}]
+    common = {"reference", "today", "small", "large", "young", "ancient", "modern", "little", "single"}
+    return [x for x in name.split() if len(x) >= 4 and x not in common]
+
+
+def _scene_reference_ids(scene: dict, refs: list[dict]) -> list[str]:
+    """Choose references only from explicit R-ids or distinctive subject words, never generic adjectives."""
+    prompt = scene.get("prompt") or ""
+    low = prompt.lower()
+    explicit = {x.upper() for x in re.findall(r"(?i)\bR\d+\b", prompt)}
+    chosen = []
+    for ref in refs:
+        rid = ref["id"]
+        keys = _reference_keywords(ref)
+        if rid in explicit or keys and (" ".join(keys) in low or any(re.search(rf"\b{re.escape(k)}\b", low) for k in keys)):
+            chosen.append(rid)
+    return chosen[:3]
+
+
+def _legacy_reference_ids(scene: dict, refs: list[dict]) -> list[str]:
+    """The v182 matcher, used once to identify already generated frames that were contaminated by it."""
+    low = (scene.get("prompt") or "").lower()
+    out = []
+    for ref in refs:
+        name = re.sub(r"[^a-z0-9 ]", " ", ref.get("name", "").lower())
+        keys = [x for x in name.split() if len(x) >= 4 and x not in {"reference", "today"}]
+        if keys and (" ".join(keys) in low or any(k in low for k in keys)):
+            out.append(ref["id"])
+    return out[:3]
+
+
+def _image_prompt(scene: dict, settings: dict) -> str:
+    prompt = (scene.get("prompt") or scene.get("voice_hint") or scene["id"]).strip()
+    if "style:" not in prompt.lower() and settings.get("image_style"):
+        prompt += ". " + str(settings["image_style"]).strip()
+    return prompt
+
+
+def _frame_signature(scene: dict, settings: dict, ref_ids: list[str], refs_on: bool) -> str:
+    provider = images.PROVIDERS.get(settings.get("image_provider"), images.PROVIDERS["fal"])
+    payload = {
+        "prompt": _image_prompt(scene, settings), "references": ref_ids if refs_on else [],
+        "provider": settings.get("image_provider") or "fal", "model": settings.get(provider["model_field"]),
+        "ref_model": settings.get("ref_model") if ref_ids and refs_on else "", "refs_active": bool(ref_ids and refs_on),
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _generation_estimate(settings: dict, analysis: dict) -> dict:
+    scenes, refs = _parse_scenes(Path(analysis["scene_file"]))
+    root, frame_dir = Path(analysis["path"]), Path(analysis["frame_dir"])
+    media_map = _scan_media(root)
+    manifest = _read_json(frame_dir / ".autoyoutube-generated.json", {})
+    frame_manifest = manifest.get("frames", {}) if isinstance(manifest, dict) else {}
+    refs_on = bool(settings.get("folder_references", True))
+    needed, ref_scenes, required_refs = [], 0, set()
+    for scene in scenes:
+        sid = scene["id"]
+        ref_ids = _scene_reference_ids(scene, refs) if refs_on else []
+        current = media_map.get(sid)
+        stale = current is None
+        generated = frame_dir / f"{sid}.png"
+        if current is not None and current == generated:
+            recorded = frame_manifest.get(sid, {}).get("signature") if isinstance(frame_manifest.get(sid), dict) else None
+            expected = _frame_signature(scene, settings, ref_ids, refs_on)
+            legacy_ids = _legacy_reference_ids(scene, refs)
+            safe_legacy = recorded is None and ((refs_on and legacy_ids == ref_ids) or (not refs_on and not legacy_ids))
+            stale = recorded != expected and not safe_legacy
+        if stale:
+            needed.append(sid)
+            ref_scenes += bool(ref_ids and images.can_reference(settings))
+            required_refs.update(ref_ids)
+    regular = len(needed) - ref_scenes
+    regular_unit = images.price_per_image(settings)
+    ref_unit = images.price_per_image(settings) if images.royal_refs(settings) else images.REFERENCE_PRICE
+    refs_to_make = len(required_refs) if refs_on and images.can_reference(settings) else 0
+    cost = regular * regular_unit + ref_scenes * ref_unit + refs_to_make * regular_unit
+    return {"images": len(needed), "reference_scenes": ref_scenes, "regular_scenes": regular,
+            "references": refs_to_make, "cost": round(cost, 2), "refs_on": refs_on}
 
 
 def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dict], settings: dict, options: dict) -> dict[str, Path]:
@@ -595,52 +716,104 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
     root = Path(analysis["path"])
     frame_dir = Path(analysis["frame_dir"])
     frame_dir.mkdir(parents=True, exist_ok=True)
+    for leftover in [*frame_dir.glob("S*.raw"), *frame_dir.glob("S*.tmp.png")]:
+        leftover.unlink(missing_ok=True)
     media_map = _scan_media(root)
     use_refs = bool(options.get("folder_references", True))
+    manifest_path = frame_dir / ".autoyoutube-generated.json"
+    manifest = _read_json(manifest_path, {})
+    if not isinstance(manifest, dict):
+        manifest = {}
+    frame_manifest = manifest.setdefault("frames", {})
+    ref_manifest = manifest.setdefault("references", {})
     ref_paths: dict[str, Path] = {}
-    if use_refs and refs:
-        ref_dir = frame_dir / "референсы"
-        ref_dir.mkdir(parents=True, exist_ok=True)
-        for index, ref in enumerate(refs):
-            _check_control(job_id)
-            out = ref_dir / f"{ref['id']}.png"
-            if not out.exists():
-                _update(job_id, progress=.06 + .04 * (index / max(len(refs), 1)), step=f"Создаю референс {ref['id']}…")
-                prompt = ref.get("prompt") or ref.get("name")
-                media.to_png(images.generate(settings, prompt, False), out)
-                _check_control(job_id)
-            ref_paths[ref["id"]] = out
-    missing = [scene for scene in scenes if scene["id"] not in media_map]
+    missing = []
+    for scene in scenes:
+        sid = scene["id"]
+        current = media_map.get(sid)
+        generated = frame_dir / f"{sid}.png"
+        ref_ids = _scene_reference_ids(scene, refs) if use_refs else []
+        signature = _frame_signature(scene, settings, ref_ids, use_refs)
+        if current is None:
+            missing.append(scene)
+            continue
+        try:
+            is_generated = current.resolve() == generated.resolve()
+        except OSError:
+            is_generated = current == generated
+        if not is_generated:
+            continue  # owner's video or image always wins and is never regenerated
+        recorded = frame_manifest.get(sid, {}).get("signature") if isinstance(frame_manifest.get(sid), dict) else None
+        if recorded == signature:
+            continue
+        legacy_ids = _legacy_reference_ids(scene, refs)
+        if recorded is None and ((use_refs and legacy_ids == ref_ids) or (not use_refs and not legacy_ids)):
+            # Safe migration: a v182 frame whose reference choice was already correct can stay.
+            frame_manifest[sid] = {"signature": signature, "references": ref_ids, "legacy": True}
+            continue
+        media_map.pop(sid, None)
+        missing.append(scene)
+    _write_json(manifest_path, manifest)
     if not missing:
         return media_map
+    required_refs = {rid for scene in missing for rid in (_scene_reference_ids(scene, refs) if use_refs else [])}
+    if required_refs and images.can_reference(settings):
+        ref_dir = frame_dir / "референсы"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        selected_refs = [ref for ref in refs if ref["id"] in required_refs]
+        for index, ref in enumerate(selected_refs):
+            _check_control(job_id)
+            out = ref_dir / f"{ref['id']}.png"
+            provider = images.PROVIDERS.get(settings.get("image_provider"), images.PROVIDERS["fal"])
+            ref_sig = hashlib.sha256(json.dumps([ref.get("prompt"), settings.get("image_provider"),
+                settings.get(provider["model_field"])], ensure_ascii=False).encode()).hexdigest()
+            if not out.exists() or ref_manifest.get(ref["id"]) != ref_sig:
+                _update(job_id, progress=.06 + .04 * (index / max(len(selected_refs), 1)), step=f"Создаю референс {ref['id']}…")
+                media.to_png(images.generate(settings, ref.get("prompt") or ref.get("name"), False), out)
+                ref_manifest[ref["id"]] = ref_sig
+                _write_json(manifest_path, manifest)
+                _check_control(job_id)
+            ref_paths[ref["id"]] = out
     done = [0]
 
     def work(scene: dict):
         _check_control(job_id)
         out = frame_dir / f"{scene['id']}.png"
-        if out.exists():
-            return scene["id"], out
-        prompt = (scene.get("prompt") or scene.get("voice_hint") or scene["id"]).strip()
-        if "style:" not in prompt.lower() and settings.get("image_style"):
-            prompt += ". " + str(settings["image_style"]).strip()
-        selected = []
-        low = prompt.lower()
-        if use_refs and images.can_reference(settings):
-            for ref in refs:
-                keys = _reference_keywords(ref)
-                if keys and (" ".join(keys) in low or any(k in low for k in keys)) and ref["id"] in ref_paths:
-                    selected.append(ref_paths[ref["id"]])
-        raw = images.generate_with_reference(settings, prompt, selected[:3], False) if selected else images.generate(settings, prompt, False)
+        prompt = _image_prompt(scene, settings)
+        ref_ids = _scene_reference_ids(scene, refs) if use_refs else []
+        selected = [ref_paths[rid] for rid in ref_ids if rid in ref_paths] if images.can_reference(settings) else []
+        fallback = False
+        try:
+            raw = images.generate_with_reference(settings, prompt, selected, False) if selected else images.generate(settings, prompt, False)
+        except UserError:
+            if not selected:
+                raise
+            # A reference edit can reject an otherwise valid scene; text-only generation keeps the queue moving.
+            raw = images.generate(settings, prompt, False)
+            fallback = True
         media.to_png(raw, out)
+        signature = _frame_signature(scene, settings, ref_ids, use_refs)
+        with _lock:
+            frame_manifest[scene["id"]] = {"signature": signature, "references": ref_ids,
+                                             "text_only_fallback": fallback, "updated": _now()}
+            _write_json(manifest_path, manifest)
         _check_control(job_id)
         return scene["id"], out
 
     workers = max(1, min(int(options.get("image_parallel") or settings.get("image_parallel") or 4), 8))
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"folder-images-{job_id}") as pool:
-        futures = [pool.submit(work, scene) for scene in missing]
+        futures = {pool.submit(work, scene): scene for scene in missing}
+        failures = []
         try:
             for future in as_completed(futures):
-                sid, out = future.result()
+                scene = futures[future]
+                try:
+                    sid, out = future.result()
+                except (_PauseRequested, _StopRequested):
+                    raise
+                except Exception as exc:
+                    failures.append(f"{scene['id']}: {exc}")
+                    continue
                 media_map[sid] = out
                 done[0] += 1
                 _update(job_id, progress=.10 + .38 * done[0] / len(missing),
@@ -650,6 +823,9 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
             for future in futures:
                 future.cancel()
             raise
+        if failures:
+            shown = "; ".join(failures[:5])
+            raise UserError(f"Не удалось создать {len(failures)} сцен. {shown}")
     return media_map
 
 
@@ -666,8 +842,10 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
     manifest = _read_json(manifest_path, {})
     mp3, spoken = audio / "narration.mp3", audio / "narration.wav"
     signature = hashlib.sha256(json.dumps([
-        narration, voice_settings.get("elevenlabs_voice_id"), voice_settings.get("elevenlabs_model"),
-        voice_settings.get("voice_speed"), voice_settings.get("voice_stability"), voice_settings.get("voice_style"),
+        narration, voice_settings.get("voice_provider"), voice_settings.get("elevenlabs_voice_id"),
+        voice_settings.get("elevenlabs_model"), voice_settings.get("voice_speed"),
+        voice_settings.get("voice_stability"), voice_settings.get("voice_similarity"),
+        voice_settings.get("voice_style"),
     ], ensure_ascii=False).encode()).hexdigest()
     if manifest.get("narration") != signature or not spoken.exists():
         _update(job_id, progress=.49, step="Озвучиваю весь файл одним запросом…")
@@ -709,6 +887,15 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
         previous = boundary
     if cuts:
         cuts[-1] = total
+    # A title card must remain readable; take a little time from the following scene without adding silence.
+    for index, scene in enumerate(scenes[:-1]):
+        if not scene.get("chapter"):
+            continue
+        current = cuts[index + 1] - cuts[index]
+        available = cuts[index + 2] - cuts[index + 1]
+        wanted = min(2.4, current + max(available - .8, 0))
+        if current < wanted:
+            cuts[index + 1] += wanted - current
     durations = [round(end - start, 3) for start, end in zip(cuts, cuts[1:])]
     return durations, words
 
@@ -731,13 +918,14 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
     render_dir.mkdir(parents=True, exist_ok=True)
     project = local_editor._default_project(pid, analysis["title"], "long")
     project.update({
-        "fps": int(settings.get("fps") or 30), "music_volume": float(options.get("folder_music_volume") or .12),
+        "fps": int(settings.get("fps") or 30), "music_volume": float(options.get("folder_music_volume", .12)),
         "edit_style": options.get("folder_edit_style") or "auto", "edit_tempo": options.get("folder_edit_tempo") or "balanced",
         "effect_level": options.get("folder_effect_level") or "normal", "render_speed": options.get("folder_render_speed") or "fast",
         "subtitles": bool(options.get("folder_subtitles", True)), "subtitles_position": options.get("folder_subtitles_position") or "mid_low",
         "subtitle_preset": options.get("folder_subtitle_preset") or "karaoke", "subtitle_font": options.get("folder_subtitle_font") or "auto",
         "subtitle_size": options.get("folder_subtitle_size") or "medium", "graphics_enabled": bool(options.get("folder_auto_graphics", True) or options.get("folder_chapters", True)),
         "graphics_auto": bool(options.get("folder_auto_graphics", True)), "auto_sfx": True,
+        "render_parallel": max(1, min(int(options.get("render_parallel") or 3), 4)),
     })
     local_scenes = []
     for i, (scene, duration) in enumerate(zip(scenes, durations)):
@@ -748,14 +936,21 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
         kind = "video" if ext in VIDEO_EXT else "image"
         source_duration = media.video_duration(source) if kind == "video" else duration
         focus_x, focus_y = local_editor._image_focus(source) if kind == "image" else (.5, .5)
-        local_scenes.append({
-            "id": hashlib.sha256(scene["id"].encode()).hexdigest()[:12], "scene_code": scene["id"], "source": local_name,
-            "name": source.name, "kind": kind, "source_duration": round(source_duration, 3), "trim_start": 0,
-            "trim_end": round(min(source_duration, duration), 3), "focus_x": focus_x, "focus_y": focus_y,
-            "duration": round(duration, 3), "fit": "cover", "motion": "none", "transition": "cut",
-            "effect": "none", "sfx": "none", "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2,
-            "style": "classic", "animation": "pop", "auto": False},
-        })
+        # A single still must never sit unchanged for 20–30 seconds: create virtual camera shots from it.
+        parts = max(1, math.ceil(duration / 11.0)) if kind == "image" else 1
+        used = 0.0
+        for part in range(parts):
+            part_duration = round(duration / parts, 3) if part + 1 < parts else round(duration - used, 3)
+            used += part_duration
+            local_scenes.append({
+                "id": hashlib.sha256(f"{scene['id']}:{part}".encode()).hexdigest()[:12],
+                "scene_code": scene["id"], "segment": part + 1, "segments": parts, "source": local_name,
+                "name": source.name, "kind": kind, "source_duration": round(source_duration, 3), "trim_start": 0,
+                "trim_end": round(min(source_duration, duration), 3), "focus_x": focus_x, "focus_y": focus_y,
+                "duration": part_duration, "fit": "cover", "motion": "none", "transition": "cut",
+                "effect": "none", "sfx": "none", "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2,
+                "style": "classic", "animation": "pop", "auto": False},
+            })
     project["scenes"] = local_scenes
     project["scenes_synced"] = True
     project["transcript"] = {"status": "done", "text": " ".join(texts), "words": [[w, s, e] for w, s, e, *_ in words],
@@ -763,13 +958,21 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
     narration = cache / "narration.wav"
     _link_or_copy(narration, media_dir / "narration.wav")
     project["voice"] = {"source": "narration.wav", "name": "English voice", "duration": round(sum(durations), 3)}
+    recent = [str(item.get("style") or "") for item in local_editor._editing_history()
+              if item.get("project_id") != pid]
+    editing_styles.build_plan(project, recent)
+    for target in project["scenes"]:
+        if float(target.get("duration") or 0) < 1.0:
+            target["transition"], target["sfx"] = "cut", "none"
     if options.get("folder_music", True):
-        picked = music.pick(analysis["title"] + " " + " ".join(texts[:5]))
+        plan = project.get("plan") or {}
+        mood = " ".join([str(plan.get("style_name") or ""), str(plan.get("description") or ""),
+                           analysis["title"], " ".join(texts[:5])])
+        picked = music.pick(mood)
         if picked:
             local_music = hashlib.sha256(str(picked).encode()).hexdigest()[:12] + picked.suffix.lower()
             _link_or_copy(picked, media_dir / local_music)
             project["music"] = {"source": local_music, "name": picked.name, "duration": media.video_duration(picked)}
-    editing_styles.build_plan(project, [])
     project["subtitle_preset"] = options.get("folder_subtitle_preset") or "karaoke"
     if options.get("folder_auto_graphics", True):
         try:
@@ -777,8 +980,11 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
         except UserError:
             pass
     if options.get("folder_chapters", True):
-        for source, target in zip(scenes, project["scenes"]):
+        for source in scenes:
             if source.get("chapter"):
+                target = next((item for item in project["scenes"] if item.get("scene_code") == source["id"]), None)
+                if not target:
+                    continue
                 target["graphic"] = {"type": "chapter", "value": "", "unit": "", "label": source["chapter"], "start": .15,
                                      "style": "cinematic", "animation": "pop", "auto": True}
     (project_dir / "edit.json").write_text(json.dumps(project, ensure_ascii=False, indent=2), "utf-8")
@@ -796,7 +1002,7 @@ def _build(job_id: str):
         cache.mkdir(parents=True, exist_ok=True)
         scenes, refs = _parse_scenes(Path(analysis["scene_file"]))
         narration = Path(analysis["narration_file"]).read_text("utf-8", errors="replace").strip()
-        texts = _mapping(job_id, scenes, narration, settings, cache)
+        texts = _mapping(job_id, scenes, narration, options, cache)
         _check_control(job_id)
         _update(job_id, progress=.05, step="Проверяю готовые кадры и создаю недостающие…")
         media_map = _make_images(job_id, analysis, scenes, refs, settings, options)
@@ -810,7 +1016,21 @@ def _build(job_id: str):
         _update(job_id, progress=.75, step="Собираю финальное видео 1080p…")
         with local_editor._lock:
             local_editor._rendering.add(pid)
-        local_editor._render_worker(pid, "final")
+        def render_cancelled():
+            with _lock:
+                return (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping")
+
+        render_thread = threading.Thread(target=local_editor._render_worker,
+                                         args=(pid, "final", render_cancelled), daemon=True,
+                                         name=f"folder-final-{job_id}")
+        render_thread.start()
+        while render_thread.is_alive():
+            render_state = _read_json(project_dir / "edit.json", {}).get("render", {})
+            render_progress = float(render_state.get("progress") or 0)
+            if not render_cancelled():
+                _update(job_id, progress=round(.75 + .23 * render_progress, 3),
+                        step=render_state.get("step") or "Собираю финальное видео 1080p…")
+            render_thread.join(.6)
         _check_control(job_id)
         rendered = project_dir / "render" / "final.mp4"
         result = _read_json(project_dir / "edit.json", {}).get("render", {})
@@ -819,15 +1039,19 @@ def _build(job_id: str):
         output = Path(analysis["output"])
         output.parent.mkdir(parents=True, exist_ok=True)
         tmp = output.with_suffix(".new.mp4")
-        shutil.copy2(rendered, tmp)
+        _link_or_copy(rendered, tmp)
         tmp.replace(output)
         _update(job_id, status="done", progress=1, step="Готово", error="", output=str(output), finished=_now(), analysis=_analyze(Path(job["path"])))
+        # The source folder keeps its generated scene PNGs and final MP4; internal audio, clips and duplicate finals do not.
+        shutil.rmtree(cache, ignore_errors=True)
+        shutil.rmtree(project_dir, ignore_errors=True)
+        shutil.rmtree(Path(analysis["frame_dir"]) / "референсы", ignore_errors=True)
     except _PauseRequested:
         _update(job_id, status="paused", step="На паузе", error="")
     except _StopRequested:
         _update(job_id, status="stopped", step="Остановлено", error="")
     except Exception as exc:
-        _update(job_id, status="error", progress=0, step="", error=str(exc))
+        _update(job_id, status="error", step="Ошибка", error=str(exc))
 
 
 def _schedule():

@@ -116,17 +116,18 @@ def choose_style(project: dict, recent: list[str], revision: int) -> str:
     text = _text(project)
     scores = Counter({key: 1 for key in STYLES})
     rules = {
-        "investigation": r"тайн|секрет|расслед|документ|заговор|преступ|скрывал|катастроф",
-        "archive": r"архив|истори|век|год|войн|импери|ссср|древн|хроник",
-        "science": r"учен|исслед|наук|эксперимент|технолог|космос|открыт|теори",
-        "mystery": r"мист|загад|страш|прокля|исчез|аномал|взорв|смерт|озер",
-        "dynamic": r"топ|самый|шок|невероят|срочно|за минут|ошибк|факт",
-        "cinematic": r"путешеств|биограф|судьб|африк|океан|город|страна|природ",
-        "minimal": r"бизнес|бренд|дизайн|архитект|преми|интерьер",
+        "investigation": r"тайн|секрет|расслед|документ|заговор|преступ|скрывал|катастроф|investigat|conspir|crime|hidden|cover.up|evidence",
+        "archive": r"архив|истори|век|год|войн|импери|ссср|древн|хроник|archive|history|centur|war|empire|ancient|chronicle",
+        "science": r"учен|исслед|наук|эксперимент|технолог|космос|открыт|теори|scient|research|experiment|geolog|fossil|asteroid|dinosaur|theory|paleont",
+        "mystery": r"мист|загад|страш|прокля|исчез|аномал|взорв|смерт|озер|mystery|strange|curse|vanish|anomal|explode|death|deadly|lake",
+        "dynamic": r"топ|самый|шок|невероят|срочно|за минут|ошибк|факт|top|shocking|unbeliev|urgent|mistake|facts?",
+        "cinematic": r"путешеств|биограф|судьб|африк|океан|город|страна|природ|journey|biograph|destiny|africa|ocean|nature|wildlife|river|forest",
+        "minimal": r"бизнес|бренд|дизайн|архитект|преми|интерьер|business|brand|design|architect|premium|interior",
     }
     for style, pattern in rules.items():
-        if re.search(pattern, text):
-            scores[style] += 4
+        hits = len(re.findall(pattern, text))
+        if hits:
+            scores[style] += min(8, 2 * hits)
     if re.search(r"\d", text):
         scores["science"] += 1
         scores["investigation"] += 1
