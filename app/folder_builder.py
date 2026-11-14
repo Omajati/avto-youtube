@@ -837,9 +837,32 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
     return media_map
 
 
+def _voice_chunks(text: str, limit: int = 9000) -> list[str]:
+    """Split long narration at natural pauses without exceeding the ElevenLabs request limit."""
+    rest = text.strip()
+    chunks = []
+    while len(rest) > limit:
+        window = rest[:limit + 1]
+        sentence_breaks = [m.end() for m in re.finditer(r'[.!?…]["”’»)]*\s+', window)]
+        useful = [position for position in sentence_breaks if position >= limit * .55]
+        if useful:
+            cut = useful[-1]
+        else:
+            spaces = [m.start() for m in re.finditer(r'\s+', window) if m.start() >= limit * .55]
+            cut = spaces[-1] if spaces else limit
+        chunk = rest[:cut].strip()
+        if not chunk:
+            chunk, cut = rest[:limit], limit
+        chunks.append(chunk)
+        rest = rest[cut:].strip()
+    if rest:
+        chunks.append(rest)
+    return chunks
+
+
 def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: str,
                 settings: dict, options: dict, cache: Path):
-    """Voice the complete narration with exactly one TTS request, then fit scenes to its word timings."""
+    """Voice the complete narration in the fewest allowed requests, then fit scenes to its word timings."""
     _check_control(job_id)
     audio = cache / "audio"
     audio.mkdir(parents=True, exist_ok=True)
@@ -849,21 +872,64 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
     manifest_path = audio / "manifest.json"
     manifest = _read_json(manifest_path, {})
     mp3, spoken = audio / "narration.mp3", audio / "narration.wav"
-    signature = hashlib.sha256(json.dumps([
-        narration, voice_settings.get("voice_provider"), voice_settings.get("elevenlabs_voice_id"),
+    voice_values = [
+        voice_settings.get("voice_provider"), voice_settings.get("elevenlabs_voice_id"),
         voice_settings.get("elevenlabs_model"), voice_settings.get("voice_speed"),
         voice_settings.get("voice_stability"), voice_settings.get("voice_similarity"),
         voice_settings.get("voice_style"),
-    ], ensure_ascii=False).encode()).hexdigest()
+    ]
+    voice_signature = hashlib.sha256(json.dumps(voice_values, ensure_ascii=False).encode()).hexdigest()
+    # Keep the pre-v186 final signature so a valid cached narration is never billed a second time after an update.
+    signature = hashlib.sha256(json.dumps([narration, *voice_values], ensure_ascii=False).encode()).hexdigest()
+    chunks = _voice_chunks(narration)
+    spoken_words = []
     if manifest.get("narration") != signature or not spoken.exists():
-        _update(job_id, progress=.49, step="Озвучиваю весь файл одним запросом…")
-        tts.synthesize(voice_settings, narration, mp3, "", "", "en")
-        media.to_wav(mp3, spoken)
-        manifest = {"narration": signature}
+        saved_parts = manifest.get("parts") if isinstance(manifest.get("parts"), dict) else {}
+        part_wavs = []
+        offset = 0.0
+        for index, chunk in enumerate(chunks):
+            _check_control(job_id)
+            number = index + 1
+            part_mp3 = audio / f"narration-part-{number:03d}.mp3"
+            part_wav = audio / f"narration-part-{number:03d}.wav"
+            previous = chunks[index - 1] if index else ""
+            following = chunks[index + 1] if index + 1 < len(chunks) else ""
+            part_signature = hashlib.sha256(json.dumps([
+                voice_signature, chunk, previous[-1000:], following[:1000], "en",
+            ], ensure_ascii=False).encode()).hexdigest()
+            needs_synthesis = saved_parts.get(str(number)) != part_signature or not part_mp3.exists()
+            if needs_synthesis:
+                label = "Озвучиваю весь файл…" if len(chunks) == 1 else f"Озвучиваю файл: часть {number} из {len(chunks)}…"
+                _update(job_id, progress=.49 + .18 * index / max(len(chunks), 1), step=label)
+                tts.synthesize(voice_settings, chunk, part_mp3, previous, following, "en")
+                saved_parts[str(number)] = part_signature
+                manifest = {"parts": saved_parts}
+                _write_json(manifest_path, manifest)
+            if needs_synthesis or not part_wav.exists():
+                media.to_wav(part_mp3, part_wav)
+            duration = media.wav_duration(part_wav)
+            chunk_words = captions._scene_words(chunk, part_mp3.with_suffix(".json"), duration)
+            spoken_words.extend((word, offset + start, offset + end) for word, start, end in chunk_words)
+            offset += duration
+            part_wavs.append((part_wav, 0.0))
+        media.concat_wavs(part_wavs, spoken)
+        manifest = {"narration": signature, "parts": saved_parts, "chunk_count": len(chunks)}
         _write_json(manifest_path, manifest)
         _check_control(job_id)
     speech_duration = media.wav_duration(spoken)
-    spoken_words = captions._scene_words(narration, mp3.with_suffix(".json"), speech_duration)
+    if not spoken_words:
+        # Compatibility with a cached one-request narration from an earlier version.
+        if manifest.get("chunk_count"):
+            offset = 0.0
+            for number, chunk in enumerate(chunks, 1):
+                part_mp3 = audio / f"narration-part-{number:03d}.mp3"
+                part_wav = audio / f"narration-part-{number:03d}.wav"
+                duration = media.wav_duration(part_wav)
+                for word, start, end in captions._scene_words(chunk, part_mp3.with_suffix(".json"), duration):
+                    spoken_words.append((word, offset + start, offset + end))
+                offset += duration
+        else:
+            spoken_words = captions._scene_words(narration, mp3.with_suffix(".json"), speech_duration)
     intro = 3.0 if scenes and scenes[0].get("preview") else 0.0
     parts = []
     if intro:
