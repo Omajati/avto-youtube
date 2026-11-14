@@ -5,6 +5,7 @@ let META = null;
 let timer = null;
 
 const STATUS_RU = { queued: "В очереди", running: "Делается", review: "Ждёт вашей проверки", paused: "На паузе", done: "Готово", error: "Ошибка" };
+const REMOVED_PAGES = new Set(["channels", "insta", "characters", "items", "balance", "help"]);
 
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function nl(s) { return esc(s).replace(/\n/g, "<br>"); }
@@ -69,19 +70,13 @@ const lsSetRaw = (k, v) => { try { v == null ? localStorage.removeItem(k) : loca
     producer: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
     library: '<path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>',
     projects: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-    characters: '<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0M16 3.1a4 4 0 0 1 0 7.8M22 21a7 7 0 0 0-4-6.3"/>',
-    items: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
     settings: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
     prompts: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
-    insta: '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h0"/>',
     music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
-    channels: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/>',
-    balance: '<rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20M16 15h2"/>',
-    help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h0"/>',
   };
   nav.querySelectorAll("a[data-nav]").forEach(a => { const d = P[a.dataset.nav]; if (d) a.insertAdjacentHTML("afterbegin", `<svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`); });
   const GROUPS = { new: "Создание", producer: "Знания", settings: "Система" };
-  const DEFAULT = ["new", "jobs", "channels", "montage", "local-editor", "remake", "producer", "library", "insta", "projects", "characters", "items", "settings", "prompts", "music", "balance", "help"];
+  const DEFAULT = ["new", "jobs", "montage", "local-editor", "remake", "producer", "library", "projects", "settings", "prompts", "music"];
   const heads = () => {
     nav.querySelectorAll(".ngrp").forEach(x => x.remove());
     if (nav.classList.contains("editing")) return;
@@ -204,16 +199,15 @@ async function viewMyChannels() {
 // ------------------------------------------------------------------ router
 async function route() {
   clearInterval(timer); timer = null;
-  if (!META) { META = await api("/api/meta"); STYLE_PRESETS = META.image_styles; }
   const [, page, id] = (location.hash || "#/jobs").split("/");
+  if (REMOVED_PAGES.has(page)) { location.replace("#/local-editor"); return; }
+  if (!META) { META = await api("/api/meta"); STYLE_PRESETS = META.image_styles; }
   document.querySelectorAll("[data-nav]").forEach(a => a.classList.toggle("active", a.dataset.nav === page || (page === "job" && a.dataset.nav === "jobs")));
   try {
     if (page === "new") await viewNew();
     else if (page === "job") await viewJob(id);
     else if (page === "settings") await viewSettings(id);
     else if (page === "projects") await viewProjects(id);
-    else if (page === "characters") await viewCharacters();
-    else if (page === "items") await viewItems();
     else if (page === "prompts") await viewPrompts(id);
     else if (page === "music") await viewMusic();
     else if (page === "montage") await viewMontage();
@@ -221,10 +215,6 @@ async function route() {
     else if (page === "remake") await viewRemake(id);
     else if (page === "producer") await viewProducer(id);
     else if (page === "library") await viewLibrary(id);
-    else if (page === "insta") await viewInsta();
-    else if (page === "help") viewHelp();
-    else if (page === "balance") await viewBalance();
-    else if (page === "channels") await viewMyChannels();
     else await viewJobs();
   } catch (e) { main.innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
   draftRestore();
@@ -300,8 +290,11 @@ function draftRestore() {
 }
 
 // ------------------------------------------------------------------ recent pages as tabs
-const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", "local-editor": "🎞️", projects: "📁", characters: "🧑‍🎨", items: "📦", settings: "⚙️", prompts: "📝", music: "🎵", remake: "🔁", producer: "🎓", library: "📚", help: "❓", balance: "💰" };
-function getTabs() { try { return JSON.parse(lsGet("ay_tabs", "[]")) || []; } catch (e) { return []; } }
+const TAB_ICONS = { new: "＋", jobs: "🎬", job: "🎞️", "local-editor": "🎞️", projects: "📁", settings: "⚙️", prompts: "📝", music: "🎵", remake: "🔁", producer: "🎓", library: "📚" };
+function getTabs() {
+  try { return (JSON.parse(lsGet("ay_tabs", "[]")) || []).filter(t => t && !REMOVED_PAGES.has((t.hash || "").split("/")[1])); }
+  catch (e) { return []; }
+}
 function rememberTab() {
   const hash = location.hash || "#/jobs";
   const page = hash.split("/")[1] || "jobs";
@@ -486,14 +479,14 @@ async function viewNew() {
   };
   main.querySelectorAll("[data-proj]").forEach(b => b.onclick = () => { curProj = b.dataset.proj; lsSet("ay_proj", curProj); applyProj(); });
   const allChars = await api("/api/characters").catch(() => []);
-  $("#charsel").innerHTML = `<label class="f">Персонажи в ролике <span class="hint">Нажмите, чтобы выбрать. Сценарий и картинки будут строиться вокруг них. Персонажи проекта отмечаются сами. <a href="#/characters">Добавить персонажа</a></span></label>
+  $("#charsel").innerHTML = `<label class="f">Персонажи в ролике <span class="hint">Нажмите, чтобы выбрать. Сценарий и картинки будут строиться вокруг них. Персонажи проекта отмечаются сами.</span></label>
     ${allChars.length ? `<div class="row">${allChars.map(c => `<button class="cbtn" data-char="${c.id}" title="${esc(c.role)}">${charIcon(c, 48)}<span>${esc(c.name)}</span></button>`).join("")}</div>`
-      : `<p class="muted small" style="margin:0">Персонажей пока нет. Их можно добавить в разделе «Персонажи» слева.</p>`}`;
+      : `<p class="muted small" style="margin:0">Персонажей пока нет.</p>`}`;
   $("#charsel").querySelectorAll("[data-char]").forEach(b => b.onclick = () => { b.classList.toggle("on"); syncChars(); main.dispatchEvent(new Event("input")); });
   const allItems = await api("/api/items").catch(() => []);
-  $("#itemsel").innerHTML = `<label class="f">Предметы в ролике <span class="hint">Товары и вещи, которые должны появиться в кадре точно как на ваших фото. Предметы проекта отмечаются сами. <a href="#/items">Добавить предмет</a></span></label>
+  $("#itemsel").innerHTML = `<label class="f">Предметы в ролике <span class="hint">Товары и вещи, которые должны появиться в кадре точно как на ваших фото. Предметы проекта отмечаются сами.</span></label>
     ${allItems.length ? `<div class="row">${allItems.map(it => `<button class="cbtn" data-item="${it.id}" title="${esc(it.kind)}">${itemIcon(it, 48)}<span>${esc(it.name)}</span></button>`).join("")}</div>`
-      : `<p class="muted small" style="margin:0">Предметов пока нет. Их можно добавить в разделе «Предметы» слева.</p>`}`;
+      : `<p class="muted small" style="margin:0">Предметов пока нет.</p>`}`;
   $("#itemsel").querySelectorAll("[data-item]").forEach(b => b.onclick = () => { b.classList.toggle("on"); syncItems(); main.dispatchEvent(new Event("input")); });
   if (curProj) applyProj();
   if ($("#chan")) $("#chan").onchange = () => {
@@ -916,7 +909,6 @@ async function viewProjects(id) {
   const projs = (await api("/api/projects")).filter(p => p.platform !== "instagram");
   const niches = await api("/api/niches").catch(() => META.presets);
   main.innerHTML = `<h1>Проекты и ниши</h1>
-  <p class="muted small">Ниши для Инстаграма живут отдельно, в разделе <a href="#/insta">«Инстаграм»</a>.</p>
   <p class="muted">Проект — это ниша со своими готовыми настройками: язык, тема канала, стиль картинок, голос, анимация, субтитры. Ролики каждого проекта хранятся отдельно. При запуске ролика проект выбирается одной кнопкой.</p>
   ${projs.length ? `<h2>Мои проекты</h2><div class="pgrid sm">${projs.map(p => `<a class="pcard" href="#/projects/${p.id}">
       <div class="pic">${esc(p.icon)}</div><div><b>${esc(p.name)}</b>
@@ -1051,14 +1043,14 @@ async function viewProject(id) {
     <div class="row" style="margin-top:16px"><button class="primary" id="pj-save">Сохранить проект</button><button id="pj-tpl" title="Проект появится в списке ниш, из него можно будет быстро создавать новые проекты с такими же настройками">⭐ Сохранить как свою нишу</button><span class="grow"></span><button class="danger" id="pj-del">Удалить проект</button></div>
   </div>
   <div class="card"><h2>Персонажи проекта</h2>
-    <p class="muted small">Отметьте героев, которые будут выбраны сами при запуске ролика в этом проекте (при запуске их можно поменять). Сами персонажи хранятся в разделе <a href="#/characters">«Персонажи»</a> слева: там их добавляют, рисуют и загружают портреты.</p>
+    <p class="muted small">Отметьте ранее добавленных героев, которые будут выбраны сами при запуске ролика в этом проекте (при запуске их можно поменять).</p>
     ${allChars.length ? `<div class="row" id="pj-chars">${allChars.map(c => `<button class="cbtn ${(p.characters || []).includes(c.id) ? "on" : ""}" data-pchar="${c.id}" title="${esc(c.role)}">${charIcon(c, 48)}<span>${esc(c.name)}</span></button>`).join("")}</div>`
-      : `<p class="muted">Персонажей пока нет. <a href="#/characters">Добавить персонажа</a></p>`}
+      : `<p class="muted">Персонажей пока нет.</p>`}
   </div>
   <div class="card"><h2>Предметы проекта</h2>
-    <p class="muted small">Отметьте товары и вещи, которые будут выбраны сами при запуске ролика в этом проекте (при запуске их можно поменять). Сами предметы с фото хранятся в разделе <a href="#/items">«Предметы»</a> слева.</p>
+    <p class="muted small">Отметьте ранее добавленные товары и вещи, которые будут выбраны сами при запуске ролика в этом проекте (при запуске их можно поменять).</p>
     ${allItems.length ? `<div class="row" id="pj-items">${allItems.map(it => `<button class="cbtn ${(p.items || []).includes(it.id) ? "on" : ""}" data-pitem="${it.id}" title="${esc(it.kind)}">${itemIcon(it, 48)}<span>${esc(it.name)}</span></button>`).join("")}</div>`
-      : `<p class="muted">Предметов пока нет. <a href="#/items">Добавить предмет</a></p>`}
+      : `<p class="muted">Предметов пока нет.</p>`}
   </div>
   <div class="card" id="pj-golden"><h2>⭐ Копилка удачных сценариев</h2>
     <p class="muted small">Сценарии этого проекта, которые сработали. Перед каждым новым роликом проекта сценарист изучает последние 6 (отдельно для видео и для шортсов): какие темы, первые фразы, ритм и повороты здесь заходят. Добавляйте кнопкой «⭐ В копилку удачных» на странице ролика. Ниже программа сама подсказывает хиты по статистике YouTube.</p>
@@ -2811,11 +2803,14 @@ function balValue(r) {
   return `${r.kind === "estimate" ? "≈ " : ""}$${Number(r.value).toFixed(2)}`;
 }
 function renderBalSide(rows) {
+  const box = $("#balside");
+  if (!box) return;
   const shown = rows.filter(r => r.value != null);
-  $("#balside").innerHTML = shown.length ? `<div class="bh">Балансы</div>` + shown.map(r =>
+  box.innerHTML = shown.length ? `<div class="bh">Балансы</div>` + shown.map(r =>
     `<div class="bl ${r.low ? "low" : ""}"><span>${esc(BAL_SHORT[r.id] || r.name)}</span><b>${esc(balValue(r))}</b></div>`).join("") : "";
 }
 async function refreshBalSide() {
+  if (!$("#balside")) return;
   try { renderBalSide((await api("/api/balance")).services); } catch (e) { }
 }
 refreshBalSide();
