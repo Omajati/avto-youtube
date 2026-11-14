@@ -39,6 +39,13 @@ _lock = threading.RLock()
 _jobs: dict[str, dict] = {}
 _scheduler: threading.Thread | None = None
 
+FOLDER_OPTION_KEYS = (
+    "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
+    "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
+    "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
+    "folder_effect_level", "folder_render_speed", "folder_jobs_parallel", "image_parallel", "render_parallel",
+)
+
 
 class _PauseRequested(Exception):
     pass
@@ -311,12 +318,17 @@ def list_queue():
                 job["estimate"] = _generation_estimate(chosen, job["analysis"])
             except Exception:
                 job["estimate"] = {}
-    return {"jobs": jobs, "settings": {k: settings.get(k) for k in (
-        "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
-        "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
-        "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
-        "folder_effect_level", "folder_render_speed", "folder_jobs_parallel", "image_parallel", "render_parallel")},
+    return {"jobs": jobs, "settings": {k: settings.get(k) for k in FOLDER_OPTION_KEYS},
         "summary": _setting_summary(settings)}
+
+
+@router.post("/settings")
+def update_folder_settings(data: dict = Body(...)):
+    """Persist controls before the queue UI is redrawn or the app is closed."""
+    options = data.get("options") or {}
+    save_settings({k: v for k, v in options.items() if k in FOLDER_OPTION_KEYS})
+    settings = load_settings()
+    return {"ok": True, "settings": {k: settings.get(k) for k in FOLDER_OPTION_KEYS}}
 
 
 @router.post("/pick")
@@ -395,11 +407,7 @@ def remove_job(job_id: str):
 @router.post("/start")
 def start_queue(data: dict = Body(...)):
     options = data.get("options") or {}
-    allowed = {k for k in (
-        "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
-        "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
-        "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
-        "folder_effect_level", "folder_render_speed", "folder_jobs_parallel", "image_parallel", "render_parallel")}
+    allowed = set(FOLDER_OPTION_KEYS)
     save_settings({k: v for k, v in options.items() if k in allowed})
     settings = load_settings()
     explicit_ids = data.get("ids") is not None

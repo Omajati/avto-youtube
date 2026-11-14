@@ -3481,6 +3481,14 @@ function folderOptions() {
   return out;
 }
 
+async function saveFolderOptions() {
+  return api("/api/folder-builder/settings", { json: { options: folderOptions() } });
+}
+
+function scheduleFolderOptionsSave() {
+  saveFolderOptions().catch(e => toast(`Не удалось сохранить настройки: ${e.message}`, true));
+}
+
 async function startFolderQueue(ids = null) {
   const btn = $("#fb-start"); if (btn) btn.disabled = true;
   try {
@@ -3540,14 +3548,16 @@ async function viewFolderBuilder() {
   <div id="fb-jobs" style="margin-top:16px"></div>`;
   drawFolderJobs(data);
   $("#fb-music").oninput = e => $("#fb-music-v").textContent = `${Math.round(+e.target.value*100)}%`;
+  main.querySelectorAll("[data-fbo]").forEach(el => el.addEventListener("change", scheduleFolderOptionsSave));
+  $("#fb-voice").addEventListener("change", scheduleFolderOptionsSave);
   $("#fb-add").onclick = async () => {
     const b=$("#fb-add"); b.disabled=true; b.textContent="Выбираю…";
-    try { const picked=await api("/api/folder-builder/pick",{json:{}}); if(picked.paths.length){ await api("/api/folder-builder/add",{json:{paths:picked.paths}}); toast(`Добавлено папок: ${picked.paths.length}`); await viewFolderBuilder(); } }
+    try { await saveFolderOptions(); const picked=await api("/api/folder-builder/pick",{json:{}}); if(picked.paths.length){ await api("/api/folder-builder/add",{json:{paths:picked.paths}}); toast(`Добавлено папок: ${picked.paths.length}`); await viewFolderBuilder(); } }
     catch(e){ toast(e.message,true); } finally { if(document.body.contains(b)){ b.disabled=false; b.textContent="＋ Добавить папки"; } }
   };
   $("#fb-start").onclick = () => startFolderQueue();
   $("#fb-load-voices").onclick = async () => { const b=$("#fb-load-voices"); b.disabled=true; try { const vs=await loadVoices(true), sel=$("#fb-voice"), cur=sel.value; sel.innerHTML=voiceOptions(vs,cur,"en"); sel.value=cur; } catch(e){toast(e.message,true);} b.disabled=false; };
-  $("#fb-voice-lib").onclick = () => openVoiceLibrary((id,name)=>{ const sel=$("#fb-voice"); pickIntoSelect(sel,id,name); },"en");
+  $("#fb-voice-lib").onclick = () => openVoiceLibrary((id,name)=>{ const sel=$("#fb-voice"); pickIntoSelect(sel,id,name); scheduleFolderOptionsSave(); },"en");
   if (data.jobs.some(x => ["running", "queued", "pausing", "stopping"].includes(x.status))) timer = setInterval(() => refreshFolderBuilder().catch(() => null), 2000);
 }
 
