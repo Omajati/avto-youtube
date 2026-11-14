@@ -958,19 +958,22 @@ def _join_scene_clips(clips: list[Path], scenes: list[dict], out: Path, fast: bo
     for clip in clips:
         args += ["-i", clip]
     rendered_duration = lambda scene: max(round(float(scene.get("duration") or 0) * fps), 1) / fps
-    filters, current = [], "0:v"
+    # Clips made from photos and stock video can have different stream time bases even at the same FPS.
+    # xfade requires identical time bases and otherwise can fail near the end of a long finished render.
+    filters = [f"[{index}:v]settb=AVTB,fps={fps},setsar=1[n{index}]" for index in range(len(clips))]
+    current = "n0"
     cumulative = rendered_duration(scenes[0])
     for index in range(1, len(clips)):
         kind = str(scenes[index].get("transition") or "cut")
         output = f"v{index}"
         if kind == "cut":
-            filters.append(f"[{current}][{index}:v]concat=n=2:v=1:a=0[{output}]")
+            filters.append(f"[{current}][n{index}]concat=n=2:v=1:a=0[{output}]")
         else:
             duration = min(.28, max(rendered_duration(scenes[index - 1]) / 3, .08),
                            max(rendered_duration(scenes[index]) / 3, .08))
             padded = f"p{index}"
             filters.append(f"[{current}]tpad=stop_mode=clone:stop_duration={duration:.3f}[{padded}]")
-            filters.append(f"[{padded}][{index}:v]xfade=transition={xfade.get(kind, 'fade')}:"
+            filters.append(f"[{padded}][n{index}]xfade=transition={xfade.get(kind, 'fade')}:"
                            f"duration={duration:.3f}:offset={cumulative:.3f}[{output}]")
         current = output
         cumulative += rendered_duration(scenes[index])
@@ -1251,7 +1254,17 @@ def _render_worker(project_id: str, quality: str, cancel_check=None):
         check_cancel()
         _set_render(project_id, progress=.91, step="Склеиваю готовые сцены…")
         joined = work / "joined.mp4"
-        _join_scene_clips(clips, scenes, joined, fast, fps)
+        try:
+            _join_scene_clips(clips, scenes, joined, fast, fps)
+        except UserError as transition_error:
+            # One odd stock clip must not throw away a completed 100+ scene render. Plain cuts preserve every
+            # frame, use the already encoded cache and are much faster than restarting scene processing.
+            if not any(str(scene.get("transition") or "cut") != "cut" for scene in scenes[1:]):
+                raise
+            joined.unlink(missing_ok=True)
+            _set_render(project_id, progress=.92, step="Один переход несовместим — быстро склеиваю обычными склейками…",
+                        warning=str(transition_error))
+            media.concat_clips(clips, joined)
         total = sum(float(s["duration"]) for s in scenes)
         target = project_dir / "render" / f"{quality}.mp4"
         tmp = project_dir / "render" / f".{quality}.tmp.mp4"
