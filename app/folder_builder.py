@@ -1654,13 +1654,12 @@ def _delete_generated_frames(analysis: dict):
 def _clean_leftovers():
     """At start: montage drafts and caches of folders that are finished or gone from the queue. Drafts of folders
     that can still go on (queued, paused, stopped, waiting) stay, so their montage resumes where it stopped."""
-    keep_status = ("queued", "running", "pausing", "paused", "stopping", "stopped", "review")
     with _lock:
         jobs = list(_jobs.values())
-    # A build cut off by a restart (an update) is marked "прервана" and goes on later: its drafts stay too.
+    # Only finished videos are cleaned: a build that is waiting, paused, failed or cut off by an update keeps its
+    # drafts, so its montage goes on where it stopped.
     keep = {local_editor.ROOT / _project_id(str(j.get("path") or ""), lang)
-            for j in jobs if j.get("status") in keep_status or "прерван" in str(j.get("error") or "")
-            for lang in LANGS}
+            for j in jobs if j.get("status") != "done" for lang in LANGS}
     if local_editor.ROOT.is_dir():
         for folder in local_editor.ROOT.iterdir():
             if not folder.is_dir() or folder in keep:
@@ -1892,7 +1891,6 @@ def _build(job_id: str):
             _kick_scheduler()
         else:
             _update(job_id, status="error", step="Ошибка", error=str(exc), retry_at=0)
-            _drop_drafts(_jobs.get(job_id) or {})  # no more automatic tries: the gigabytes of montage drafts go
 
 
 def _make_thumbs(job_id: str, analysis: dict, outputs: dict, settings: dict):
