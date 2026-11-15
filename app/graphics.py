@@ -153,8 +153,25 @@ def _counting(t: float, start: float = 0.15, length: float = 1.4) -> float:
     return _ease((t - start) / length)
 
 
+# Default captions of the plates, in the video's language (g["lang"]).
+WORDS = {
+    "location": {"ru": "ЛОКАЦИЯ", "en": "LOCATION", "de": "ORT", "es": "LUGAR"},
+    "chapter": {"ru": "НОВЫЙ РАЗДЕЛ", "en": "NEW CHAPTER", "de": "NEUES KAPITEL", "es": "NUEVO CAPÍTULO"},
+    "document": {"ru": "АРХИВНЫЙ ДОКУМЕНТ", "en": "ARCHIVE DOCUMENT", "de": "ARCHIVDOKUMENT", "es": "DOCUMENTO DE ARCHIVO"},
+    "secret": {"ru": "СЕКРЕТНО", "en": "CLASSIFIED", "de": "GEHEIM", "es": "SECRETO"},
+    "news": {"ru": "СРОЧНО", "en": "BREAKING", "de": "EILMELDUNG", "es": "ÚLTIMA HORA"},
+    "hero": {"ru": "герой истории", "en": "main character", "de": "Hauptfigur", "es": "protagonista"},
+}
+
+
+def word(key: str, lang: str = "ru") -> str:
+    row = WORDS[key]
+    return row.get(lang or "ru") or row["en"]
+
+
 def frame(g: dict, t: float) -> Image.Image:
     kind = g.get("type")
+    lang = str(g.get("lang") or "ru")
     label = (g.get("label") or "").strip()[:40]
     compact = kind in ("name", "location", "chapter", "document", "news", "timeline")
     im, d, box = _panel(h=280 if compact else 400, style=str(g.get("style") or "classic"))
@@ -317,7 +334,7 @@ def frame(g: dict, t: float) -> Image.Image:
         if sub:
             d.text((tx, cy + 62 * SS), sub, font=_fit(d, sub, 32, x1 - tx - 45 * SS), fill=(190, 198, 210, 255), anchor="lm")
     elif kind == "location":
-        sub = (g.get("unit") or "ЛОКАЦИЯ").strip()[:24].upper()
+        sub = (g.get("unit") or word("location", lang)).strip()[:24].upper()
         d.text((x0 + 115 * SS, cy), chr(0xF1DB), font=_material_font(120), fill=RED, anchor="mm")
         tx = x0 + 215 * SS
         d.text((tx, cy - 38 * SS), sub, font=_font(24), fill=GOLD, anchor="lm")
@@ -334,12 +351,12 @@ def frame(g: dict, t: float) -> Image.Image:
         if author:
             d.text((x1 - 55 * SS, y1 - 42 * SS), f"— {author}", font=_font(28), fill=(190, 198, 210, 255), anchor="rm")
     elif kind == "chapter":
-        number = (g.get("unit") or "НОВЫЙ РАЗДЕЛ").strip()[:24].upper()
+        number = (g.get("unit") or word("chapter", lang)).strip()[:24].upper()
         d.text((cx, cy - 58 * SS), number, font=_font(26), fill=GOLD, anchor="mm")
         d.text((cx, cy + 12 * SS), label.upper(), font=_fit(d, label.upper(), 72, (x1 - x0) - 90 * SS), fill=WHITE, anchor="mm")
         d.rectangle([cx - 130 * SS, cy + 76 * SS, cx + 130 * SS, cy + 84 * SS], fill=GOLD)
     elif kind == "document":
-        source = (g.get("unit") or "АРХИВНЫЙ ДОКУМЕНТ").strip()[:28]
+        source = (g.get("unit") or word("document", lang)).strip()[:28]
         d.rounded_rectangle([x0 + 48 * SS, cy - 90 * SS, x0 + 190 * SS, cy + 90 * SS], radius=10 * SS, fill=(235, 229, 210, 255))
         d.text((x0 + 119 * SS, cy - 8 * SS), chr(0xE873), font=_material_font(78), fill=(50, 48, 42, 255), anchor="mm")
         tx = x0 + 235 * SS
@@ -353,13 +370,13 @@ def frame(g: dict, t: float) -> Image.Image:
         sw, sh = 520 * SS, 145 * SS
         sx0, sy0 = cx - sw / 2, cy - sh / 2
         sd.rounded_rectangle([sx0, sy0, sx0 + sw, sy0 + sh], radius=18 * SS, outline=RED, width=10 * SS)
-        sd.text((cx, cy), "СЕКРЕТНО", font=_font(76), fill=RED, anchor="mm")
+        sd.text((cx, cy), word("secret", lang), font=_fit(sd, word("secret", lang), 76, sw - 60 * SS), fill=RED, anchor="mm")
         stamp = stamp.rotate(7, resample=Image.BICUBIC, center=(cx, cy))
         im.alpha_composite(stamp)
         if label:
             d.text((cx, y1 - 42 * SS), label.upper(), font=_fit(d, label.upper(), 34, (x1 - x0) - 80 * SS), fill=WHITE, anchor="mm")
     elif kind == "news":
-        source = (g.get("unit") or "СРОЧНО").strip()[:20].upper()
+        source = (g.get("unit") or word("news", lang)).strip()[:20].upper()
         d.rounded_rectangle([x0 + 38 * SS, y0 + 30 * SS, x0 + 205 * SS, y1 - 30 * SS], radius=18 * SS, fill=RED)
         d.text((x0 + 121 * SS, cy), source, font=_fit(d, source, 34, 140 * SS), fill=WHITE, anchor="mm")
         tx = x0 + 245 * SS

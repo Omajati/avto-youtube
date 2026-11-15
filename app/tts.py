@@ -204,6 +204,9 @@ def synthesize(settings, text: str, out_path: Path, previous_text: str = "", nex
     voice = settings.get("elevenlabs_voice_id") or "JBFqnCBsd6RMkjVDRZzb"
     if settings.get("voice_provider") == "royal":
         return _royal(settings, text, out_path, language)
+    if settings.get("voice_provider") == "lumean":
+        from . import lumean
+        return lumean.synthesize(settings, text, out_path, language)
     readded = set()
     for _ in range(len(elkeys.all_keys()) + 3):
         key = _key(settings)

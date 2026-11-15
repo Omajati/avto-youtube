@@ -22,7 +22,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body
 
-from . import captions, editing_styles, images, llm, local_editor, media, music, tts
+from . import captions, editing_styles, graphics, images, llm, local_editor, media, motion, music, octo, tts, upload_package
 from .config import DATA_DIR, load_settings, save_settings
 from .net import UserError
 
@@ -39,7 +39,16 @@ _lock = threading.RLock()
 _jobs: dict[str, dict] = {}
 _scheduler: threading.Thread | None = None
 
+LANGS = ("en", "ru", "de", "es")
+LANG_NAMES = {"en": "English", "ru": "Russian", "de": "German", "es": "Spanish"}
+LANG_RU = {"en": "английский", "ru": "русский", "de": "немецкий", "es": "испанский"}
+# Words in the names of narration files besides the language code: «озвучка», voice, voz, Sprecher…
+NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech", "vertonung", "текст")
+
 FOLDER_OPTION_KEYS = (
+    "folder_languages", "folder_motion_inserts", "folder_upload", "folder_upload_privacy", "folder_thumb_review",
+    "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
+    "folder_voice_es_id", "folder_voice_es_name",
     "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
     "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
     "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
@@ -53,6 +62,18 @@ class _PauseRequested(Exception):
 
 class _StopRequested(Exception):
     pass
+
+
+class _ReviewRequested(Exception):
+    """The thumbnails are ready and wait for the owner before anything goes to YouTube."""
+
+
+_profile_locks: dict[str, threading.Lock] = {}
+
+
+def _profile_lock(uuid: str) -> threading.Lock:
+    with _lock:
+        return _profile_locks.setdefault(uuid, threading.Lock())
 
 
 def _now() -> int:
@@ -93,6 +114,7 @@ def _load_queue():
             changed = True
         elif status == "stopping":
             job.update(status="stopped", step="Остановлено", error="")
+        # "review" stays as it is: the thumbnails wait for the owner across restarts.
             changed = True
     if changed:
         _save_queue()
@@ -191,36 +213,62 @@ def _find_scene_file(root: Path) -> Path:
     return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
-def _find_narration(root: Path) -> Path:
-    en = root / "EN"
-    candidates = list(en.glob("*озвучка*EN*.txt")) + list(en.glob("*voice*EN*.txt")) if en.is_dir() else []
-    if not candidates and en.is_dir():
-        candidates = [p for p in en.glob("*.txt") if "озвуч" in p.name.lower() or "voice" in p.name.lower()]
+def selected_langs(options: dict) -> list[str]:
+    raw = options.get("folder_languages") or "en"
+    items = raw if isinstance(raw, (list, tuple)) else re.split(r"[,\s]+", str(raw))
+    out = [x.lower() for x in items if str(x).lower() in LANGS]
+    return [x for x in LANGS if x in out] or ["en"]
+
+
+def _lang_dir(root: Path, lang: str) -> Path | None:
+    for child in root.iterdir() if root.is_dir() else []:
+        if child.is_dir() and child.name.lower() == lang:
+            return child
+    return None
+
+
+def _find_narration(root: Path, lang: str = "en") -> Path | None:
+    """The final narration text of one language: <LANG>/…озвучка…<LANG>.txt (or any narration txt in that folder)."""
+    folder = _lang_dir(root, lang)
+    code = lang.upper()
+    candidates = []
+    if folder:
+        texts = [p for p in folder.glob("*.txt") if not p.name.startswith((".", "_"))]
+        named = [p for p in texts if any(w in p.name.lower() for w in NARRATION_WORDS)]
+        coded = [p for p in named if re.search(rf"(?<![A-Za-z]){code}(?![A-Za-z])", p.stem)]
+        candidates = coded or named or (texts if len(texts) == 1 else [])
+    if not candidates and lang == "en":
+        # Old layout: the English narration somewhere else in the project, never another language's file.
+        others = [x.upper() for x in LANGS if x != "en"]
+        candidates = [p for p in root.rglob("*.txt") if "озвуч" in p.name.lower()
+                      and not any(re.search(rf"(?<![A-Za-z]){o}(?![A-Za-z])", p.stem) for o in others)
+                      and not any(part.upper() in others for part in p.relative_to(root).parts[:-1])]
     if not candidates:
-        candidates = [p for p in root.rglob("*.txt") if "озвуч" in p.name.lower() and "de" not in p.name.lower()]
-    if not candidates:
-        raise UserError("Не найден окончательный английский текст озвучки в папке EN.")
+        return None
     return min(candidates, key=lambda p: (len(p.parts), len(p.name)))
 
 
-def _scan_media(root: Path) -> dict[str, Path]:
+def _scan_media(root: Path, lang: str = "en") -> dict[str, Path]:
+    """S001… files of the project. Files inside another language's folder (DE/S005.png with German text on it)
+    belong only to that language; a file in this language's folder wins over the shared one."""
     found: dict[str, Path] = {}
+    rank: dict[str, tuple] = {}
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in IMAGE_EXT | VIDEO_EXT:
             continue
         rel = path.relative_to(root)
         if any(part.startswith((".", "_")) or part.lower() in ("готово", "output", "render") for part in rel.parts[:-1]):
             continue
-        # The English builder must never silently pick future German scene files.
-        if any(re.fullmatch(r"[A-Z]{2}", part) and part.upper() != "EN" for part in rel.parts[:-1]):
+        codes = [part.lower() for part in rel.parts[:-1] if re.fullmatch(r"[A-Za-z]{2}", part)]
+        if any(code != lang for code in codes):
             continue
         match = SCENE_FILE.match(path.name)
         if not match:
             continue
         sid = f"S{int(match.group(1)):03d}"
-        old = found.get(sid)
-        if old is None or (path.suffix.lower() in VIDEO_EXT and old.suffix.lower() not in VIDEO_EXT):
-            found[sid] = path
+        score = (path.suffix.lower() in VIDEO_EXT, bool(codes))
+        if sid not in found or score > rank[sid]:
+            found[sid], rank[sid] = path, score
     return found
 
 
@@ -229,20 +277,30 @@ def _analyze(path: Path) -> dict:
     if not path.is_dir():
         raise UserError(f"Папка не найдена: {path}")
     scene_file = _find_scene_file(path)
-    narration_file = _find_narration(path)
     scenes, refs = _parse_scenes(scene_file)
+    languages = {}
+    for lang in LANGS:
+        narration = _find_narration(path, lang)
+        if not narration:
+            continue
+        folder = _lang_dir(path, lang) or (path / lang.upper())
+        languages[lang] = {"narration_file": str(narration),
+                           "words": len(narration.read_text("utf-8", errors="replace").split()),
+                           "output": str(folder / f"{path.name}_{lang.upper()}.mp4")}
+    if not languages:
+        raise UserError("Не найден текст озвучки ни на одном языке. Положите его в папку EN, RU, DE или ES "
+                        "(файл с «озвучка» в названии, например «озвучка_EN.txt»).")
     existing = _scan_media(path)
     videos = sum(existing.get(s["id"], Path("x")).suffix.lower() in VIDEO_EXT for s in scenes if s["id"] in existing)
     pictures = sum(existing.get(s["id"], Path("x")).suffix.lower() in IMAGE_EXT for s in scenes if s["id"] in existing)
     missing = [s["id"] for s in scenes if s["id"] not in existing]
-    text = narration_file.read_text("utf-8", errors="replace").strip()
+    first = languages.get("en") or next(iter(languages.values()))
     frame_dir = scene_file.parent / "кадры"
-    output = path / "EN" / f"{path.name}_EN.mp4"
     return {
-        "path": str(path), "title": path.name, "scene_file": str(scene_file), "narration_file": str(narration_file),
-        "frame_dir": str(frame_dir), "output": str(output), "scenes": len(scenes), "references": len(refs),
+        "path": str(path), "title": path.name, "scene_file": str(scene_file), "narration_file": first["narration_file"],
+        "frame_dir": str(frame_dir), "output": first["output"], "scenes": len(scenes), "references": len(refs),
         "existing_videos": videos, "existing_images": pictures, "missing_images": len(missing),
-        "missing_ids": missing[:30], "words": len(text.split()),
+        "missing_ids": missing[:30], "words": first["words"], "languages": languages,
         "styled_scenes": sum(bool(re.search(r"\bstyle\s*:", scene.get("prompt") or "", re.I)) for scene in scenes),
     }
 
@@ -251,9 +309,11 @@ def _setting_summary(settings: dict) -> dict:
     provider = images.PROVIDERS.get(settings.get("image_provider"), images.PROVIDERS["fal"])
     image_model = settings.get(provider["model_field"]) or provider["models"][0][0]
     llm_model = settings.get("openai_model") if settings.get("llm_provider") == "openai" else settings.get("anthropic_model")
+    voice_service = {"royal": "RoyalTechno", "lumean": "Lumean"}.get(settings.get("voice_provider"), "ElevenLabs")
     return {
-        "image_provider": provider["name"], "image_model": image_model,
-        "reference_model": ("Nano Banana Edit (~$0.04 за референсную сцену)" if settings.get("fal_key")
+        "image_provider": provider["name"], "image_model": image_model, "voice_service": voice_service,
+        "reference_model": ("Модель выбранного сервиса (Fast Gen)" if images.fastgen_refs(settings)
+                            else "Nano Banana Edit (~$0.04 за референсную сцену)" if settings.get("fal_key")
                             else "Модель выбранного сервиса" if images.royal_refs(settings) else "недоступна"),
         "llm_provider": "OpenAI" if settings.get("llm_provider") == "openai" else "Claude",
         "llm_model": llm_model, "voice_id": settings.get("folder_voice_en_id") or settings.get("elevenlabs_voice_id"),
@@ -277,10 +337,40 @@ def _problems(settings: dict, analysis: dict) -> tuple[list[str], list[str]]:
     if settings.get("voice_provider") == "royal":
         if not settings.get("royal_key"):
             problems.append("Не указан ключ RoyalTechno для озвучки.")
+    elif settings.get("voice_provider") == "lumean":
+        if not settings.get("lumean_key"):
+            problems.append("Не указан ключ Lumean для озвучки (Настройки → «2. Озвучка»).")
     elif not settings.get("elevenlabs_key"):
         problems.append("Не указан ключ ElevenLabs для озвучки.")
-    if not (settings.get("folder_voice_en_id") or settings.get("elevenlabs_voice_id")):
-        problems.append("Не выбран английский голос.")
+    found = analysis.get("languages") or {}
+    wanted = selected_langs(settings)
+    present = [lang for lang in wanted if lang in found]
+    if not present:
+        problems.append("В папке нет текста озвучки на выбранных языках ("
+                        + ", ".join(LANG_RU[x] for x in wanted) + ").")
+    for lang in wanted:
+        if lang not in found:
+            warnings.append(f"Нет текста озвучки на языке «{LANG_RU[lang]}» (папка {lang.upper()}): этот язык пропущу.")
+    for lang in present:
+        if not settings.get(f"folder_voice_{lang}_id") and not (lang == "en" and settings.get("elevenlabs_voice_id")):
+            problems.append(f"Не выбран голос для языка «{LANG_RU[lang]}».")
+    if "en" not in found and any(lang != "en" for lang in present) and not settings.get("folder_smart_mapping"):
+        warnings.append("Нет английского текста: сцены других языков будут привязаны по подсказкам «Голос:» "
+                        "и пропорционально. Для точной привязки включите «Уточнять сцены через ИИ».")
+    if settings.get("folder_upload"):
+        if not settings.get("octo_token"):
+            problems.append("Автовыкладка включена, но не указан API-токен Octo Browser.")
+        rules = settings.get("octo_rules") or {}
+        channel = Path(analysis["path"]).parent.name
+        for lang in present:
+            if not rules.get(f"{channel}|{lang}"):
+                warnings.append(f"Не выбран профиль Octo для «{channel} · {lang.upper()}»: ролик соберу, но не выложу.")
+            folder = _lang_dir(Path(analysis["path"]), lang)
+            if not folder or not upload_package.find_file(folder):
+                warnings.append(f"Нет файла загрузки в папке {lang.upper()} (загрузка_YouTube_{lang.upper()}.md): "
+                                "ролик соберу, но не выложу.")
+    if settings.get("folder_motion_inserts", True) and not llm.has_key(settings):
+        warnings.append("Карты и линии времени выключены: для них нужен ключ Claude или OpenAI (Настройки → «1. Сценарий»).")
     if settings.get("folder_references", True) and analysis.get("references") and not images.can_reference(settings):
         warnings.append("Референсы включены, но выбранный сервис не умеет рисовать по образцу: обычные сцены будут созданы по тексту.")
     if settings.get("folder_music", True) and not music.tracks():
@@ -319,7 +409,7 @@ def list_queue():
             except Exception:
                 job["estimate"] = {}
     return {"jobs": jobs, "settings": {k: settings.get(k) for k in FOLDER_OPTION_KEYS},
-        "summary": _setting_summary(settings)}
+        "summary": _setting_summary(settings), "octo_token_set": bool(settings.get("octo_token"))}
 
 
 @router.post("/settings")
@@ -383,9 +473,8 @@ def remove_job(job_id: str):
         _save_queue()
     freed = 0
     cache = ROOT / job_id
-    pid = hashlib.sha256(("folder:" + str(job.get("path") or "")).encode()).hexdigest()[:12]
-    local = local_editor.ROOT / pid
-    for path in (cache, local):
+    locals_ = [local_editor.ROOT / _project_id(str(job.get("path") or ""), lang) for lang in LANGS]
+    for path in (cache, *locals_):
         if not path.is_dir():
             continue
         for base, _dirs, files in os.walk(path, followlinks=False):
@@ -425,6 +514,8 @@ def start_queue(data: dict = Body(...)):
             if problems:
                 job.update(status="error", error=" ".join(problems), step="", progress=0)
                 continue
+            if job.get("status") == "done":
+                job["langs_done"] = {}
             job.update(status="queued", error="", step="Ждёт своей очереди…", progress=0, options={k: settings.get(k) for k in allowed})
             queued.append(jid)
         _save_queue()
@@ -454,6 +545,22 @@ def control_job(job_id: str, data: dict = Body(...)):
                 job.update(status="stopping", step="Завершаю текущую операцию и останавливаю…", error="")
             elif status not in ("stopped", "stopping"):
                 raise UserError("Сейчас этот проект уже не выполняется.")
+        elif action == "publish":
+            if status != "review":
+                raise UserError("Этот проект сейчас не ждёт проверки превью.")
+            job["approved"] = {lang: True for lang in (job.get("thumbs") or {})}
+            job.update(status="queued", step="Ждёт своей очереди на выкладку…", error="")
+        elif action == "redraw":
+            if status not in ("review", "error", "done"):
+                raise UserError("Перерисовать превью можно, когда проект не собирается.")
+            root = Path(job["path"])
+            for path in (job.get("thumbs_generated") or {}).values():
+                Path(path).unlink(missing_ok=True)
+            source = next((p for p in root.iterdir() if p.is_dir() and p.name.lower() == "исходники"), root)
+            for base in source.glob("превью_основа.*"):
+                base.unlink(missing_ok=True)
+            job.update(thumbs_generated={}, thumbs={}, approved={}, status="queued",
+                       step="Перерисовываю превью…", error="")
         elif action == "resume":
             if status not in ("paused", "stopped", "error"):
                 raise UserError("Этот проект сейчас нельзя продолжить.")
@@ -462,15 +569,51 @@ def control_job(job_id: str, data: dict = Body(...)):
             raise UserError("Неизвестная команда управления проектом.")
         job["updated"] = _now()
         _save_queue()
-    if action in ("stop", "resume"):
+    if action in ("stop", "resume", "publish", "redraw"):
         _kick_scheduler()
     return {"ok": True, "status": job.get("status")}
 
 
+_profiles_cache: dict = {"at": 0, "items": []}
+
+
+@router.get("/octo/profiles")
+def octo_profiles(refresh: bool = False):
+    settings = load_settings()
+    if refresh or time.time() - _profiles_cache["at"] > 300 or not _profiles_cache["items"]:
+        _profiles_cache.update(at=time.time(), items=octo.profiles(settings))
+    return {"profiles": _profiles_cache["items"], "rules": settings.get("octo_rules") or {}}
+
+
+@router.post("/octo/rule")
+def octo_rule(data: dict = Body(...)):
+    """Channel (the folder the projects lie in) + language -> Octo profile; set once, used by every folder there."""
+    channel, lang, uuid = str(data.get("channel") or ""), str(data.get("lang") or ""), str(data.get("uuid") or "")
+    if not channel or lang not in LANGS:
+        raise UserError("Не понял, для какого канала и языка профиль.")
+    rules = dict(load_settings().get("octo_rules") or {})
+    if uuid:
+        rules[f"{channel}|{lang}"] = uuid
+    else:
+        rules.pop(f"{channel}|{lang}", None)
+    save_settings({"octo_rules": rules})
+    return {"rules": rules}
+
+
+@router.get("/{job_id}/thumb/{lang}")
+def thumb_file(job_id: str, lang: str):
+    from fastapi.responses import FileResponse
+    path = Path(str(((_jobs.get(job_id) or {}).get("thumbs") or {}).get(lang) or ""))
+    if not path.is_file():
+        raise UserError("Превью ещё нет.")
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
 @router.post("/{job_id}/reveal")
-def reveal(job_id: str):
+def reveal(job_id: str, data: dict = Body(default={})):
     job = _jobs.get(job_id)
-    path = Path(str((job or {}).get("output") or ""))
+    outputs = (job or {}).get("outputs") or {}
+    path = Path(str(outputs.get(str(data.get("lang") or "")) or (job or {}).get("output") or ""))
     if not path.is_file():
         raise UserError("Готовый ролик ещё не найден.")
     subprocess.Popen(["open", "-R", str(path)] if sys.platform == "darwin" else ["xdg-open", str(path.parent)])
@@ -482,12 +625,55 @@ def _sentences(text: str) -> list[str]:
     return [x for x in items if x]
 
 
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[^\W_]+", text.lower().replace("ё", "е").replace("’", "'"))
+
+
+def _projected_mapping(en_texts: list[str], en_narration: str, narration: str) -> list[str]:
+    """Scenes of another language placed where they stand in the English text: the same paragraph and the same share
+    of it (translations keep the paragraphs), the cut moved to the nearest sentence start."""
+    def paragraphs(text):
+        parts = [p.split() for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
+        return parts or [text.split()]
+    en_pars, tg_pars = paragraphs(en_narration), paragraphs(narration)
+    same = len(en_pars) == len(tg_pars) and len(en_pars) > 1
+    en_flat = [w for p in en_pars for w in p]
+    tg_flat = [w for p in tg_pars for w in p]
+    en_starts, acc = [], 0
+    for p in en_pars:
+        en_starts.append(acc); acc += len(p)
+    tg_starts, acc = [], 0
+    for p in tg_pars:
+        tg_starts.append(acc); acc += len(p)
+    sentence_starts = [0] + [i + 1 for i, w in enumerate(tg_flat) if re.search(r"[.!?…][\"”’»)]*$", w)]
+    starts, pos = [], 0
+    for text in en_texts:
+        if same:
+            k = max(i for i, st in enumerate(en_starts) if st <= pos) if en_starts else 0
+            share = (pos - en_starts[k]) / max(len(en_pars[k]), 1)
+            target = tg_starts[k] + round(share * len(tg_pars[k]))
+            lo, hi = tg_starts[k], tg_starts[k] + len(tg_pars[k])
+        else:
+            target = round(pos / max(len(en_flat), 1) * len(tg_flat))
+            lo, hi = 0, len(tg_flat)
+        near = [x for x in sentence_starts if lo <= x <= hi and abs(x - target) <= max(6, (hi - lo) * .15)]
+        starts.append(min(near, key=lambda x: abs(x - target)) if near else target)
+        pos += len(text.split())
+    starts = [min(len(tg_flat), max(0, x)) for x in starts]
+    for i in range(1, len(starts)):
+        starts[i] = max(starts[i], starts[i - 1])
+    if starts:
+        starts[0] = 0
+    ends = starts[1:] + [len(tg_flat)]
+    return [" ".join(tg_flat[a:b]) for a, b in zip(starts, ends)]
+
+
 def _fast_mapping(scenes: list[dict], narration: str) -> tuple[list[str], int]:
     """Map scene starts to the exact `Голос:` fragments locally; no model or transcription call."""
     raw_words = narration.split()
     norm_words, owners = [], []
     for raw_index, word in enumerate(raw_words):
-        for token in re.findall(r"[a-z0-9]+", word.lower().replace("’", "'")):
+        for token in _tokens(word):
             norm_words.append(token)
             owners.append(raw_index)
 
@@ -496,7 +682,7 @@ def _fast_mapping(scenes: list[dict], narration: str) -> tuple[list[str], int]:
         chunks = re.split(r"(?:…+|\.{2,})", hint)
         result = []
         for chunk in chunks:
-            tokens = re.findall(r"[a-z0-9]+", chunk.lower().replace("’", "'"))
+            tokens = _tokens(chunk)
             if tokens:
                 result.append(tokens)
         return sorted(result, key=len, reverse=True)
@@ -570,19 +756,28 @@ def _fast_mapping(scenes: list[dict], narration: str) -> tuple[list[str], int]:
     return texts, matched
 
 
-def _mapping(job_id: str, scenes: list[dict], narration: str, settings: dict, cache: Path) -> list[str]:
+def _mapping(job_id: str, scenes: list[dict], narration: str, settings: dict, cache: Path,
+             english: str = "", progress: float = .04) -> list[str]:
+    """english: the English narration of the same project, to place the scenes of another language."""
     smart = bool(settings.get("folder_smart_mapping", False))
     sentences = _sentences(narration)
-    fingerprint = hashlib.sha256((narration + json.dumps(scenes, ensure_ascii=False, sort_keys=True) + str(smart)).encode()).hexdigest()
+    fingerprint = hashlib.sha256((narration + json.dumps(scenes, ensure_ascii=False, sort_keys=True) + str(smart)
+                                  + hashlib.sha256(english.encode()).hexdigest()).encode()).hexdigest()
     saved = _read_json(cache / "mapping.json", {})
     if saved.get("fingerprint") == fingerprint and len(saved.get("texts") or []) == len(scenes):
         return saved["texts"]
-    if not smart:
-        _update(job_id, progress=.04, step="Быстро привязываю сцены к подсказкам «Голос:»…")
+    if not smart or not llm.has_key(settings):
+        _update(job_id, progress=progress, step="Быстро привязываю сцены к подсказкам «Голос:»…")
         texts, matched = _fast_mapping(scenes, narration)
-        _write_json(cache / "mapping.json", {"fingerprint": fingerprint, "texts": texts, "mode": "fast", "matched": matched})
+        mode = "fast"
+        hinted = sum(bool((s.get("voice_hint") or "").strip()) and not s.get("preview") for s in scenes) or 1
+        if english and english.strip() != narration.strip() and matched < hinted * .5:
+            # The «Голос:» hints are in English: place the scenes as they stand in the English text.
+            en_texts, _ = _fast_mapping(scenes, english)
+            texts, mode = _projected_mapping(en_texts, english, narration), "projected"
+        _write_json(cache / "mapping.json", {"fingerprint": fingerprint, "texts": texts, "mode": mode, "matched": matched})
         return texts
-    _update(job_id, progress=.04, step="OpenAI уточняет распределение текста по сценам…")
+    _update(job_id, progress=progress, step="ИИ уточняет распределение текста по сценам…")
     scene_lines = []
     for scene in scenes:
         short_prompt = re.sub(r"\s+", " ", scene.get("prompt") or "")[:260]
@@ -608,7 +803,7 @@ def _mapping(job_id: str, scenes: list[dict], narration: str, settings: dict, ca
             raise
         # Scene alignment is helpful, but a reasoning-token limit must not kill a full one-click build.
         texts, matched = _fast_mapping(scenes, narration)
-        _update(job_id, step="OpenAI исчерпал лимит ответа — использую быстрые подсказки «Голос:»…")
+        _update(job_id, step="ИИ исчерпал лимит ответа — использую быстрые подсказки «Голос:»…")
         _write_json(cache / "mapping.json", {"fingerprint": fingerprint, "texts": texts, "mode": "fast-fallback", "matched": matched})
         return texts
     ends, prev, total = [], 0, len(sentences)
@@ -861,14 +1056,17 @@ def _voice_chunks(text: str, limit: int = 9000) -> list[str]:
 
 
 def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: str,
-                settings: dict, options: dict, cache: Path):
+                settings: dict, options: dict, cache: Path, lang: str = "en", span: tuple = (.49, .67)):
     """Voice the complete narration in the fewest allowed requests, then fit scenes to its word timings."""
     _check_control(job_id)
     audio = cache / "audio"
     audio.mkdir(parents=True, exist_ok=True)
     voice_settings = dict(settings)
-    voice_settings["elevenlabs_voice_id"] = options.get("folder_voice_en_id") or settings.get("folder_voice_en_id") or settings.get("elevenlabs_voice_id")
-    voice_settings["elevenlabs_voice_name"] = options.get("folder_voice_en_name") or settings.get("folder_voice_en_name") or settings.get("elevenlabs_voice_name")
+    fallback_id = settings.get("elevenlabs_voice_id") if lang == "en" else ""
+    voice_settings["elevenlabs_voice_id"] = (options.get(f"folder_voice_{lang}_id") or settings.get(f"folder_voice_{lang}_id")
+                                             or fallback_id or settings.get("elevenlabs_voice_id"))
+    voice_settings["elevenlabs_voice_name"] = (options.get(f"folder_voice_{lang}_name") or settings.get(f"folder_voice_{lang}_name")
+                                               or settings.get("elevenlabs_voice_name"))
     manifest_path = audio / "manifest.json"
     manifest = _read_json(manifest_path, {})
     mp3, spoken = audio / "narration.mp3", audio / "narration.wav"
@@ -877,11 +1075,12 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
         voice_settings.get("elevenlabs_model"), voice_settings.get("voice_speed"),
         voice_settings.get("voice_stability"), voice_settings.get("voice_similarity"),
         voice_settings.get("voice_style"),
-    ]
+    ] + ([voice_settings.get("lumean_model")] if voice_settings.get("voice_provider") == "lumean" else [])
     voice_signature = hashlib.sha256(json.dumps(voice_values, ensure_ascii=False).encode()).hexdigest()
     # Keep the pre-v186 final signature so a valid cached narration is never billed a second time after an update.
     signature = hashlib.sha256(json.dumps([narration, *voice_values], ensure_ascii=False).encode()).hexdigest()
-    chunks = _voice_chunks(narration)
+    # Lumean cuts and stitches long text itself: a whole hour of narration goes in one or two orders.
+    chunks = _voice_chunks(narration, 45000 if voice_settings.get("voice_provider") == "lumean" else 9000)
     spoken_words = []
     if manifest.get("narration") != signature or not spoken.exists():
         saved_parts = manifest.get("parts") if isinstance(manifest.get("parts"), dict) else {}
@@ -895,13 +1094,14 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
             previous = chunks[index - 1] if index else ""
             following = chunks[index + 1] if index + 1 < len(chunks) else ""
             part_signature = hashlib.sha256(json.dumps([
-                voice_signature, chunk, previous[-1000:], following[:1000], "en",
+                voice_signature, chunk, previous[-1000:], following[:1000], lang,
             ], ensure_ascii=False).encode()).hexdigest()
             needs_synthesis = saved_parts.get(str(number)) != part_signature or not part_mp3.exists()
             if needs_synthesis:
                 label = "Озвучиваю весь файл…" if len(chunks) == 1 else f"Озвучиваю файл: часть {number} из {len(chunks)}…"
-                _update(job_id, progress=.49 + .18 * index / max(len(chunks), 1), step=label)
-                tts.synthesize(voice_settings, chunk, part_mp3, previous, following, "en")
+                _update(job_id, progress=span[0] + (span[1] - span[0]) * index / max(len(chunks), 1),
+                        step=f"[{lang.upper()}] {label}")
+                tts.synthesize(voice_settings, chunk, part_mp3, previous, following, lang)
                 saved_parts[str(number)] = part_signature
                 manifest = {"parts": saved_parts}
                 _write_json(manifest_path, manifest)
@@ -983,9 +1183,129 @@ def _link_or_copy(source: Path, target: Path):
         shutil.copy2(source, target)
 
 
+def _project_id(path: str, lang: str) -> str:
+    # English keeps the id of earlier versions, so a build in progress is not started over after the update.
+    return hashlib.sha256(("folder:" + path + ("" if lang == "en" else f":{lang}")).encode()).hexdigest()[:12]
+
+
+def _text_lang(text: str) -> str:
+    low = text.lower()
+    if re.search(r"[а-яё]", low):
+        return "ru"
+    if re.search(r"[äöüß]", low) or re.search(r"\b(der|die|das|und|nicht|ist)\b", low):
+        return "de"
+    if re.search(r"[ñ¿¡]", low) or re.search(r"\b(el|los|las|que|una|del)\b", low):
+        return "es"
+    return "en"
+
+
+def _chapter_labels(scenes: list[dict], lang: str, settings: dict, cache: Path) -> dict[str, str]:
+    """Chapter titles in the video's language: the scene file may be written in another one."""
+    titles = {s["id"]: s["chapter"] for s in scenes if s.get("chapter")}
+    if not titles:
+        return {}
+    pending = {k: v for k, v in titles.items() if _text_lang(v) != lang}
+    if not pending or not llm.has_key(settings):
+        return titles
+    path = cache / "chapters.json"
+    mark = hashlib.sha256(json.dumps([lang, pending], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    saved = _read_json(path, {})
+    if saved.get("mark") == mark:
+        return {**titles, **(saved.get("titles") or {})}
+    from .pipeline import _helper_settings
+    schema = {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
+        "id": {"type": "string"}, "title": {"type": "string"}}, "required": ["id", "title"]}}}, "required": ["items"]}
+    try:
+        r = llm.call_json(_helper_settings(settings), "You translate short chapter titles of a documentary. Answer only with JSON.",
+                          f"Translate each chapter title into {LANG_NAMES[lang]}. Keep it short, punchy and natural, the way a "
+                          f"native YouTube documentary would title it; keep names and dates.\n\n"
+                          + "\n".join(f"{k}: {v}" for k, v in pending.items()), schema, {}, 4000)
+        done = {x["id"]: x["title"].strip() for x in r.get("items") or [] if x.get("id") in pending and x.get("title")}
+    except UserError:
+        return titles
+    _write_json(path, {"mark": mark, "titles": done})
+    return {**titles, **done}
+
+
+MOTION_KINDS = ("map", "timeline", "chart", "compare")
+
+
+def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations: list[float], media_map: dict[str, Path],
+                    lang: str, settings: dict, options: dict, cache: Path, progress: float) -> dict[str, dict]:
+    """A few maps, timelines and charts drawn in place of pictures, only in the first half of the video and only where
+    the narration names places, dates or numbers. Returns {scene id: {"clip": Path, "spec": dict}}."""
+    if not options.get("folder_motion_inserts", True) or not llm.has_key(settings) or len(scenes) < 6:
+        return {}
+    total = sum(durations) or 1
+    half, elapsed, candidates = total / 2, 0.0, []
+    for i, (scene, duration) in enumerate(zip(scenes, durations)):
+        start, elapsed = elapsed, elapsed + duration
+        source = media_map.get(scene["id"])
+        if start >= half:
+            break
+        # Only pictures (the owner's videos stay), never the preview or a chapter card, and long enough to read.
+        if i == 0 or scene.get("preview") or scene.get("chapter") or not source or source.suffix.lower() in VIDEO_EXT:
+            continue
+        if not 4.0 <= duration <= 18.0 or len(texts[i].split()) < 6:
+            continue
+        candidates.append(i)
+    if not candidates:
+        return {}
+    limit = max(1, min(4, round(half / 150)))
+    plan_path = cache / "motion.json"
+    mark = hashlib.sha256(json.dumps([lang, limit, [texts[i] for i in candidates]], ensure_ascii=False).encode()).hexdigest()
+    saved = _read_json(plan_path, {})
+    if saved.get("mark") == mark:
+        items = saved.get("items") or []
+    else:
+        _update(job_id, progress=progress, step=f"[{lang.upper()}] Ищу места для карт и линий времени в первой половине…")
+        rows = [{"text": texts[i]} for i in candidates]
+        prompt = motion.PLAN_PROMPT.format(limit=limit, language=LANG_NAMES[lang],
+                                           scenes="\n".join(f"{k}. {r['text']}" for k, r in enumerate(rows)))
+        prompt += ("\n\nOnly use the kinds map, timeline, chart and compare. These scenes are only some of the video, "
+                   "so the rule about the first and the last scene does not apply; choose fewer rather than weak ones.")
+        from .pipeline import _helper_settings
+        try:
+            r = llm.call_json(_helper_settings(settings), "You plan motion design scenes. Answer only with JSON.",
+                              prompt, motion.SCHEMA, {}, 8000)
+            raw = [g for g in r.get("items") or [] if isinstance(g, dict) and g.get("type") in MOTION_KINDS]
+            # clean_plan drops the first and the last of the list: pad the list so every candidate can be chosen.
+            for g in raw:
+                try:
+                    g["index"] = int(g.get("index")) + 1
+                except (TypeError, ValueError):
+                    g["index"] = -1
+            items = [dict(g, index=candidates[g["index"] - 1]) for g in motion.clean_plan(raw, len(candidates) + 2)][:limit]
+        except UserError:
+            items = []
+        _write_json(plan_path, {"mark": mark, "items": items})
+    out = {}
+    fps = int(settings.get("fps") or 30)
+    for g in items:
+        _check_control(job_id)
+        i = int(g["index"])
+        scene = scenes[i]
+        clip = cache / "motion" / f"{scene['id']}_{hashlib.sha256(json.dumps([g, durations[i]], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:10]}.mp4"
+        if not clip.exists():
+            _update(job_id, step=f"[{lang.upper()}] Рисую {motion.KINDS[g['type']].split(' ', 1)[1].lower()} для сцены {scene['id']}…")
+            prev = media_map.get(scenes[i - 1]["id"]) if i else None
+            prev = prev if prev and prev.suffix.lower() in IMAGE_EXT else media_map.get(scene["id"])
+            try:
+                clip.parent.mkdir(parents=True, exist_ok=True)
+                tmp = clip.with_suffix(".tmp.mp4")
+                motion.render(g, tmp, durations[i], 1920, 1080, fps, lang, prev=prev)
+                tmp.replace(clip)
+            except Exception:  # noqa: BLE001 - a motion insert is an extra, never a reason to lose the video
+                continue
+        out[scene["id"]] = {"clip": clip, "spec": g}
+    return out
+
+
 def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[str], media_map: dict[str, Path],
-                   durations: list[float], words: list, settings: dict, options: dict, cache: Path) -> tuple[str, Path]:
-    pid = hashlib.sha256(("folder:" + analysis["path"]).encode()).hexdigest()[:12]
+                   durations: list[float], words: list, settings: dict, options: dict, cache: Path,
+                   lang: str = "en", inserts: dict | None = None, chapters: dict | None = None) -> tuple[str, Path]:
+    inserts = inserts or {}
+    pid = _project_id(analysis["path"], lang)
     project_dir = local_editor.ROOT / pid
     media_dir, render_dir = project_dir / "media", project_dir / "render"
     media_dir.mkdir(parents=True, exist_ok=True)
@@ -1003,7 +1323,8 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
     })
     local_scenes = []
     for i, (scene, duration) in enumerate(zip(scenes, durations)):
-        source = media_map[scene["id"]]
+        insert = inserts.get(scene["id"])
+        source = insert["clip"] if insert else media_map[scene["id"]]
         ext = source.suffix.lower()
         local_name = hashlib.sha256((scene["id"] + str(source)).encode()).hexdigest()[:12] + ext
         _link_or_copy(source, media_dir / local_name)
@@ -1024,20 +1345,25 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
                 "duration": part_duration, "fit": "cover", "motion": "none", "transition": "cut",
                 "effect": "none", "sfx": "none", "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2,
                 "style": "classic", "animation": "pop", "auto": False},
+                **({"motion_insert": insert["spec"].get("type")} if insert else {}),
             })
     project["scenes"] = local_scenes
     project["scenes_synced"] = True
     project["transcript"] = {"status": "done", "text": " ".join(texts), "words": [[w, s, e] for w, s, e, *_ in words],
-                             "language": "en", "model": "ElevenLabs", "error": "", "step": "Готово"}
+                             "language": lang, "model": "ElevenLabs", "error": "", "step": "Готово"}
+    project["language"] = lang
     narration = cache / "narration.wav"
     _link_or_copy(narration, media_dir / "narration.wav")
-    project["voice"] = {"source": "narration.wav", "name": "English voice", "duration": round(sum(durations), 3)}
+    project["voice"] = {"source": "narration.wav", "name": f"{LANG_NAMES[lang]} voice", "duration": round(sum(durations), 3)}
     recent = [str(item.get("style") or "") for item in local_editor._editing_history()
               if item.get("project_id") != pid]
     editing_styles.build_plan(project, recent)
     for target in project["scenes"]:
         if float(target.get("duration") or 0) < 1.0:
             target["transition"], target["sfx"] = "cut", "none"
+        if target.get("motion_insert"):
+            # A drawn map moves by itself: no camera move or effect on top of it.
+            target["motion"], target["effect"] = "none", "none"
     if options.get("folder_music", True):
         plan = project.get("plan") or {}
         mood = " ".join([str(plan.get("style_name") or ""), str(plan.get("description") or ""),
@@ -1053,16 +1379,47 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
             local_editor._apply_graphic_suggestions(project)
         except UserError:
             pass
+        for target in project["scenes"]:
+            if target.get("motion_insert") and (target.get("graphic") or {}).get("auto"):
+                target["graphic"] = {"type": "none", "value": "", "unit": "", "label": "", "start": .2,
+                                     "style": "classic", "animation": "pop", "auto": False}
+    chapters = chapters or {}
     if options.get("folder_chapters", True):
         for source in scenes:
             if source.get("chapter"):
                 target = next((item for item in project["scenes"] if item.get("scene_code") == source["id"]), None)
                 if not target:
                     continue
-                target["graphic"] = {"type": "chapter", "value": "", "unit": "", "label": source["chapter"], "start": .15,
+                target["graphic"] = {"type": "chapter", "value": "", "unit": "", "label": chapters.get(source["id"]) or source["chapter"], "start": .15,
                                      "style": "cinematic", "animation": "pop", "auto": True}
     (project_dir / "edit.json").write_text(json.dumps(project, ensure_ascii=False, indent=2), "utf-8")
     return pid, project_dir
+
+
+def _render_language(job_id: str, pid: str, project_dir: Path, lo: float, hi: float, lang: str) -> Path:
+    with local_editor._lock:
+        local_editor._rendering.add(pid)
+
+    def render_cancelled():
+        with _lock:
+            return (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping")
+
+    render_thread = threading.Thread(target=local_editor._render_worker, args=(pid, "final", render_cancelled),
+                                     daemon=True, name=f"folder-final-{job_id}-{lang}")
+    render_thread.start()
+    while render_thread.is_alive():
+        render_state = _read_json(project_dir / "edit.json", {}).get("render", {})
+        render_progress = float(render_state.get("progress") or 0)
+        if not render_cancelled():
+            _update(job_id, progress=round(lo + (hi - lo) * render_progress, 3),
+                    step=f"[{lang.upper()}] " + (render_state.get("step") or "Собираю финальное видео 1080p…"))
+        render_thread.join(.6)
+    _check_control(job_id)
+    rendered = project_dir / "render" / "final.mp4"
+    result = _read_json(project_dir / "edit.json", {}).get("render", {})
+    if result.get("status") != "done" or not rendered.is_file():
+        raise UserError(result.get("error") or "Финальная сборка не завершилась.")
+    return rendered
 
 
 def _build(job_id: str):
@@ -1072,60 +1429,151 @@ def _build(job_id: str):
         analysis = _analyze(Path(job["path"]))
         settings = load_settings()
         options = {**settings, **(job.get("options") or {})}
+        langs = [x for x in selected_langs(options) if x in analysis["languages"]]
+        if not langs:
+            raise UserError("В папке нет текста озвучки на выбранных языках.")
         cache = ROOT / job_id
         cache.mkdir(parents=True, exist_ok=True)
         scenes, refs = _parse_scenes(Path(analysis["scene_file"]))
-        narration = Path(analysis["narration_file"]).read_text("utf-8", errors="replace").strip()
-        texts = _mapping(job_id, scenes, narration, options, cache)
-        _check_control(job_id)
-        _update(job_id, progress=.05, step="Проверяю готовые кадры и создаю недостающие…")
+        _update(job_id, progress=.03, step="Проверяю готовые кадры и создаю недостающие…")
         media_map = _make_images(job_id, analysis, scenes, refs, settings, options)
         _check_control(job_id)
-        _update(job_id, progress=.49, step="Готовлю единую английскую озвучку…")
-        durations, words = _make_voice(job_id, scenes, texts, narration, settings, options, cache)
-        _check_control(job_id)
-        _update(job_id, progress=.72, step="Распределяю движения, переходы, главы и моушен…")
-        pid, project_dir = _local_project(job_id, analysis, scenes, texts, media_map, durations, words, settings, options, cache)
-        _check_control(job_id)
-        _update(job_id, progress=.75, step="Собираю финальное видео 1080p…")
-        with local_editor._lock:
-            local_editor._rendering.add(pid)
-        def render_cancelled():
-            with _lock:
-                return (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping")
-
-        render_thread = threading.Thread(target=local_editor._render_worker,
-                                         args=(pid, "final", render_cancelled), daemon=True,
-                                         name=f"folder-final-{job_id}")
-        render_thread.start()
-        while render_thread.is_alive():
-            render_state = _read_json(project_dir / "edit.json", {}).get("render", {})
-            render_progress = float(render_state.get("progress") or 0)
-            if not render_cancelled():
-                _update(job_id, progress=round(.75 + .23 * render_progress, 3),
-                        step=render_state.get("step") or "Собираю финальное видео 1080p…")
-            render_thread.join(.6)
-        _check_control(job_id)
-        rendered = project_dir / "render" / "final.mp4"
-        result = _read_json(project_dir / "edit.json", {}).get("render", {})
-        if result.get("status") != "done" or not rendered.is_file():
-            raise UserError(result.get("error") or "Финальная сборка не завершилась.")
-        output = Path(analysis["output"])
-        output.parent.mkdir(parents=True, exist_ok=True)
-        tmp = output.with_suffix(".new.mp4")
-        _link_or_copy(rendered, tmp)
-        tmp.replace(output)
-        _update(job_id, status="done", progress=1, step="Готово", error="", output=str(output), finished=_now(), analysis=_analyze(Path(job["path"])))
-        # The source folder keeps its generated scene PNGs and final MP4; internal audio, clips and duplicate finals do not.
+        english_file = (analysis["languages"].get("en") or {}).get("narration_file")
+        english = Path(english_file).read_text("utf-8", errors="replace").strip() if english_file else ""
+        done = dict(job.get("langs_done") or {})
+        outputs, failures = {}, []
+        todo = [x for x in langs if not (done.get(x) and Path(done[x]).is_file())]
+        for lang in langs:
+            if lang not in todo:
+                outputs[lang] = done[lang]
+        share = .52 / max(len(todo), 1)
+        project_dirs = []
+        for n, lang in enumerate(todo):
+            lo = .48 + share * n
+            info = analysis["languages"][lang]
+            lang_cache = cache if lang == "en" else cache / lang
+            lang_cache.mkdir(parents=True, exist_ok=True)
+            try:
+                narration = Path(info["narration_file"]).read_text("utf-8", errors="replace").strip()
+                texts = _mapping(job_id, scenes, narration, options, lang_cache, english if lang != "en" else "", lo)
+                _check_control(job_id)
+                own = _scan_media(Path(analysis["path"]), lang)
+                lang_media = {**media_map, **{sid: path for sid, path in own.items()
+                                              if any(part.lower() == lang for part in path.parent.parts[-3:])}}
+                _update(job_id, progress=round(lo + share * .05, 3), step=f"[{lang.upper()}] Готовлю озвучку…")
+                durations, words = _make_voice(job_id, scenes, texts, narration, settings, options, lang_cache, lang,
+                                               (lo + share * .05, lo + share * .35))
+                _check_control(job_id)
+                inserts = _motion_inserts(job_id, scenes, texts, durations, lang_media, lang, settings, options,
+                                          lang_cache, round(lo + share * .36, 3))
+                chapters = _chapter_labels(scenes, lang, settings, lang_cache) if options.get("folder_chapters", True) else {}
+                _check_control(job_id)
+                _update(job_id, progress=round(lo + share * .4, 3), step=f"[{lang.upper()}] Распределяю движения, переходы, главы и моушен…")
+                pid, project_dir = _local_project(job_id, analysis, scenes, texts, lang_media, durations, words, settings,
+                                                  options, lang_cache, lang, inserts, chapters)
+                project_dirs.append(project_dir)
+                _check_control(job_id)
+                rendered = _render_language(job_id, pid, project_dir, lo + share * .42, lo + share * .98, lang)
+                output = Path(info["output"])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                tmp = output.with_suffix(".new.mp4")
+                _link_or_copy(rendered, tmp)
+                tmp.replace(output)
+                outputs[lang] = str(output)
+                done[lang] = str(output)
+                _update(job_id, langs_done=done, outputs=outputs, output=str(output))
+                shutil.rmtree(project_dir, ignore_errors=True)
+            except (_PauseRequested, _StopRequested):
+                raise
+            except Exception as exc:  # one language failing must not lose the others
+                failures.append(f"{lang.upper()}: {exc}")
+        if failures:
+            raise UserError("Не собрались: " + "; ".join(failures)
+                            + (f". Готовы: {', '.join(x.upper() for x in outputs)}" if outputs else ""))
+        if options.get("folder_upload"):
+            _publish(job_id, analysis, outputs, settings, options)
+        first = outputs.get("en") or next(iter(outputs.values()))
+        _update(job_id, status="done", progress=1, step="Готово", error="", output=first, outputs=outputs,
+                finished=_now(), analysis=_analyze(Path(job["path"])))
+        # The source folder keeps its generated scene PNGs and final MP4s; internal audio, clips and duplicate finals do not.
         shutil.rmtree(cache, ignore_errors=True)
-        shutil.rmtree(project_dir, ignore_errors=True)
+        for project_dir in project_dirs:
+            shutil.rmtree(project_dir, ignore_errors=True)
         shutil.rmtree(Path(analysis["frame_dir"]) / "референсы", ignore_errors=True)
+    except _ReviewRequested:
+        _update(job_id, status="review", progress=.99, error="",
+                step="Ролики собраны. Проверьте превью и нажмите «Выложить».")
     except _PauseRequested:
         _update(job_id, status="paused", step="На паузе", error="")
     except _StopRequested:
         _update(job_id, status="stopped", step="Остановлено", error="")
     except Exception as exc:
         _update(job_id, status="error", step="Ошибка", error=str(exc))
+
+
+def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options: dict):
+    """Thumbnails, the owner's check if asked for, then each language goes to its channel's Octo profile."""
+    from . import studio_upload
+    job = _jobs[job_id]
+    root = Path(analysis["path"])
+    channel = root.parent.name
+    rules = settings.get("octo_rules") or {}
+    uploaded = dict(job.get("uploaded") or {})
+    approved = job.get("approved") or {}
+    generated = dict(job.get("thumbs_generated") or {})
+    en_dir = _lang_dir(root, "en")
+    en_file = upload_package.find_file(en_dir) if en_dir else None
+    english = upload_package.parse(en_file) if en_file else None
+    ready, skipped, thumbs = {}, {}, dict(job.get("thumbs") or {})
+    for lang, out in outputs.items():
+        if lang in uploaded:
+            continue
+        folder = _lang_dir(root, lang)
+        file = upload_package.find_file(folder) if folder else None
+        if not file:
+            skipped[lang] = f"нет файла загрузки_YouTube_{lang.upper()}.md"
+            continue
+        if not rules.get(f"{channel}|{lang}"):
+            skipped[lang] = f"не выбран профиль Octo для «{channel} · {lang.upper()}»"
+            continue
+        package = upload_package.parse(file)
+        if not package.get("title"):
+            skipped[lang] = "в файле загрузки нет названия (раздел «1. Название»)"
+            continue
+        _check_control(job_id)
+        own = upload_package.finished_thumb(folder)
+        if not own or generated.get(lang) == str(own):
+            _update(job_id, progress=.99, step=f"[{lang.upper()}] Готовлю превью…")
+        thumb = upload_package.make_thumb(root, lang, folder, package, settings, english)
+        if not own:
+            generated[lang] = str(thumb)
+        thumbs[lang] = str(thumb)
+        ready[lang] = (package, thumb)
+    _update(job_id, thumbs=thumbs, thumbs_generated=generated, upload_skipped=skipped)
+    if options.get("folder_thumb_review", True) and any(not approved.get(lang) for lang in ready):
+        raise _ReviewRequested()
+    failures = []
+    privacy = options.get("folder_upload_privacy") or "public"
+    for lang, (package, thumb) in ready.items():
+        _check_control(job_id)
+        uuid = rules[f"{channel}|{lang}"]
+        tag = f"[{lang.upper()}]"
+        try:
+            with _profile_lock(uuid):
+                _update(job_id, progress=.99, step=f"{tag} Запускаю профиль Octo…")
+                ws = octo.start(uuid)
+                link = studio_upload.upload(
+                    ws, Path(outputs[lang]), package, thumb, privacy,
+                    log=lambda m, t=tag: _update(job_id, step=f"{t} {m}"),
+                    cancelled=lambda: (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping"))
+            uploaded[lang] = link or "опубликовано"
+            _update(job_id, uploaded=uploaded)
+        except UserError as exc:
+            failures.append(f"{lang.upper()}: {exc}")
+    _check_control(job_id)
+    if failures:
+        raise UserError("Не выложились: " + "; ".join(failures)
+                        + (f". Выложены: {', '.join(x.upper() for x in uploaded)}" if uploaded else ""))
 
 
 def _schedule():

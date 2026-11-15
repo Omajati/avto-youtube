@@ -72,6 +72,18 @@ PROVIDERS = {
             ("gpt-image-2.5", "GPT Image 2.5", 0.03),
         ],
     },
+    "fastgen": {
+        "name": "Fast Gen (Nano Banana, GPT Image — по подписке, кредиты в час)",
+        "key_field": "fastgen_key",
+        "model_field": "fastgen_model",
+        "signup": "https://fast-gen.ai/pricing",
+        "models": [
+            ("gemini_nano_banana_2_image_generate", "Nano Banana 2 через Gemini — 1 кредит, больше всего картинок в час (рекомендую)", 0.0),
+            ("nano_banana_2_image_generate", "Nano Banana 2.1 через Flow — 4 кредита", 0.0),
+            ("nano_banana_pro_image_generate", "Nano Banana Pro — 4 кредита, самое качественное", 0.0),
+            ("openai_image_generate", "GPT Image — 4 кредита", 0.0),
+        ],
+    },
 }
 # Royal models that draw by reference pictures (characters, items, places), and how many pictures each takes.
 ROYAL_REF = {"nano-banana-2": 10, "nano-banana-pro": 10, "seedream-4.6": 6}
@@ -99,6 +111,9 @@ def generate(settings, prompt: str, vertical: bool = False) -> bytes:
         return _openai(key, model, prompt, vertical, settings.get("openai_image_quality") or "medium")
     if provider == "royal":
         return _royal(settings, model, prompt, vertical)
+    if provider == "fastgen":
+        from . import fastgen
+        return fastgen.generate(settings, prompt, "9:16" if vertical else "16:9")
     fn = {"fal": _fal, "replicate": _replicate, "runware": _runware, "together": _together, "openai": _openai}[provider]
     return fn(key, model, prompt, vertical)
 
@@ -117,9 +132,14 @@ def royal_refs(settings) -> bool:
     return settings.get("image_provider") == "royal" and bool(settings.get("royal_key"))
 
 
+def fastgen_refs(settings) -> bool:
+    """Pictures by reference go to Fast Gen when it is the chosen picture service (its Nano Banana takes up to 10)."""
+    return settings.get("image_provider") == "fastgen" and bool(settings.get("fastgen_key"))
+
+
 def can_reference(settings) -> bool:
-    """Characters, items and places can be drawn from reference pictures (fal.ai or RoyalTechno)."""
-    return bool(settings.get("fal_key")) or royal_refs(settings)
+    """Characters, items and places can be drawn from reference pictures (fal.ai, RoyalTechno or Fast Gen)."""
+    return bool(settings.get("fal_key")) or royal_refs(settings) or fastgen_refs(settings)
 
 
 def _download(service, url) -> bytes:
@@ -260,6 +280,8 @@ def _use_flux2(settings, refs, place, items) -> bool:
 
 def reference_price(settings, refs: list = None, place=None, items: list = None) -> float:
     """Approximate USD for one picture drawn by reference."""
+    if fastgen_refs(settings):
+        return 0.0
     if royal_refs(settings):
         return price_per_image({**settings, "royal_image_model": _royal_ref_model(settings)})
     if not _use_flux2(settings, refs, place, items):
@@ -297,12 +319,14 @@ def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = 
     from PIL import Image
     import io
     royal = royal_refs(settings)
+    fast = fastgen_refs(settings)
+    royal = royal and not fast
     key = settings.get("fal_key")
-    if not key and not royal:
+    if not key and not royal and not fast:
         raise UserError("Для картинок по портрету нужен ключ fal.ai или RoyalTechno (Настройки → Картинки).")
     refs = list(refs[:MAX_REFERENCE_IMAGES])
     items = list((items or [])[:MAX_ITEM_IMAGES])
-    flux2 = _use_flux2(settings, refs, place, items) and not royal
+    flux2 = _use_flux2(settings, refs, place, items) and not royal and not fast
     pics = ([place] if place else []) + refs + items
     urls = []
     for pic in pics:
@@ -356,6 +380,9 @@ def generate_with_reference(settings, prompt: str, refs: list, vertical: bool = 
                      "photos of one item from different sides. Draw each item only once and do not copy the photo's "
                      "background.")
     parts.append("No text, no letters, no watermark" + (" apart from what is printed on the items themselves." if items else "."))
+    if fast:
+        from . import fastgen
+        return fastgen.generate(settings, " ".join(parts), "1:1" if square else "9:16" if vertical else "16:9", urls)
     if royal:
         return _royal(settings, _royal_ref_model(settings), " ".join(parts), vertical, urls, square)
     body = {

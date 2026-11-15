@@ -331,7 +331,8 @@ async function viewNew() {
   if (!projs.find(p => p.id === curProj)) curProj = "";
   const missing = [];
   if (s.llm_provider === "anthropic" ? !s.anthropic_key : !s.openai_key) missing.push("нейросети для сценария");
-  if (s.voice_provider === "royal" ? !s.royal_key : !s.elevenlabs_key) missing.push(s.voice_provider === "royal" ? "RoyalTechno (озвучка)" : "ElevenLabs (озвучка)");
+  const vk = { royal: ["royal_key", "RoyalTechno (озвучка)"], lumean: ["lumean_key", "Lumean (озвучка)"] }[s.voice_provider] || ["elevenlabs_key", "ElevenLabs (озвучка)"];
+  if (!s[vk[0]]) missing.push(vk[1]);
   const prov = META.providers[s.image_provider];
   if (prov && !s[prov.key_field]) missing.push(`${prov.name} (картинки)`);
   main.innerHTML = `
@@ -888,6 +889,52 @@ function openVoiceLibrary(onPick, lang) {
   more.onclick = () => { page++; load(false); };
   load(true);
 }
+// ElevenLabs voices through Lumean (its own catalog, no ElevenLabs account needed). onPick(voice_id, name).
+function openLumeanVoices(onPick, lang) {
+  lang = LIB_LANGS[lang] ? lang : "en";
+  const wrap = document.createElement("div");
+  wrap.className = "vlib"; wrap.dataset.nodraft = 1;
+  wrap.innerHTML = `<div class="box"><button class="x" title="Закрыть">×</button>
+    <h2>Голоса Lumean</h2>
+    <p class="muted small">Библиотека голосов ElevenLabs через Lumean. Выберите язык, нажмите ▶, чтобы послушать, и «Выбрать». Не забудьте потом сохранить настройки.</p>
+    <div class="row" style="gap:8px;margin:10px 0">
+      <select data-f="language" style="width:auto">${Object.entries(LIB_LANGS).map(([k, n]) => `<option value="${k}" ${k === lang ? "selected" : ""}>${LANG_FLAG[k]} ${n}</option>`).join("")}</select>
+      <select data-f="gender" style="width:auto"><option value="">Любой пол</option><option value="male">👨 Мужские</option><option value="female">👩 Женские</option></select>
+      <input data-f="search" placeholder="поиск: deep, narrator, documentary…" style="width:240px">
+      <button class="sm" data-go>Найти</button></div>
+    <div data-list>Загружаю…</div><audio data-audio></audio>
+    <div class="row" style="margin-top:10px"><button class="sm" data-more style="display:none">Показать ещё</button></div></div>`;
+  document.body.appendChild(wrap);
+  const close = () => { wrap.querySelector("[data-audio]").pause(); wrap.remove(); };
+  wrap.querySelector(".x").onclick = close;
+  wrap.addEventListener("click", e => { if (e.target === wrap) close(); });
+  const list = wrap.querySelector("[data-list]"), more = wrap.querySelector("[data-more]");
+  let page = 1, items = [];
+  const f = k => wrap.querySelector(`[data-f="${k}"]`).value;
+  const draw = () => {
+    list.innerHTML = items.length ? items.map((v, i) => `<div class="vrow">
+      <button class="sm" data-play="${i}" ${v.preview_url ? "" : "disabled"}>▶</button>
+      <div class="grow"><b>${esc(v.name)}</b> <span class="muted small">${esc([v.gender, v.age, v.accent].filter(Boolean).join(", "))}</span>
+        ${v.description ? `<div class="muted small">${esc(v.description.slice(0, 160))}</div>` : ""}</div>
+      <button class="sm primary" data-pick="${i}">Выбрать</button></div>`).join("")
+      : `<p class="muted">Ничего не нашлось. Попробуйте убрать фильтры.</p>`;
+    list.querySelectorAll("[data-play]").forEach(b => b.onclick = () => { const a = wrap.querySelector("[data-audio]"); a.src = items[+b.dataset.play].preview_url; a.play(); });
+    list.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => { const v = items[+b.dataset.pick]; onPick(v.voice_id, v.name); close(); toast(`Голос «${v.name}» выбран.`); });
+  };
+  const load = async (reset) => {
+    if (reset) { page = 1; items = []; list.innerHTML = "Загружаю…"; }
+    try {
+      const d = await api(`/api/lumean/voices?${new URLSearchParams({ language: f("language"), gender: f("gender"), search: f("search"), page })}`);
+      items = items.concat(d.items); draw(); more.style.display = d.has_more ? "" : "none";
+    } catch (e) { list.innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
+  };
+  wrap.querySelector("[data-go]").onclick = () => load(true);
+  wrap.querySelectorAll("select[data-f]").forEach(s => s.onchange = () => load(true));
+  wrap.querySelector('[data-f="search"]').onkeydown = e => { if (e.key === "Enter") load(true); };
+  more.onclick = () => { page++; load(false); };
+  load(true);
+}
+
 // A button next to a voice list that opens the library with native speakers of any language (Spanish, German…).
 function addLibButton(sel, lang) {
   const b = document.createElement("button");
@@ -2350,7 +2397,10 @@ async function viewSettings(id) {
     <label class="f">…или ID голоса вручную <span class="hint">Если список голосов не загружается: на elevenlabs.io откройте голос, нажмите «…» → Copy voice ID и вставьте сюда. Если ошибка про разрешение (permission), откройте на сайте ElevenLabs ваш API-ключ → Edit и включите доступ «Voices: Read» и «User: Read», либо создайте новый ключ без ограничений.</span></label>
     <input type="text" id="voice-id" placeholder="например JBFqnCBsd6RMkjVDRZzb">
     <div id="voice-marks"></div>
-    ${field("voice_provider", "Через что озвучивать", s, { type: "select", options: [["elevenlabs", "ElevenLabs напрямую, по вашему ключу"], ["royal", "Через RoyalTechno: те же голоса ElevenLabs в 5–10 раз дешевле ($0.03 за 1000 символов), ключ RoyalTechno"]], hint: "Через RoyalTechno доступны стандартные голоса и голоса из библиотеки ElevenLabs, но не все: если голос не подойдёт, программа скажет. Ваших личных клонов голоса там нет. Субтитры ложатся по паузам в речи" })}
+    ${field("voice_provider", "Через что озвучивать", s, { type: "select", options: [["elevenlabs", "ElevenLabs напрямую, по вашему ключу"], ["royal", "Через RoyalTechno: те же голоса ElevenLabs в 5–10 раз дешевле ($0.03 за 1000 символов), ключ RoyalTechno"], ["lumean", "Через Lumean: голоса ElevenLabs по подписке Lumean, с точными таймингами слов для субтитров"]], hint: "Через RoyalTechno и Lumean доступны стандартные голоса и голоса из библиотеки ElevenLabs. Ваших личных клонов голоса там нет. После смены сервиса нажмите «Сохранить» — появятся его поля" })}
+    ${s.voice_provider === "lumean" ? `${field("lumean_key", "Ключ Lumean", s, { type: "secret", hint: `Создаётся на <a href="https://lumean.app/developers" target="_blank">lumean.app → API → Ключи</a>. Берите пресет «full»: программе нужно создать себе шаблон озвучки` })}
+      ${field("lumean_model", "Модель озвучки в Lumean", s, { type: "select", options: [["eleven_multilingual_v2", "Multilingual v2 — стабильно, работают все настройки голоса (рекомендую)"], ["eleven_v3", "Eleven v3 — самый выразительный, скорость не меняется"], ["eleven_v4", "Eleven v4 — новейший"], ["eleven_turbo_v2_5", "Turbo v2.5 — быстро и дешевле"]] })}
+      <div class="row" style="margin-top:6px"><button class="sm primary" type="button" id="lumean-voices">🎙 Голоса Lumean (любой язык)</button><button class="sm" type="button" id="lumean-check">Проверить ключ Lumean</button><span id="lumean-r" class="muted small"></span></div>` : ""}
     ${s.voice_provider === "royal" ? field("royal_key", "Ключ RoyalTechno", s, { type: "secret", hint: `Создаётся в Телеграм-боте <a href="https://t.me/royaltechno_ai_bot" target="_blank">@royaltechno_ai_bot</a> командой /api_key_new` }) : ""}
     ${field("elevenlabs_model", "Модель озвучки", s, { type: "select", options: META.tts_models.map(m => [m.id, m.name]) })}
     ${field("voice_tags", "Интонации по сюжету (только для модели v3)", s, { type: "select", options: [["true", "Да: ИИ расставляет в тексте пометки шёпот, удивление, грусть и т. п. там, где этого требует сюжет (центы за ролик)"], ["false", "Нет: голос читает текст как есть"]] })}
@@ -2652,6 +2702,12 @@ async function viewSettings(id) {
     const sel = $("#voice-sel"); if (voices.length) sel.innerHTML = voiceOptions(voices, vid, "");
     pickIntoSelect(sel, vid, name);
   });
+  if ($("#lumean-voices")) $("#lumean-voices").onclick = () => openLumeanVoices((vid, name) => { $("#voice-id").value = ""; pickIntoSelect($("#voice-sel"), vid, name); }, "en");
+  if ($("#lumean-check")) $("#lumean-check").onclick = async () => {
+    $("#lumean-r").textContent = "Проверяю…";
+    try { await save(true); const r = await api("/api/lumean/check"); $("#lumean-r").textContent = `✅ Ключ работает${r.name ? ` («${r.name}»)` : ""}${r.permissions?.length ? `. Права: ${r.permissions.join(", ")}` : ""}`; }
+    catch (e) { $("#lumean-r").textContent = "❌ " + e.message; }
+  };
   $("#voice-preview").onclick = () => {
     const v = voices.find(x => x.voice_id === $("#voice-sel").value);
     if (!v?.preview_url) return toast("Сначала нажмите «Загрузить список голосов»", true);
@@ -3415,8 +3471,16 @@ async function viewLibrary(id) {
 const FB_STATUS = {
   ready: "Готов к запуску", queued: "В очереди", running: "Собирается",
   pausing: "Ставится на паузу", paused: "На паузе",
-  stopping: "Останавливается", stopped: "Остановлен", done: "Готово", error: "Ошибка"
+  stopping: "Останавливается", stopped: "Остановлен", done: "Готово", error: "Ошибка",
+  review: "Ждёт проверки превью"
 };
+let OCTO = { profiles: null, rules: {}, error: "" };
+const fbChannel = path => String(path || "").replace(/\/+$/, "").split("/").slice(-2, -1)[0] || "";
+async function loadOcto(refresh) {
+  try { const d = await api(`/api/folder-builder/octo/profiles${refresh ? "?refresh=1" : ""}`); OCTO = { profiles: d.profiles, rules: d.rules, error: "" }; }
+  catch (e) { OCTO = { profiles: null, rules: OCTO.rules, error: e.message }; }
+  return OCTO;
+}
 const folderSeenErrors = new Set();
 
 function showFolderErrors(jobs) {
@@ -3457,7 +3521,26 @@ function folderJobHtml(job) {
   const a = job.analysis || {}, status = job.status || "ready", e = job.estimate || {}, o = job.options || {};
   const refsEnabled = o.folder_references ?? e.refs_on;
   const settingsLabel = Object.keys(o).length ? "Последний запуск" : "Текущие настройки";
-  const cls = status === "ready" ? "queued" : status === "stopped" ? "paused" : ["pausing", "stopping"].includes(status) ? "running" : status;
+  const cls = status === "ready" ? "queued" : status === "stopped" ? "paused" : status === "review" ? "paused" : ["pausing", "stopping"].includes(status) ? "running" : status;
+  const channel = fbChannel(job.path), langs = Object.keys(a.languages || {});
+  const uploadOn = !!(o.folder_upload ?? FB_UPLOAD_ON);
+  const profileSel = l => {
+    const cur = OCTO.rules[`${channel}|${l}`] || "";
+    const list = OCTO.profiles || [];
+    const known = list.find(p => p.uuid === cur);
+    return `<label class="small" style="display:inline-flex;gap:6px;align-items:center;margin-right:12px">${LANG_FLAG[l] || ""} ${l.toUpperCase()} → <select class="sm" data-fb-profile="${l}" data-channel="${esc(channel)}" style="width:auto;max-width:240px">
+      <option value="">— профиль не выбран —</option>${list.map(p => `<option value="${esc(p.uuid)}" ${p.uuid === cur ? "selected" : ""}>${esc(p.title)}</option>`).join("")}
+      ${cur && !known ? `<option value="${esc(cur)}" selected>${list.length ? "профиль удалён?" : "выбран (список не загружен)"}</option>` : ""}</select></label>`;
+  };
+  const uploadBlock = uploadOn && langs.length ? `<div class="fb-upload" style="margin-top:8px">
+    <div class="muted small">Профили Octo для канала <b>${esc(channel)}</b> (запоминаются для всех папок этого канала):</div>
+    <div style="margin-top:4px">${langs.map(profileSel).join("")}</div>
+    ${OCTO.error ? `<div class="muted small">⚠️ Список профилей не загрузился: ${esc(OCTO.error)}</div>` : ""}</div>` : "";
+  const thumbs = job.thumbs || {};
+  const reviewBlock = Object.keys(thumbs).length ? `<div class="fb-thumbs" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">${Object.keys(thumbs).map(l => `<figure style="margin:0;width:260px">
+      <img src="/api/folder-builder/${esc(job.id)}/thumb/${l}?t=${job.updated || 0}" style="width:100%;border-radius:8px;display:block">
+      <figcaption class="small">${LANG_FLAG[l] || ""} ${l.toUpperCase()}${(job.uploaded || {})[l] ? ` · ✅ ${String(job.uploaded[l]).startsWith("http") ? `<a href="${esc(job.uploaded[l])}" target="_blank">на YouTube</a>` : "выложено"}` : ""}</figcaption></figure>`).join("")}</div>` : "";
+  const skippedNotes = Object.entries(job.upload_skipped || {}).map(([l, why]) => `<div class="banner warn small">${l.toUpperCase()} не выложен: ${esc(why)}</div>`).join("");
   const active = ["running", "queued", "pausing", "stopping"].includes(status);
   const percent = status === "done" ? 100 : Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100);
   const showProgress = status !== "ready" || percent > 0;
@@ -3472,16 +3555,19 @@ function folderJobHtml(job) {
     <div class="row"><div class="grow"><h2 style="margin:0">📁 ${esc(job.title || a.title || "Проект")}</h2>
       <div class="muted small fb-path" title="${esc(job.path)}">${esc(job.path)}</div></div>
       <span class="badge ${cls}">${esc(FB_STATUS[status] || status)}</span></div>
-    <div class="fb-stats">${esc(details)}${a.words ? ` · ${a.words.toLocaleString("ru")} слов EN` : ""}</div>
+    <div class="fb-stats">${esc(details)}</div>
+    <div class="muted small" style="margin-top:2px">Тексты озвучки: ${Object.entries(a.languages || {}).map(([l, x]) => `${LANG_FLAG[l] || ""} ${l.toUpperCase()} — ${Number(x.words || 0).toLocaleString("ru")} слов`).join(" · ") || "не найдены"}</div>
     <div class="muted small" style="margin-top:4px">${settingsLabel}: референсы <b>${refsEnabled ? "включены" : "выключены"}</b>${e.images != null ? ` · к генерации ${e.images} · референсных сцен ${e.reference_scenes || 0} · примерно $${Number(e.cost || 0).toFixed(2)}` : ""}</div>
     ${showProgress ? `<div class="fb-progress"><div class="fb-progress-head"><b>${percent}%</b><span>${esc(job.step || (active ? "Работаю…" : FB_STATUS[status] || ""))}</span></div><div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><div style="width:${percent}%"></div></div></div>` : ""}
-    ${notes}
+    ${notes}${uploadBlock}${reviewBlock}${skippedNotes}
     <div class="row" style="margin-top:10px">
-      ${status === "done" ? `<button class="primary sm" data-fb-reveal>📂 Показать готовое видео</button><span class="muted small">${esc(job.output || a.output || "")}</span>` : ""}
+      ${status === "review" ? `<button class="primary sm" data-fb-action="publish">✅ Выложить</button><button class="sm" data-fb-action="redraw">🔄 Перерисовать превью</button>` : ""}
+      ${Object.keys(job.outputs || {}).length ? Object.keys(job.outputs).map(l => `<button class="${status === "done" ? "primary " : ""}sm" data-fb-reveal="${l}">📂 Видео ${l.toUpperCase()}</button>`).join("") : status === "done" ? `<button class="primary sm" data-fb-reveal>📂 Показать готовое видео</button><span class="muted small">${esc(job.output || a.output || "")}</span>` : ""}
       ${status === "error" || status === "ready" ? `<button class="sm ${status === "error" ? "primary" : ""}" data-fb-one ${job.problems?.length || job.scan_error ? "disabled" : ""}>${status === "error" ? "▶ Повторить" : "▶ Собрать этот проект"}</button>` : ""}
       ${["running", "queued"].includes(status) ? `<button class="sm" data-fb-action="pause">⏸ Пауза</button><button class="sm danger" data-fb-action="stop">⏹ Остановить</button>` : ""}
       ${status === "pausing" ? `<button class="sm danger" data-fb-action="stop">⏹ Остановить</button>` : ""}
       ${["paused", "stopped"].includes(status) ? `<button class="primary sm" data-fb-action="resume">▶ Продолжить</button>` : ""}
+      ${status === "done" && Object.keys(job.thumbs || {}).length ? `<button class="sm" data-fb-action="redraw">🔄 Перерисовать превью</button>` : ""}
       ${!["running", "queued", "pausing", "stopping"].includes(status) ? `<button class="sm danger" data-fb-remove>Убрать из очереди</button>` : ""}
     </div></div>`;
 }
@@ -3495,8 +3581,15 @@ function drawFolderJobs(data) {
       if (!confirm("Убрать проект из очереди и удалить его внутреннюю озвучку, монтаж и кэш? Исходная папка, сгенерированные кадры и готовый MP4 останутся.")) return;
       await api(`/api/folder-builder/${id}`, { method: "DELETE" }).then(r => { toast(`Внутренний кэш удалён${r.bytes_freed ? `: освобождено ${(r.bytes_freed/1048576).toFixed(0)} МБ` : ""}`); refreshFolderBuilder(); }).catch(e => toast(e.message, true));
     });
-    card.querySelector("[data-fb-reveal]")?.addEventListener("click", () => api(`/api/folder-builder/${id}/reveal`, { json: {} }).catch(e => toast(e.message, true)));
+    card.querySelectorAll("[data-fb-reveal]").forEach(b => b.addEventListener("click", () => api(`/api/folder-builder/${id}/reveal`, { json: { lang: b.dataset.fbReveal || "" } }).catch(e => toast(e.message, true))));
     card.querySelector("[data-fb-one]")?.addEventListener("click", () => startFolderQueue([id]));
+    card.querySelectorAll("[data-fb-profile]").forEach(sel => sel.addEventListener("change", async () => {
+      try {
+        const r = await api("/api/folder-builder/octo/rule", { json: { channel: sel.dataset.channel, lang: sel.dataset.fbProfile, uuid: sel.value } });
+        OCTO.rules = r.rules; toast(sel.value ? `Профиль для «${sel.dataset.channel} · ${sel.dataset.fbProfile.toUpperCase()}» запомнен` : "Профиль убран");
+        refreshFolderBuilder();
+      } catch (e) { toast(e.message, true); }
+    }));
     card.querySelectorAll("[data-fb-action]").forEach(button => button.addEventListener("click", async () => {
       button.disabled = true;
       try {
@@ -3508,14 +3601,18 @@ function drawFolderJobs(data) {
   showFolderErrors(data.jobs);
 }
 
+let FB_UPLOAD_ON = false;
+const FB_LANGS = { en: "Английский", ru: "Русский", de: "Немецкий", es: "Испанский" };
 function folderOptions() {
   const out = {};
   main.querySelectorAll("[data-fbo]").forEach(el => out[el.dataset.fbo] = el.type === "checkbox" ? el.checked : el.value);
-  const voice = $("#fb-voice");
-  if (voice) {
-    out.folder_voice_en_id = voice.value;
-    out.folder_voice_en_name = voice.options[voice.selectedIndex]?.dataset.name || voice.options[voice.selectedIndex]?.text || "";
-  }
+  const langs = [...main.querySelectorAll("[data-fb-lang]")].filter(x => x.checked).map(x => x.dataset.fbLang);
+  if (main.querySelector("[data-fb-lang]")) out.folder_languages = (langs.length ? langs : ["en"]).join(",");
+  main.querySelectorAll("[data-fb-voice]").forEach(voice => {
+    const l = voice.dataset.fbVoice, o = voice.options[voice.selectedIndex];
+    out[`folder_voice_${l}_id`] = voice.value;
+    out[`folder_voice_${l}_name`] = o?.dataset.name || (voice.value ? o?.text : "") || "";
+  });
   return out;
 }
 
@@ -3551,21 +3648,30 @@ async function viewFolderBuilder() {
   const data = await api("/api/folder-builder");
   const s = data.settings, q = (k, fallback = "") => s[k] ?? fallback;
   const checks = [
-    ["folder_smart_mapping", "Уточнять сцены через OpenAI", "Опционально: точнее сверяет смысл описаний, но добавляет отдельный долгий запрос. Для максимальной скорости оставьте выключенным.", false],
+    ["folder_smart_mapping", "Уточнять сцены через ИИ", "Опционально: Claude или OpenAI сверяют смысл описаний с текстом на любом языке. Добавляет отдельный долгий запрос. Для максимальной скорости оставьте выключенным.", false],
     ["folder_references", "Референсы персонажей и объектов", "Сначала создаются R1, R2… и используются в подходящих сценах. Если выключить — каждая картинка рисуется только по своему описанию."],
     ["folder_chapters", "Названия глав", "Текст главы автоматически появляется на сценах «КАРТОЧКА ГЛАВЫ»."],
     ["folder_subtitles", "Караоке-субтитры на видео", "Слова подсвечиваются точно по озвучке."],
     ["folder_music", "Музыка из библиотеки", "Подходящий трек выбирается автоматически, зацикливается и приглушается под голос."],
     ["folder_auto_graphics", "Автоматический моушен", "Названия, даты, числа и смысловые акценты появляются там, где подходят."],
+    ["folder_motion_inserts", "Карты, линии времени и графики", "Немного, только в первой половине ролика: где текст называет страны, маршруты, даты или цифры, вместо картинки рисуется анимированная карта или линия времени. Нужен ключ Claude или OpenAI."],
   ];
+  const langsOn = String(q("folder_languages", "en") || "en").split(/[,\s]+/).filter(Boolean);
+  FB_UPLOAD_ON = !!q("folder_upload", false);
+  if (FB_UPLOAD_ON && !OCTO.profiles) await loadOcto(false);
   main.innerHTML = `<h1>📂 Сборка роликов из папок</h1>
-  <p class="muted">Выберите готовые папки проектов и нажмите одну кнопку. Программа возьмёт окончательный английский текст, готовые файлы <code>S001…</code>, создаст недостающие изображения и вернёт готовый MP4 в папку <code>EN</code>.</p>
+  <p class="muted">Выберите готовые папки проектов и нажмите одну кнопку. Программа возьмёт тексты озвучки из папок <code>EN</code>, <code>RU</code>, <code>DE</code>, <code>ES</code>, готовые файлы <code>S001…</code>, создаст недостающие изображения и положит готовый MP4 в папку каждого языка.</p>
   <div class="card fb-settings"><div class="row"><h2 class="grow" style="margin:0">Перед запуском — все настройки</h2><a class="btn sm" href="#/settings">⚙️ Открыть полные настройки и ключи</a></div>
     <div class="grid2"><div>
       <label class="f">Сервис и модель изображений</label><div class="fb-readonly"><b>${esc(data.summary.image_provider)}</b><br><span>${esc(data.summary.image_model)}</span><br><span>С референсом: ${esc(data.summary.reference_model || "недоступна")}</span></div>
       <label class="f">Языковая модель для распределения текста</label><div class="fb-readonly"><b>${esc(data.summary.llm_provider)}</b><br><span>${esc(data.summary.llm_model || "не выбрана")}</span></div>
-      <label class="f">Английский голос</label>
-      <div class="row" style="gap:6px;flex-wrap:nowrap"><select id="fb-voice"><option value="${esc(q("folder_voice_en_id") || data.summary.voice_id || "")}" data-name="${esc(q("folder_voice_en_name") || data.summary.voice_name || "")}">${esc(q("folder_voice_en_name") || data.summary.voice_name || "Выберите английский голос")}</option></select><button class="sm" id="fb-load-voices">Загрузить</button><button class="sm" id="fb-voice-lib">🌍 Библиотека</button></div>
+      <label class="f">Языки роликов <span class="hint">Для каждого языка в папке проекта должна быть своя папка (EN, RU, DE, ES) с текстом озвучки. Картинки общие, рисуются один раз.</span></label>
+      <div class="row" style="gap:14px">${Object.entries(FB_LANGS).map(([l, n]) => `<label class="check" style="margin:0"><input type="checkbox" data-fb-lang="${l}" ${langsOn.includes(l) ? "checked" : ""}> ${LANG_FLAG[l]} ${n}</label>`).join("")}</div>
+      <label class="f">Голоса <span class="hint">Озвучка через ${esc(data.summary.voice_service)}. Сменить сервис — Настройки → «2. Озвучка».</span></label>
+      ${Object.entries(FB_LANGS).map(([l, n]) => {
+        const id = q(`folder_voice_${l}_id`) || (l === "en" ? data.summary.voice_id || "" : ""), name = q(`folder_voice_${l}_name`) || (l === "en" ? data.summary.voice_name || "" : "");
+        return `<div class="row fb-voice-row" data-fb-voice-row="${l}" style="gap:6px;flex-wrap:nowrap;margin-bottom:6px;${langsOn.includes(l) ? "" : "display:none"}"><span style="width:28px">${LANG_FLAG[l]}</span><select data-fb-voice="${l}"><option value="${esc(id)}" data-name="${esc(name)}">${esc(name || (id ? id : `Выберите голос: ${n.toLowerCase()}`))}</option></select><button class="sm" data-fb-voice-pick="${l}">${data.summary.voice_service === "Lumean" ? "🎙 Голоса Lumean" : "🌍 Библиотека"}</button></div>`;
+      }).join("")}
       <label class="f">Стиль монтажа</label><select data-fbo="folder_edit_style">${[["auto","Подбирать автоматически и не повторяться"],["science","Научпоп"],["cinematic","Кинодокументалистика"],["investigation","Расследование"],["archive","Архивная хроника"],["dynamic","Динамичный YouTube"],["minimal","Премиальный минимализм"]].map(([v,n])=>`<option value="${v}" ${q("folder_edit_style","auto")===v?"selected":""}>${n}</option>`).join("")}</select>
       <div class="grid2"><div><label class="f">Темп</label><select data-fbo="folder_edit_tempo">${[["calm","Спокойный"],["balanced","Сбалансированный"],["dynamic","Динамичный"]].map(([v,n])=>`<option value="${v}" ${q("folder_edit_tempo","balanced")===v?"selected":""}>${n}</option>`).join("")}</select></div>
       <div><label class="f">Эффекты</label><select data-fbo="folder_effect_level">${[["low","Минимум"],["normal","Нормально"],["juicy","Сочно"]].map(([v,n])=>`<option value="${v}" ${q("folder_effect_level","normal")===v?"selected":""}>${n}</option>`).join("")}</select></div></div>
@@ -3583,20 +3689,49 @@ async function viewFolderBuilder() {
       <div class="muted small" style="margin-top:10px">Музыкальных треков в библиотеке: ${data.summary.music_tracks}. Ваши изображения не перерисовываются; кадры программы обновляются, если изменился промпт, модель или режим референсов. Видео всегда важнее фотографии с тем же номером сцены.</div>
     </div></div>
   </div>
+  <div class="card"><h2 style="margin-top:0">🚀 Автовыкладка на YouTube через Octo Browser</h2>
+    <label class="check"><input type="checkbox" data-fbo="folder_upload" ${q("folder_upload", false) ? "checked" : ""}><span><b>Выкладывать готовые ролики</b><span class="muted small">Каждый язык уходит в профиль Octo, выбранный для его канала. Название, описание и теги берутся из файла <code>загрузка_YouTube_EN.md</code> (и т. п.) в папке языка, превью — из раздела «2. Превью». Octo Browser должен быть открыт.</span></span></label>
+    <div class="grid2"><div>
+      <label class="f">Доступ после загрузки</label><select data-fbo="folder_upload_privacy">${[["public", "Открытый доступ"], ["unlisted", "Доступ по ссылке"], ["private", "Ограниченный доступ"]].map(([v, n]) => `<option value="${v}" ${q("folder_upload_privacy", "public") === v ? "selected" : ""}>${n}</option>`).join("")}</select>
+      <label class="check"><input type="checkbox" data-fbo="folder_thumb_review" ${q("folder_thumb_review", true) ? "checked" : ""}><span><b>Показать превью перед выкладкой</b><span class="muted small">Ролик собирается, программа показывает превью и ждёт кнопку «Выложить». Без галочки ролик сразу уходит на канал.</span></span></label>
+    </div><div>
+      <label class="f">API-токен Octo Browser <span class="hint">Octo → настройки мастер-аккаунта → вкладка «Дополнительно».</span></label>
+      <div class="row" style="gap:6px;flex-wrap:nowrap"><input type="password" id="fb-octo-token" placeholder="${data.octo_token_set ? "•••• токен сохранён" : "вставьте токен"}" autocomplete="off"><button class="sm" id="fb-octo-save">Сохранить и загрузить профили</button></div>
+      <div class="muted small" id="fb-octo-r">${OCTO.profiles ? `Профилей в Octo: ${OCTO.profiles.length}` : OCTO.error ? "⚠️ " + esc(OCTO.error) : ""}</div>
+    </div></div></div>
   <div class="row fb-actions"><button class="primary big" id="fb-add">＋ Добавить папки</button><button class="blue big" id="fb-start" ${data.jobs.length ? "" : "disabled"}>▶ Собрать всю очередь</button><span class="muted small">Можно выбрать несколько папок сразу. Все готовые этапы кэшируются.</span></div>
   <div id="fb-jobs" style="margin-top:16px"></div>`;
   drawFolderJobs(data);
   $("#fb-music").oninput = e => $("#fb-music-v").textContent = `${Math.round(+e.target.value*100)}%`;
   main.querySelectorAll("[data-fbo]").forEach(el => el.addEventListener("change", scheduleFolderOptionsSave));
-  $("#fb-voice").addEventListener("change", scheduleFolderOptionsSave);
+  main.querySelectorAll("[data-fb-voice]").forEach(x => x.addEventListener("change", scheduleFolderOptionsSave));
+  main.querySelectorAll("[data-fb-lang]").forEach(x => x.addEventListener("change", () => {
+    main.querySelector(`[data-fb-voice-row="${x.dataset.fbLang}"]`).style.display = x.checked ? "" : "none";
+    scheduleFolderOptionsSave();
+  }));
+  main.querySelectorAll("[data-fb-voice-pick]").forEach(b => b.onclick = () => {
+    const l = b.dataset.fbVoicePick, sel = main.querySelector(`[data-fb-voice="${l}"]`);
+    const pick = (id, name) => { pickIntoSelect(sel, id, name); scheduleFolderOptionsSave(); };
+    if (data.summary.voice_service === "Lumean") openLumeanVoices(pick, l); else openVoiceLibrary(pick, l);
+  });
   $("#fb-add").onclick = async () => {
     const b=$("#fb-add"); b.disabled=true; b.textContent="Выбираю…";
     try { await saveFolderOptions(); const picked=await api("/api/folder-builder/pick",{json:{}}); if(picked.paths.length){ await api("/api/folder-builder/add",{json:{paths:picked.paths}}); toast(`Добавлено папок: ${picked.paths.length}`); await viewFolderBuilder(); } }
     catch(e){ toast(e.message,true); } finally { if(document.body.contains(b)){ b.disabled=false; b.textContent="＋ Добавить папки"; } }
   };
   $("#fb-start").onclick = () => startFolderQueue();
-  $("#fb-load-voices").onclick = async () => { const b=$("#fb-load-voices"); b.disabled=true; try { const vs=await loadVoices(true), sel=$("#fb-voice"), cur=sel.value; sel.innerHTML=voiceOptions(vs,cur,"en"); sel.value=cur; } catch(e){toast(e.message,true);} b.disabled=false; };
-  $("#fb-voice-lib").onclick = () => openVoiceLibrary((id,name)=>{ const sel=$("#fb-voice"); pickIntoSelect(sel,id,name); scheduleFolderOptionsSave(); },"en");
+  $("#fb-octo-save").onclick = async () => {
+    const v = $("#fb-octo-token").value.trim(), r = $("#fb-octo-r");
+    try {
+      if (v) await api("/api/settings", { json: { octo_token: v } });
+      r.textContent = "Загружаю профили…";
+      const o = await loadOcto(true);
+      r.textContent = o.error ? "❌ " + o.error : `✅ Профилей в Octo: ${o.profiles.length}`;
+      $("#fb-octo-token").value = ""; refreshFolderBuilder();
+    } catch (e) { r.textContent = "❌ " + e.message; }
+  };
+  main.querySelector('[data-fbo="folder_upload"]').addEventListener("change", async e => { FB_UPLOAD_ON = e.target.checked; if (FB_UPLOAD_ON && !OCTO.profiles) await loadOcto(false); refreshFolderBuilder(); });
+
   if (data.jobs.some(x => ["running", "queued", "pausing", "stopping"].includes(x.status))) timer = setInterval(() => refreshFolderBuilder().catch(() => null), 2000);
 }
 

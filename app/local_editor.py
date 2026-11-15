@@ -791,18 +791,18 @@ def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
             break
     semantic_last = -99.0
     rules = [
-        (r"опас|угроз|предупр|риск|danger|threat|warning|risk", "warning"),
-        (r"вырос|рост|увелич|поднял|подорож|grow|grew|increase|rise|rose", "up"),
-        (r"упал|паден|сниз|уменьш|сократ|подешев|fall|fell|drop|decrease|decline", "down"),
-        (r"люд|человек|жител|населен|аудитор|people|person|population|resident", "people"),
-        (r"город|страна|остров|место|регион|континент|city|country|island|place|region|continent|river|ocean", "location"),
-        (r"иде|открыт|изобрел|придум|idea|discover|invent", "idea"),
-        (r"побед|достижен|чемпион|награ|winner|champion|award|achievement", "trophy"),
-        (r"архив|документ|доклад|письмо|записк|archive|document|report|letter|record", "document"),
-        (r"секрет|засекреч|тайн|secret|classified|mystery", "secret"),
-        (r"новост|сообщил|данным|news|reported|according", "news"),
-        (r"спустя|позже|затем|later|afterward|meanwhile|then", "timeline"),
-        (r"главн|важн|впервые|никогда|important|first|never|key", "keyword"),
+        (r"опас|угроз|предупр|риск|danger|threat|warning|risk|gefahr|bedroh|warnung|risiko|peligr|amenaz|advert|riesgo", "warning"),
+        (r"вырос|рост|увелич|поднял|подорож|grow|grew|increase|rise|rose|wuchs|wachs|stieg|steig|creci|aument|subi", "up"),
+        (r"упал|паден|сниз|уменьш|сократ|подешев|fall|fell|drop|decrease|decline|fiel|sank|sink|cay|cae|baj|dismin", "down"),
+        (r"люд|человек|жител|населен|аудитор|people|person|population|resident|menschen|bevölker|einwohner|gente|personas|poblaci|habitant", "people"),
+        (r"город|страна|остров|место|регион|континент|city|country|island|place|region|continent|river|ocean|stadt|land|insel|fluss|ciudad|país|pais|isla|río|rio", "location"),
+        (r"иде|открыт|изобрел|придум|idea|discover|invent|entdeck|erfand|erfind|descubr|invent", "idea"),
+        (r"побед|достижен|чемпион|награ|winner|champion|award|achievement|sieg|gewann|meister|victori|gan[oó]|campe", "trophy"),
+        (r"архив|документ|доклад|письмо|записк|archive|document|report|letter|record|dokument|bericht|brief|archivo|documento|informe|carta", "document"),
+        (r"секрет|засекреч|тайн|secret|classified|mystery|geheim|rätsel|secreto|misterio", "secret"),
+        (r"новост|сообщил|данным|news|reported|according|nachricht|berichtet|noticia|inform[oó]", "news"),
+        (r"спустя|позже|затем|later|afterward|meanwhile|then|später|danach|después|luego", "timeline"),
+        (r"главн|важн|впервые|никогда|important|first|never|key|wichtig|erstmals|niemals|importante|nunca|primera", "keyword"),
     ]
     for wi, raw in enumerate(words):
         at = float(raw[1])
@@ -810,11 +810,11 @@ def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
             continue
         token = re.sub(r"^[\W_]+|[\W_]+$", "", str(raw[0])).lower().replace("ё", "е")
         phrase_start, phrase_count, unit = wi, 3, ""
-        if token in ("звали", "имени", "называли", "named", "called", "name") and wi + 1 < len(words):
-            kind, phrase_start, phrase_count, unit = "name", wi + 1, 2, "герой истории"
-        elif re.search(r"сказал|сказала|говорил|заявил|ответил|said|says|stated|replied", token) and wi + 1 < len(words):
+        if token in ("звали", "имени", "называли", "named", "called", "name", "hieß", "namens", "llamaba", "llamado") and wi + 1 < len(words):
+            kind, phrase_start, phrase_count, unit = "name", wi + 1, 2, graphics.word("hero", project.get("language") or project.get("transcript", {}).get("language") or "ru")
+        elif re.search(r"сказал|сказала|говорил|заявил|ответил|said|says|stated|replied|sagte|erklärte|dijo|declaró", token) and wi + 1 < len(words):
             kind, phrase_start, phrase_count = "quote", wi + 1, 5
-        elif re.search(r"глава|часть|далее|тем временем|chapter|part|next|meanwhile", token):
+        elif re.search(r"глава|часть|далее|тем временем|chapter|part|next|meanwhile|kapitel|capítulo", token):
             kind, phrase_start, phrase_count, unit = "chapter", wi + 1, 3, token
         else:
             kind = next((kind for pattern, kind in rules if re.search(pattern, token)), "")
@@ -1079,7 +1079,8 @@ def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: 
         graphic["start"] = min(max(float(graphic.get("start") or 0), 0), max(duration - .1, 0))
         try:
             overlay_args = ["-c:v", "libx264", "-preset", "superfast", "-crf", 18, "-threads", 2] if fast else None
-            graphics.overlay(base, out, [graphic], width, height, work, fps=fps, encode_args=overlay_args)
+            lang = project.get("language") or (project.get("transcript") or {}).get("language") or "ru"
+            graphics.overlay(base, out, [{**graphic, "lang": lang}], width, height, work, fps=fps, encode_args=overlay_args)
         finally:
             base.unlink(missing_ok=True)
             shutil.rmtree(work, ignore_errors=True)

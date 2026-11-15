@@ -35,6 +35,7 @@ if not _EDITED_MARK.exists():
 SECRET_FIELDS = [
     "anthropic_key", "openai_key", "elevenlabs_key",
     "fal_key", "replicate_key", "together_key", "runware_key", "royal_key", "ig_token", "ig_user_token",
+    "lumean_key", "fastgen_key", "octo_token",
 ]
 
 DEFAULTS = {
@@ -43,7 +44,9 @@ DEFAULTS = {
     "anthropic_model": "claude-opus-5-5",
     "opus_script_only": True,
     "step_effort": True,  # only the script is thought through at full depth; the other text steps think less
-    "voice_provider": "elevenlabs",  # or "royal": the same ElevenLabs voices through RoyalTechno
+    "voice_provider": "elevenlabs",  # or "royal" (RoyalTechno) or "lumean" (Lumean): the same ElevenLabs voices
+    "lumean_model": "eleven_multilingual_v2",
+    "lumean_template_id": "",
     "subscribe_ask": True,
     "telegram_url": "",  # the owner's Telegram channel: the descriptions invite there
     "bait_pass": True,  # the first sentences, the title and the thumbnail phrase made as gripping as possible  # long voiced videos ask to subscribe and like at 30-40 seconds
@@ -75,6 +78,7 @@ DEFAULTS = {
     "together_model": "black-forest-labs/FLUX.1-schnell",
     "runware_model": "runware:101@1",
     "royal_image_model": "nano-banana-2",
+    "fastgen_model": "gemini_nano_banana_2_image_generate",
     "image_style": (
         "cinematic digital oil painting, dramatic chiaroscuro lighting, muted earthy "
         "color palette, rich texture, highly detailed, "
@@ -116,9 +120,21 @@ DEFAULTS = {
     "auto_check": True,  # the logic checker (scene descriptions) and the picture checker (each finished picture)
     "ref_model": "nano",
     "sfx_volume": 0.5,
-    # One-click assembly of prepared project folders (first version: English, horizontal 1080p).
+    # One-click assembly of prepared project folders: EN, RU, DE, ES, horizontal 1080p.
+    "folder_languages": "en",  # comma-separated: which language folders to build
     "folder_voice_en_id": "",
     "folder_voice_en_name": "",
+    "folder_voice_ru_id": "",
+    "folder_voice_ru_name": "",
+    "folder_voice_de_id": "",
+    "folder_voice_de_name": "",
+    "folder_voice_es_id": "",
+    "folder_voice_es_name": "",
+    "folder_motion_inserts": True,
+    # Publishing the built videos through YouTube Studio in Octo Browser profiles (one profile = one channel).
+    "folder_upload": False,
+    "folder_upload_privacy": "public",  # public, unlisted, private
+    "folder_thumb_review": True,  # stop with the thumbnails shown before anything goes to YouTube  # a few maps, timelines and charts in the first half of the video
     "folder_smart_mapping": False,
     "folder_references": True,
     "folder_chapters": True,

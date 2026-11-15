@@ -1953,6 +1953,29 @@ def voices_library(gender: str = "", use_case: str = "", search: str = "", page:
     return tts.library(load_settings(), gender, use_case, search, page, language)
 
 
+@app.get("/api/lumean/voices")
+def lumean_voices(language: str = "", search: str = "", gender: str = "", page: int = 1):
+    from . import lumean
+    return lumean.voices(load_settings(), language, search, gender, page)
+
+
+@app.get("/api/lumean/check")
+def lumean_check():
+    """The Lumean key: does it work and what it may do."""
+    from . import lumean
+    info = lumean.account(load_settings()) or {}
+    perms = info.get("permissions") or (info.get("key") or {}).get("permissions") or []
+    return {"ok": True, "name": info.get("name") or (info.get("key") or {}).get("name") or "",
+            "permissions": perms, "raw": {k: v for k, v in info.items() if k not in ("token", "key_hash")}}
+
+
+@app.get("/api/fastgen/check")
+def fastgen_check():
+    """The Fast Gen key: plan limits and what is used this hour."""
+    from . import fastgen
+    return fastgen.usage(load_settings())
+
+
 @app.get("/api/eleven/keys")
 def eleven_keys():
     """The working ElevenLabs key and the reserve ones (masked), with the characters left on each."""
