@@ -46,7 +46,7 @@ LANG_RU = {"en": "английский", "ru": "русский", "de": "неме
 NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech", "vertonung", "текст")
 
 FOLDER_OPTION_KEYS = (
-    "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_upload", "folder_upload_privacy", "folder_thumb_review",
+    "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
     "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
@@ -118,6 +118,7 @@ def _load_queue():
             changed = True
     if changed:
         _save_queue()
+    threading.Thread(target=_clean_leftovers, daemon=True, name="folder-clean").start()
 
 
 def _save_queue():
@@ -1627,6 +1628,53 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
     return pid, project_dir
 
 
+def _drop_drafts(job: dict):
+    """The montage drafts of one folder (all its languages): only a render cache, rebuilt for free if needed."""
+    for lang in LANGS:
+        shutil.rmtree(local_editor.ROOT / _project_id(str(job.get("path") or ""), lang), ignore_errors=True)
+
+
+def _delete_generated_frames(analysis: dict):
+    """After a finished build: the pictures the program drew (кадры/S###.png) go, the owner's own files stay.
+    The thumbnail base stays too, so a thumbnail can still be redone without drawing it again."""
+    frame_dir = Path(analysis["frame_dir"])
+    manifest_path = frame_dir / ".autoyoutube-generated.json"
+    manifest = _read_json(manifest_path, {})
+    for sid in (manifest.get("frames") or {}) if isinstance(manifest, dict) else {}:
+        (frame_dir / f"{sid}.png").unlink(missing_ok=True)
+    manifest_path.unlink(missing_ok=True)
+    shutil.rmtree(frame_dir / "референсы", ignore_errors=True)
+    try:
+        if frame_dir.is_dir() and not any(p for p in frame_dir.iterdir() if p.name != ".DS_Store"):
+            shutil.rmtree(frame_dir, ignore_errors=True)
+    except OSError:
+        pass
+
+
+def _clean_leftovers():
+    """At start: montage drafts and caches of folders that are finished or gone from the queue. Drafts of folders
+    that can still go on (queued, paused, stopped, waiting) stay, so their montage resumes where it stopped."""
+    keep_status = ("queued", "running", "pausing", "paused", "stopping", "stopped", "review")
+    with _lock:
+        jobs = list(_jobs.values())
+    # A build cut off by a restart (an update) is marked "прервана" and goes on later: its drafts stay too.
+    keep = {local_editor.ROOT / _project_id(str(j.get("path") or ""), lang)
+            for j in jobs if j.get("status") in keep_status or "прерван" in str(j.get("error") or "")
+            for lang in LANGS}
+    if local_editor.ROOT.is_dir():
+        for folder in local_editor.ROOT.iterdir():
+            if not folder.is_dir() or folder in keep:
+                continue
+            edit = _read_json(folder / "edit.json", {})
+            # Only drafts made by «Сборка из папок» (their scenes carry S### codes), never the owner's own montages.
+            if any(isinstance(sc, dict) and sc.get("scene_code") for sc in edit.get("scenes") or []):
+                shutil.rmtree(folder, ignore_errors=True)
+    ids = {j.get("id") for j in jobs}
+    for folder in ROOT.iterdir() if ROOT.is_dir() else []:
+        if folder.is_dir() and folder.name not in ids:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
 def _render_language(job_id: str, pid: str, project_dir: Path, lo: float, hi: float, lang: str) -> Path:
     with local_editor._lock:
         local_editor._rendering.add(pid)
@@ -1722,11 +1770,15 @@ def _build(job_id: str):
         cache = ROOT / job_id
         cache.mkdir(parents=True, exist_ok=True)
         scenes, refs = _parse_scenes(Path(analysis["scene_file"]))
-        _update(job_id, progress=.03, step="Проверяю готовые кадры и создаю недостающие…")
-        media_map = _make_images(job_id, analysis, scenes, refs, settings, options)
+        built = dict(job.get("langs_done") or {})
+        all_built = all(built.get(x) and Path(built[x]).is_file() for x in langs)
+        media_map = {}
+        if not all_built:
+            _update(job_id, progress=.03, step="Проверяю готовые кадры и создаю недостающие…")
+            media_map = _make_images(job_id, analysis, scenes, refs, settings, options)
         _check_control(job_id)
         track = None
-        if _wants_compose(options, analysis["path"]):
+        if not all_built and _wants_compose(options, analysis["path"]):
             try:
                 track = _project_music(job_id, analysis, scenes, settings, options)
             except UserError as exc:
@@ -1812,7 +1864,10 @@ def _build(job_id: str):
         shutil.rmtree(cache, ignore_errors=True)
         for project_dir in project_dirs:
             shutil.rmtree(project_dir, ignore_errors=True)
+        _drop_drafts(job)
         shutil.rmtree(Path(analysis["frame_dir"]) / "референсы", ignore_errors=True)
+        if options.get("folder_clean_frames", True):
+            _delete_generated_frames(analysis)
     except _ReviewRequested:
         _update(job_id, status="review", progress=.99, error="",
                 step="Ролики собраны. Проверьте превью и нажмите «Выложить».")
@@ -1837,6 +1892,7 @@ def _build(job_id: str):
             _kick_scheduler()
         else:
             _update(job_id, status="error", step="Ошибка", error=str(exc), retry_at=0)
+            _drop_drafts(_jobs.get(job_id) or {})  # no more automatic tries: the gigabytes of montage drafts go
 
 
 def _make_thumbs(job_id: str, analysis: dict, outputs: dict, settings: dict):

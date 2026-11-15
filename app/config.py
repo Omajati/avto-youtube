@@ -134,7 +134,8 @@ DEFAULTS = {
     "folder_music_source": "library",  # library, or "compose": a new track per project (Lumean or ElevenLabs)
     "music_provider": "auto",  # who composes music: auto (Lumean when it voices), lumean, elevenlabs
     # Publishing the built videos through YouTube Studio in Octo Browser profiles (one profile = one channel).
-    "folder_thumbs": True,  # draw each language's thumbnail together with its video
+    "folder_thumbs": True,
+    "folder_clean_frames": True,  # after a finished build the pictures the program drew are deleted (MP4 + thumbnail stay)  # draw each language's thumbnail together with its video
     "folder_upload": False,
     "folder_upload_privacy": "public",  # public, unlisted, private
     "folder_thumb_review": True,  # stop with the thumbnails shown before anything goes to YouTube  # a few maps, timelines and charts in the first half of the video
