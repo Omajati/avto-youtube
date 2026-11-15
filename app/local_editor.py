@@ -1019,7 +1019,8 @@ def _image_filter(scene: dict, width: int, height: int, fps: int, frames: int, l
         vf = (f"scale={big_w}:{big_h}:force_original_aspect_ratio=increase,crop={big_w}:{big_h},"
               f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={width}x{height}:fps={fps}")
     duration = frames / fps
-    vf += "," + _look_filter(look)
+    if look != "baked":  # «baked»: the colour look is already in the picture itself
+        vf += "," + _look_filter(look)
     vf += _transition_filter(str(scene.get("transition") or "cut"), duration)
     return vf + ",setsar=1,format=yuv420p"
 
@@ -1062,7 +1063,24 @@ def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: 
     active_graphic = graphics_enabled and graphic.get("type") in LOCAL_GRAPHICS - {"none"}
     base = out.with_name(f".{out.stem}.base.mp4") if active_graphic else out
     if scene["kind"] == "image":
-        args = ["-loop", "1", "-framerate", fps, "-i", source, "-vf", _image_filter(scene, width, height, fps, frames, color_look, fast),
+        image_look = color_look
+        if True:
+            # A still picture needs its colour look once, not on every one of ~200 frames: bake it into the image.
+            # Profiling on an M1: «cinematic» took a 7-second clip from ~2.5 s to ~10 s when applied per frame.
+            try:
+                stat = source.stat()
+                key = hashlib.sha256(f"{source}|{stat.st_size}|{stat.st_mtime_ns}|{_look_filter(color_look)}".encode()).hexdigest()[:16]
+                baked = project_dir / "render" / ".looked" / f"{key}.png"
+                if not baked.is_file():
+                    baked.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = baked.with_name(f".{key}.{os.getpid()}.{threading.get_ident()}.png")
+                    media.run(["-i", source, "-vf", _look_filter(color_look) + ",format=rgb24", "-frames:v", 1, tmp],
+                              "Цвет кадра")
+                    tmp.replace(baked)
+                source, image_look = baked, "baked"
+            except (OSError, UserError):
+                image_look = color_look  # fall back to the per-frame look
+        args = ["-loop", "1", "-framerate", fps, "-i", source, "-vf", _image_filter(scene, width, height, fps, frames, image_look, fast),
                 "-frames:v", frames]
     else:
         args = ["-ss", f"{float(scene.get('trim_start') or 0):.3f}", "-i", source, "-t", f"{duration:.3f}",
