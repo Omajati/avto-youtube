@@ -3542,7 +3542,8 @@ function folderJobHtml(job) {
   const reviewBlock = Object.keys(thumbs).length ? `<div class="fb-thumbs" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">${Object.keys(thumbs).map(l => `<figure style="margin:0;width:260px">
       <img src="/api/folder-builder/${esc(job.id)}/thumb/${l}?t=${job.updated || 0}" style="width:100%;border-radius:8px;display:block">
       <figcaption class="small">${LANG_FLAG[l] || ""} ${l.toUpperCase()}${(job.uploaded || {})[l] ? ` · ✅ ${String(job.uploaded[l]).startsWith("http") ? `<a href="${esc(job.uploaded[l])}" target="_blank">на YouTube</a>` : "выложено"}` : ""}</figcaption></figure>`).join("")}</div>` : "";
-  const skippedNotes = Object.entries(job.upload_skipped || {}).map(([l, why]) => `<div class="banner warn small">${l.toUpperCase()} не выложен: ${esc(why)}</div>`).join("");
+  const thumbNotes = Object.entries(job.thumb_problems || {}).map(([l, why]) => `<div class="banner warn small">Превью ${l.toUpperCase()} не нарисовано: ${esc(why)}</div>`).join("");
+  const skippedNotes = thumbNotes + Object.entries(job.upload_skipped || {}).map(([l, why]) => `<div class="banner warn small">${l.toUpperCase()} не выложен: ${esc(why)}</div>`).join("");
   const active = ["running", "queued", "pausing", "stopping"].includes(status);
   const percent = status === "done" ? 100 : Math.round(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100);
   const showProgress = status !== "ready" || percent > 0;
@@ -3659,6 +3660,7 @@ async function viewFolderBuilder() {
     ["folder_subtitles", "Караоке-субтитры на видео", "Слова подсвечиваются точно по озвучке."],
     ["folder_music", "Музыка из библиотеки", "Подходящий трек выбирается автоматически, зацикливается и приглушается под голос."],
     ["folder_auto_graphics", "Автоматический моушен", "Названия, даты, числа и смысловые акценты появляются там, где подходят."],
+    ["folder_thumbs", "Превью вместе с роликом", "Для каждого языка рисуется превью_EN.png (и т. п.) рядом с видео: картинка по промпту из раздела «2. Превью» файла загрузки, надпись — по тексту оттуда же. Своё превью_XX.png в папке языка не трогается."],
     ["folder_motion_inserts", "Карты, линии времени и графики", "Немного, только в первой половине ролика: где текст называет страны, маршруты, даты или цифры, вместо картинки рисуется анимированная карта или линия времени. Нужен ключ Claude или OpenAI."],
   ];
   const langsOn = String(q("folder_languages", "en") || "en").split(/[,\s]+/).filter(Boolean);

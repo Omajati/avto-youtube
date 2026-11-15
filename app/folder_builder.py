@@ -46,7 +46,7 @@ LANG_RU = {"en": "английский", "ru": "русский", "de": "неме
 NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech", "vertonung", "текст")
 
 FOLDER_OPTION_KEYS = (
-    "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_upload", "folder_upload_privacy", "folder_thumb_review",
+    "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_upload", "folder_upload_privacy", "folder_thumb_review",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
     "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
@@ -1627,6 +1627,8 @@ def _build(job_id: str):
         if failures:
             raise UserError("Не собрались: " + "; ".join(failures)
                             + (f". Готовы: {', '.join(x.upper() for x in outputs)}" if outputs else ""))
+        if options.get("folder_thumbs", True) or options.get("folder_upload"):
+            _make_thumbs(job_id, analysis, outputs, settings)
         if options.get("folder_upload"):
             _publish(job_id, analysis, outputs, settings, options)
         first = outputs.get("en") or next(iter(outputs.values()))
@@ -1654,6 +1656,42 @@ def _build(job_id: str):
             _kick_scheduler()
         else:
             _update(job_id, status="error", step="Ошибка", error=str(exc), retry_at=0)
+
+
+def _make_thumbs(job_id: str, analysis: dict, outputs: dict, settings: dict):
+    """A thumbnail next to each finished video (<LANG>/превью_<LANG>.png), from section «2. Превью» of the upload
+    file. A thumbnail that does not work out is reported, the videos stay done."""
+    job = _jobs[job_id]
+    root = Path(analysis["path"])
+    en_dir = _lang_dir(root, "en")
+    en_file = upload_package.find_file(en_dir) if en_dir else None
+    english = upload_package.parse(en_file) if en_file else None
+    thumbs = dict(job.get("thumbs") or {})
+    generated = dict(job.get("thumbs_generated") or {})
+    problems = {}
+    for lang in outputs:
+        folder = _lang_dir(root, lang)
+        if not folder:
+            continue
+        own = upload_package.finished_thumb(folder)
+        if own and generated.get(lang) != str(own):
+            thumbs[lang] = str(own)  # the owner's own thumbnail: used as it is
+            continue
+        file = upload_package.find_file(folder)
+        if not file:
+            problems[lang] = f"нет файла загрузка_YouTube_{lang.upper()}.md: не знаю, что написать на превью"
+            continue
+        package = upload_package.parse(file)
+        _check_control(job_id)
+        _update(job_id, progress=.99, step=f"[{lang.upper()}] Рисую превью…")
+        try:
+            thumb = upload_package.make_thumb(root, lang, folder, package, settings, english)
+        except UserError as exc:
+            problems[lang] = str(exc)
+            continue
+        generated[lang] = str(thumb)
+        thumbs[lang] = str(thumb)
+    _update(job_id, thumbs=thumbs, thumbs_generated=generated, thumb_problems=problems)
 
 
 def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options: dict):
