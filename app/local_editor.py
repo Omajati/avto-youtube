@@ -1036,7 +1036,7 @@ def _video_filter(scene: dict, width: int, height: int, fps: int, look: str) -> 
 
 
 def _clip_cache_key(project_dir: Path, scene: dict, width: int, height: int, fps: int,
-                    graphics_enabled: bool, color_look: str, fast: bool) -> str:
+                    graphics_enabled: bool, color_look: str, fast: bool, lang: str = "ru") -> str:
     source = project_dir / "media" / str(scene.get("source") or "")
     try:
         stat = source.stat()
@@ -1047,13 +1047,14 @@ def _clip_cache_key(project_dir: Path, scene: dict, width: int, height: int, fps
         "source", "kind", "duration", "fit", "motion", "transition", "trim_start", "trim_end", "focus_x", "focus_y")}
     if graphics_enabled:
         visual["graphic"] = scene.get("graphic")
+        visual["lang"] = lang
     payload = [3, visual, source_state, width, height, fps, graphics_enabled, color_look, fast]
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:24]
 
 
 def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: int, fps: int,
-                 graphics_enabled: bool = False, color_look: str = "natural", fast: bool = False):
+                 graphics_enabled: bool = False, color_look: str = "natural", fast: bool = False, lang: str = "ru"):
     source = project_dir / "media" / scene["source"]
     duration = float(scene["duration"])
     frames = max(round(duration * fps), 1)
@@ -1079,7 +1080,6 @@ def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: 
         graphic["start"] = min(max(float(graphic.get("start") or 0), 0), max(duration - .1, 0))
         try:
             overlay_args = ["-c:v", "libx264", "-preset", "superfast", "-crf", 18, "-threads", 2] if fast else None
-            lang = project.get("language") or (project.get("transcript") or {}).get("language") or "ru"
             graphics.overlay(base, out, [{**graphic, "lang": lang}], width, height, work, fps=fps, encode_args=overlay_args)
         finally:
             base.unlink(missing_ok=True)
@@ -1200,7 +1200,8 @@ def _render_worker(project_id: str, quality: str, cancel_check=None):
         if color_look == "auto" or color_look not in editing_styles.COLOR_LOOKS:
             color_look = "natural"
         graphics_enabled = bool(project.get("graphics_enabled"))
-        cache_keys = [_clip_cache_key(project_dir, scene, width, height, fps, graphics_enabled, color_look, fast)
+        lang = project.get("language") or (project.get("transcript") or {}).get("language") or "ru"
+        cache_keys = [_clip_cache_key(project_dir, scene, width, height, fps, graphics_enabled, color_look, fast, lang)
                       for scene in scenes]
         def render_one(index: int):
             check_cancel()
@@ -1212,7 +1213,7 @@ def _render_worker(project_id: str, quality: str, cancel_check=None):
                     shutil.copy2(cached, clips[index])
                 return index, True
             _render_clip(project_dir, scenes[index], clips[index], width, height, fps,
-                         graphics_enabled, color_look, fast)
+                         graphics_enabled, color_look, fast, lang)
             check_cancel()
             cache_tmp = cache_dir / f".{cache_keys[index]}-{index}.tmp.mp4"
             cache_tmp.unlink(missing_ok=True)

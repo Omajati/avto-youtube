@@ -520,7 +520,8 @@ def start_queue(data: dict = Body(...)):
                 continue
             if job.get("status") == "done":
                 job["langs_done"] = {}
-            job.update(status="queued", error="", step="Ждёт своей очереди…", progress=0, options={k: settings.get(k) for k in allowed})
+            job.update(status="queued", error="", step="Ждёт своей очереди…", progress=0, options={k: settings.get(k) for k in allowed},
+                       auto_retries=0, retry_at=0, last_error="")
             queued.append(jid)
         _save_queue()
     _kick_scheduler()
@@ -568,7 +569,7 @@ def control_job(job_id: str, data: dict = Body(...)):
         elif action == "resume":
             if status not in ("paused", "stopped", "error"):
                 raise UserError("Этот проект сейчас нельзя продолжить.")
-            job.update(status="queued", step="Ждёт своей очереди…", error="")
+            job.update(status="queued", step="Ждёт своей очереди…", error="", auto_retries=0, retry_at=0, last_error="")
         else:
             raise UserError("Неизвестная команда управления проектом.")
         job["updated"] = _now()
@@ -918,6 +919,48 @@ def _generation_estimate(settings: dict, analysis: dict) -> dict:
             "references": refs_to_make, "cost": round(cost, 2), "refs_on": refs_on}
 
 
+# Image retries: a night queue must not stop on one bad picture.
+IMAGE_RETRY_PAUSES = (20, 60, 120)    # seconds between attempts of one picture
+IMAGE_SECOND_ROUND_WAIT = 5 * 60      # before the failed pictures get a second round
+JOB_AUTO_RETRIES = 2                  # a failed project is put back in the queue this many times
+JOB_RETRY_WAIT = 15 * 60
+_FATAL_HINTS = ("не указан ключ", "ключ не подходит", "неверный ключ", "invalid api key", "unauthorized")
+
+
+def _fatal(exc: Exception) -> bool:
+    """Errors a retry cannot fix (no key, wrong key): fail at once instead of waiting."""
+    low = str(exc).lower()
+    return any(h in low for h in _FATAL_HINTS)
+
+
+def _sleep_checked(job_id: str, seconds: float):
+    """Wait, but still react to Pause and Stop within a second."""
+    end = time.time() + seconds
+    while time.time() < end:
+        _check_control(job_id)
+        time.sleep(min(1.0, max(end - time.time(), 0)))
+
+
+def _with_retries(job_id: str, attempts: list, label: str, set_step=None):
+    """attempts: callables tried in order with pauses between them. Returns (result, index of the one that worked)."""
+    last = None
+    for index, call in enumerate(attempts):
+        _check_control(job_id)
+        try:
+            return call(), index
+        except (_PauseRequested, _StopRequested):
+            raise
+        except Exception as exc:  # noqa: BLE001 - every provider error is worth another try
+            last = exc
+            if _fatal(exc) or index == len(attempts) - 1:
+                break
+            pause = IMAGE_RETRY_PAUSES[min(index, len(IMAGE_RETRY_PAUSES) - 1)]
+            if set_step:
+                set_step(f"{label}: ошибка, повторяю через {pause} с (попытка {index + 2} из {len(attempts)})…")
+            _sleep_checked(job_id, pause)
+    raise last
+
+
 def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dict], settings: dict, options: dict) -> dict[str, Path]:
     _check_control(job_id)
     root = Path(analysis["path"])
@@ -963,6 +1006,8 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
     _write_json(manifest_path, manifest)
     if not missing:
         return media_map
+    notes: list[str] = []
+    _update(job_id, image_notes=[])
     required_refs = {rid for scene in missing for rid in (_scene_reference_ids(scene, refs) if use_refs else [])}
     if required_refs and images.can_reference(settings):
         ref_dir = frame_dir / "референсы"
@@ -976,28 +1021,40 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
                 settings.get(provider["model_field"])], ensure_ascii=False).encode()).hexdigest()
             if not out.exists() or ref_manifest.get(ref["id"]) != ref_sig:
                 _update(job_id, progress=.06 + .04 * (index / max(len(selected_refs), 1)), step=f"Создаю референс {ref['id']}…")
-                media.to_png(images.generate(settings, ref.get("prompt") or ref.get("name"), False), out)
+                ref_prompt = ref.get("prompt") or ref.get("name")
+                try:
+                    raw, _ = _with_retries(job_id, [lambda p=ref_prompt: images.generate(settings, p, False)] * 4,
+                                           f"Референс {ref['id']}", lambda s: _update(job_id, step=s))
+                except (_PauseRequested, _StopRequested):
+                    raise
+                except Exception as exc:  # noqa: BLE001 - scenes are drawn without this reference instead
+                    if _fatal(exc):
+                        raise
+                    notes.append(f"Референс {ref['id']} не нарисовался ({str(exc)[:120]}): его сцены нарисованы без него.")
+                    _update(job_id, image_notes=list(notes))
+                    continue
+                media.to_png(raw, out)
                 ref_manifest[ref["id"]] = ref_sig
                 _write_json(manifest_path, manifest)
                 _check_control(job_id)
             ref_paths[ref["id"]] = out
     done = [0]
 
-    def work(scene: dict):
+    def work(scene: dict, rounds: int = 4):
         _check_control(job_id)
         out = frame_dir / f"{scene['id']}.png"
         prompt = _image_prompt(scene, settings)
         ref_ids = _scene_reference_ids(scene, refs) if use_refs else []
         selected = [ref_paths[rid] for rid in ref_ids if rid in ref_paths] if images.can_reference(settings) else []
-        fallback = False
-        try:
-            raw = images.generate_with_reference(settings, prompt, selected, False) if selected else images.generate(settings, prompt, False)
-        except UserError:
-            if not selected:
-                raise
-            # A reference edit can reject an otherwise valid scene; text-only generation keeps the queue moving.
-            raw = images.generate(settings, prompt, False)
-            fallback = True
+        text_only = lambda: images.generate(settings, prompt, False)  # noqa: E731
+        if selected:
+            # Two tries with the references, then text only: a reference edit can reject an otherwise valid scene.
+            with_refs = lambda: images.generate_with_reference(settings, prompt, selected, False)  # noqa: E731
+            attempts = [with_refs] * (rounds // 2) + [text_only] * (rounds - rounds // 2)
+        else:
+            attempts = [text_only] * rounds
+        raw, used = _with_retries(job_id, attempts, f"Сцена {scene['id']}")
+        fallback = bool(selected) and used >= rounds // 2
         media.to_png(raw, out)
         signature = _frame_signature(scene, settings, ref_ids, use_refs)
         with _lock:
@@ -1030,9 +1087,46 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
             for future in futures:
                 future.cancel()
             raise
-        if failures:
-            shown = "; ".join(failures[:5])
-            raise UserError(f"Не удалось создать {len(failures)} сцен. {shown}")
+    if not failures:
+        return media_map
+    fatal = next((f for f in failures if _fatal(Exception(f))), None)
+    if fatal:
+        raise UserError(f"Картинки не рисуются: {fatal}")
+    # Second round: the service may have been down for a few minutes. Failed scenes wait, then try again one by one.
+    by_id = {scene["id"]: scene for scene in missing}
+    failed_ids = [f.split(":", 1)[0] for f in failures]
+    _update(job_id, step=f"Не нарисовались {len(failed_ids)} сцен. Жду {IMAGE_SECOND_ROUND_WAIT // 60} мин и пробую ещё раз…")
+    _sleep_checked(job_id, IMAGE_SECOND_ROUND_WAIT)
+    still = []
+    for n, sid in enumerate(failed_ids, 1):
+        _update(job_id, step=f"Второй круг: сцена {sid} ({n} из {len(failed_ids)})…")
+        try:
+            sid, out = work(by_id[sid])
+            media_map[sid] = out
+        except (_PauseRequested, _StopRequested):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            still.append((sid, str(exc)))
+    if not still:
+        return media_map
+    # Last resort: a neighbour's picture stands in, so the video is still built tonight.
+    # The stand-in is marked as not generated, and the next «Повторить» draws the scene again.
+    order = [scene["id"] for scene in scenes]
+    for sid, why in still:
+        i = order.index(sid)
+        neighbour = next((media_map[x] for x in [*reversed(order[:i]), *order[i + 1:]]
+                          if x in media_map and Path(media_map[x]).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")), None)
+        if neighbour is None:
+            raise UserError(f"Не удалось создать {len(still)} сцен, подменить нечем. {sid}: {why}"[:600])
+        out = frame_dir / f"{sid}.png"
+        media.to_png(Path(neighbour).read_bytes(), out)
+        media_map[sid] = out
+        with _lock:
+            frame_manifest[sid] = {"signature": "stand-in", "stand_in_for": Path(neighbour).stem, "updated": _now()}
+            _write_json(manifest_path, manifest)
+        notes.append(f"{sid} не нарисовалась после всех попыток ({why[:120]}). Временно стоит картинка {Path(neighbour).stem}, "
+                     f"кнопка «Дорисовать сцены и пересобрать» нарисует её заново.")
+    _update(job_id, image_notes=list(notes))
     return media_map
 
 
@@ -1551,7 +1645,15 @@ def _build(job_id: str):
     except _StopRequested:
         _update(job_id, status="stopped", step="Остановлено", error="")
     except Exception as exc:
-        _update(job_id, status="error", step="Ошибка", error=str(exc))
+        tries = int((_jobs.get(job_id) or {}).get("auto_retries") or 0)
+        if tries < JOB_AUTO_RETRIES and not _fatal(exc):
+            # Night queue: the project goes back in line and is tried again later; finished stages are not redone.
+            at = _now() + JOB_RETRY_WAIT
+            _update(job_id, status="queued", auto_retries=tries + 1, retry_at=at, last_error=str(exc)[:400], error="",
+                    step=f"Ошибка, повторю сам в {time.strftime('%H:%M', time.localtime(at))} (попытка {tries + 2} из {JOB_AUTO_RETRIES + 1})")
+            _kick_scheduler()
+        else:
+            _update(job_id, status="error", step="Ошибка", error=str(exc), retry_at=0)
 
 
 def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options: dict):
@@ -1626,7 +1728,9 @@ def _schedule():
         limit = max(1, min(int(settings.get("folder_jobs_parallel") or 2), 3))
         with _lock:
             running = sum(job.get("status") in ("running", "pausing", "stopping") for job in _jobs.values())
-            queued = [job for job in _jobs.values() if job.get("status") == "queued"]
+            waiting = [job for job in _jobs.values() if job.get("status") == "queued"]
+            # A project that failed waits for its retry time; the others go first.
+            queued = [job for job in waiting if (job.get("retry_at") or 0) <= time.time()]
             while queued and running < limit:
                 job = queued.pop(0)
                 job.update(status="running", step="Проверяю проект…", progress=.01, started=_now(), error="")
@@ -1635,7 +1739,7 @@ def _schedule():
                 thread.start()
                 running += 1
             _save_queue()
-            if not queued and running == 0:
+            if not waiting and running == 0:
                 _scheduler = None
                 return
         time.sleep(.8)

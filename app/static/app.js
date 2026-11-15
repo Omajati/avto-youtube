@@ -3469,6 +3469,7 @@ async function viewLibrary(id) {
 
 // ---------------------------------------------------------------- local editor: timeline and render on this Mac, no API keys
 // ------------------------------------------------------------------ one-click assembly from prepared project folders
+const FB_AUTO_RETRIES = 2;
 const FB_STATUS = {
   ready: "Готов к запуску", queued: "В очереди", running: "Собирается",
   pausing: "Ставится на паузу", paused: "На паузе",
@@ -3549,6 +3550,8 @@ function folderJobHtml(job) {
   const notes = [
     ...(job.problems || []).map(x => `<div class="banner bad small">⚠️ ${esc(x)}</div>`),
     ...(job.warnings || []).map(x => `<div class="banner warn small">${esc(x)}</div>`),
+    ...(job.image_notes || []).map(x => `<div class="banner warn small">🖼 ${esc(x)}</div>`),
+    job.retry_at && status === "queued" ? `<div class="banner warn small">🔁 Была ошибка, повтор ${job.auto_retries || 1} из ${FB_AUTO_RETRIES} в ${new Date(job.retry_at * 1000).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}: ${esc(job.last_error || "")}</div>` : "",
     job.scan_error ? `<div class="banner bad small">${esc(job.scan_error)}</div>` : "",
     job.error ? `<div class="banner bad small">${esc(job.error)}</div>` : "",
   ].join("");
@@ -3564,6 +3567,7 @@ function folderJobHtml(job) {
     <div class="row" style="margin-top:10px">
       ${status === "review" ? `<button class="primary sm" data-fb-action="publish">✅ Выложить</button><button class="sm" data-fb-action="redraw">🔄 Перерисовать превью</button>` : ""}
       ${Object.keys(job.outputs || {}).length ? Object.keys(job.outputs).map(l => `<button class="${status === "done" ? "primary " : ""}sm" data-fb-reveal="${l}">📂 Видео ${l.toUpperCase()}</button>`).join("") : status === "done" ? `<button class="primary sm" data-fb-reveal>📂 Показать готовое видео</button><span class="muted small">${esc(job.output || a.output || "")}</span>` : ""}
+      ${status === "done" && (job.image_notes || []).length ? `<button class="primary sm" data-fb-one>🖼 Дорисовать сцены и пересобрать</button>` : ""}
       ${status === "error" || status === "ready" ? `<button class="sm ${status === "error" ? "primary" : ""}" data-fb-one ${job.problems?.length || job.scan_error ? "disabled" : ""}>${status === "error" ? "▶ Повторить" : "▶ Собрать этот проект"}</button>` : ""}
       ${["running", "queued"].includes(status) ? `<button class="sm" data-fb-action="pause">⏸ Пауза</button><button class="sm danger" data-fb-action="stop">⏹ Остановить</button>` : ""}
       ${status === "pausing" ? `<button class="sm danger" data-fb-action="stop">⏹ Остановить</button>` : ""}
