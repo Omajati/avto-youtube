@@ -17,9 +17,39 @@ STYLES_FILE = MUSIC_DIR / "styles.json"
 
 MODES = {
     "library": "Из раздела «Музыка» (подходящий по стилю трек)",
-    "generate": "Сочинять новую под каждый ролик (ElevenLabs, ~$0.30 за минуту)",
+    "generate": "Сочинять новую под каждый ролик (ElevenLabs ~$0.30 за минуту или Lumean по подписке)",
     "off": "Без музыки",
 }
+
+
+def provider(settings) -> str:
+    """Which service composes: the owner's choice, or Lumean when only its key is there."""
+    chosen = settings.get("music_provider") or "auto"
+    if chosen in ("lumean", "elevenlabs"):
+        return chosen
+    return "lumean" if settings.get("lumean_key") and (settings.get("voice_provider") == "lumean"
+                                                      or not settings.get("elevenlabs_key")) else "elevenlabs"
+
+
+def _stitch(parts: list[Path], out: Path, fade: float = 3.0):
+    """Glues pieces of one mood with soft crossfades into one track (Lumean gives at most 30 seconds per piece)."""
+    import subprocess
+    from .media import ffmpeg
+    if len(parts) == 1:
+        out.write_bytes(parts[0].read_bytes())
+        return
+    args = [ffmpeg(), "-hide_banner", "-loglevel", "error", "-y"]
+    for p in parts:
+        args += ["-i", str(p)]
+    chain, last = [], "[0:a]"
+    for i in range(1, len(parts)):
+        label = f"[x{i}]" if i < len(parts) - 1 else "[out]"
+        chain.append(f"{last}[{i}:a]acrossfade=d={fade}:c1=tri:c2=tri{label}")
+        last = label
+    args += ["-filter_complex", ";".join(chain), "-map", "[out]", "-c:a", "libmp3lame", "-b:a", "192k", str(out)]
+    r = subprocess.run(args, capture_output=True, text=True, timeout=300)
+    if r.returncode or not out.exists():
+        raise net.UserError(f"Не получилось склеить музыку: {r.stderr[-300:]}")
 
 
 def styles() -> dict:
@@ -130,6 +160,8 @@ def length_for(total: float, vertical: bool) -> float:
 
 def compose(settings, prompt: str, seconds: float, style_ru: str, made_for: str) -> Path:
     """Composes an instrumental track and saves it to the music folder. Returns its path."""
+    if provider(settings) == "lumean":
+        return _compose_lumean(settings, prompt, seconds, style_ru, made_for)
     body = {"prompt": prompt.strip()[:2000], "music_length_ms": int(max(10, min(seconds, 600)) * 1000),
             "model_id": "music_v1", "force_instrumental": True}
     r = net.request("ElevenLabs Music", "POST", f"{BASE}/music", params={"output_format": "mp3_44100_128"},
@@ -144,7 +176,44 @@ def compose(settings, prompt: str, seconds: float, style_ru: str, made_for: str)
     tmp = out.with_suffix(".tmp")
     tmp.write_bytes(r.content)
     tmp.replace(out)
+    return _remember(out, style_ru, prompt, made_for)
+
+
+def _new_file(style_ru: str) -> Path:
+    MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+    label = re.sub(r"[^\w\s\-,]+", "", style_ru or "музыка").strip()[:50] or "музыка"
+    out = MUSIC_DIR / f"{label} ({time.strftime('%d.%m %H-%M')}).mp3"
+    n = 2
+    while out.exists():
+        out = MUSIC_DIR / f"{label} ({time.strftime('%d.%m %H-%M')}) {n}.mp3"
+        n += 1
+    return out
+
+
+def _compose_lumean(settings, prompt: str, seconds: float, style_ru: str, made_for: str) -> Path:
+    """Lumean: up to four 30-second variants of one mood glued with crossfades (about 1.5 minutes, looped under
+    the voice). Shorts need only one piece."""
+    import tempfile
+    from . import lumean
+    pieces = 1 if seconds <= 32 else 4
+    blobs = lumean.music(settings, prompt + (". Steady, seamless, no intro and no ending, consistent tempo and key."
+                                             if pieces > 1 else ""), pieces, min(30, max(10, int(seconds))))
+    out = _new_file(style_ru)
+    with tempfile.TemporaryDirectory() as tmp:
+        parts = []
+        for i, blob in enumerate(blobs):
+            part = Path(tmp) / f"part{i}.mp3"
+            part.write_bytes(blob)
+            parts.append(part)
+        staged = Path(tmp) / "track.mp3"
+        _stitch(parts, staged)
+        out.write_bytes(staged.read_bytes())
+    return _remember(out, style_ru, prompt, made_for, "Lumean")
+
+
+def _remember(out: Path, style_ru: str, prompt: str, made_for: str, service: str = "ElevenLabs") -> Path:
     data = styles()
-    data[out.name] = {"style_ru": style_ru, "prompt": prompt, "made_for": made_for, "created": time.time()}
+    data[out.name] = {"style_ru": style_ru, "prompt": prompt, "made_for": made_for, "created": time.time(),
+                      "service": service}
     _save_styles(data)
     return out

@@ -138,6 +138,10 @@ def _wait(settings, order_id: str, progress=None, limit: float = 90 * 60) -> dic
             reason = ((order.get("result") or {}).get("user_message") or status)
             raise UserError(f"Lumean не смог озвучить текст: {reason}")
         if status == "partially_completed":
+            if order.get("task_type") in ("music", "sfx"):
+                if (order.get("result") or {}).get("files"):
+                    return order  # some variants are ready; music has no retry of single pieces
+                raise UserError("Lumean не смог сочинить музыку. Попробуйте ещё раз.")
             if retried >= 2:
                 bad = [i.get("failure_reason") for i in order.get("items") or []
                        if i.get("status") in ("failed", "policy_flagged") and i.get("failure_reason")]
@@ -275,3 +279,22 @@ def synthesize(settings, text: str, out_path: Path, language: str = "", progress
     if alignment and alignment.get("characters"):
         align_path.write_text(json.dumps(alignment), encoding="utf-8")
     return len(text)
+
+
+# ------------------------------------------------------------------ music
+
+def music(settings, prompt: str, variants: int = 4, seconds: int = 30, progress=None) -> list[bytes]:
+    """Instrumental pieces of one mood (Lumean Music: at most 30 seconds each, priced per piece, not per length).
+    Returns the mp3 bytes of each variant; music.compose glues them into one longer track."""
+    body = {"task_type": "music", "name": "Авто ютуб — музыка",
+            "task_data": {"prompt": prompt.strip()[:2000], "n_variants": max(1, min(int(variants), 4)),
+                          "music_length_ms": int(max(10, min(seconds, 30)) * 1000), "force_instrumental": True}}
+    try:
+        order = _call(settings, "POST", "/orders", json=body, tries=1, timeout=120)
+        order = _wait(settings, order["id"], progress, limit=30 * 60)
+    except UserError as e:
+        raise _explain(e)
+    files = [p for p in (order.get("result") or {}).get("files") or [] if isinstance(p, str)]
+    if not files:
+        raise UserError("Lumean сочинил музыку, но не отдал файлы.")
+    return [_download(settings, path) for path in files]

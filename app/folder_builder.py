@@ -46,7 +46,7 @@ LANG_RU = {"en": "английский", "ru": "русский", "de": "неме
 NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech", "vertonung", "текст")
 
 FOLDER_OPTION_KEYS = (
-    "folder_languages", "folder_motion_inserts", "folder_upload", "folder_upload_privacy", "folder_thumb_review",
+    "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_upload", "folder_upload_privacy", "folder_thumb_review",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
     "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
@@ -373,7 +373,11 @@ def _problems(settings: dict, analysis: dict) -> tuple[list[str], list[str]]:
         warnings.append("Карты и линии времени выключены: для них нужен ключ Claude или OpenAI (Настройки → «1. Сценарий»).")
     if settings.get("folder_references", True) and analysis.get("references") and not images.can_reference(settings):
         warnings.append("Референсы включены, но выбранный сервис не умеет рисовать по образцу: обычные сцены будут созданы по тексту.")
-    if settings.get("folder_music", True) and not music.tracks():
+    if settings.get("folder_music", True) and settings.get("folder_music_source") == "compose":
+        who = music.provider(settings)
+        if who == "lumean" and not settings.get("lumean_key") or who == "elevenlabs" and not settings.get("elevenlabs_key"):
+            warnings.append("Для сочинения музыки нужен ключ Lumean или ElevenLabs: возьму трек из библиотеки.")
+    elif settings.get("folder_music", True) and not music.tracks():
         warnings.append("Библиотека музыки пуста: ролик будет собран без фоновой музыки.")
     if analysis.get("styled_scenes", 0) < analysis.get("scenes", 0):
         count = analysis.get("scenes", 0) - analysis.get("styled_scenes", 0)
@@ -1301,9 +1305,42 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
     return out
 
 
+def _project_music(job_id: str, analysis: dict, scenes: list[dict], settings: dict, options: dict) -> Path | None:
+    """One new track per project, composed once and shared by all its languages; it also lands in the music
+    library, so it can be used again for free."""
+    job = _jobs[job_id]
+    saved = Path(str(job.get("music_track") or ""))
+    if saved.is_file():
+        return saved
+    _update(job_id, step="Сочиняю музыку для проекта…")
+    english = (analysis["languages"].get("en") or next(iter(analysis["languages"].values())))["narration_file"]
+    opening = " ".join(Path(english).read_text("utf-8", errors="replace").split()[:220])
+    prompt = ("Cinematic documentary underscore, atmospheric and restrained, slow evolving strings and soft piano, "
+              "low pulse, no vocals, sits under a narrator")
+    style = "документальная, атмосферная"
+    if llm.has_key(settings):
+        from .pipeline import _helper_settings
+        schema = {"type": "object", "properties": {"prompt": {"type": "string"}, "style_ru": {"type": "string"}},
+                  "required": ["prompt", "style_ru"]}
+        try:
+            r = llm.call_json(_helper_settings(settings), "You are a music supervisor for narrated YouTube documentaries. Answer only with JSON.",
+                              "Write a prompt for an AI music generator: an instrumental background bed for this video, "
+                              "under a narrator for its whole length. Genre, mood, tempo, instruments; calm enough not to "
+                              "fight the voice, no vocals, no big drops. Max 40 words, English. style_ru: 2-4 Russian words "
+                              f"describing the style.\n\nTitle: {analysis['title']}\nOpening of the narration: {opening}",
+                              schema, {}, 2000)
+            prompt, style = r.get("prompt") or prompt, r.get("style_ru") or style
+        except UserError:
+            pass
+    track = music.compose(settings, prompt, 120, style, analysis["title"])
+    _update(job_id, music_track=str(track))
+    return track
+
+
 def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[str], media_map: dict[str, Path],
                    durations: list[float], words: list, settings: dict, options: dict, cache: Path,
-                   lang: str = "en", inserts: dict | None = None, chapters: dict | None = None) -> tuple[str, Path]:
+                   lang: str = "en", inserts: dict | None = None, chapters: dict | None = None,
+                   track: Path | None = None) -> tuple[str, Path]:
     inserts = inserts or {}
     pid = _project_id(analysis["path"], lang)
     project_dir = local_editor.ROOT / pid
@@ -1368,7 +1405,7 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
         plan = project.get("plan") or {}
         mood = " ".join([str(plan.get("style_name") or ""), str(plan.get("description") or ""),
                            analysis["title"], " ".join(texts[:5])])
-        picked = music.pick(mood)
+        picked = track or music.pick(mood)
         if picked:
             local_music = hashlib.sha256(str(picked).encode()).hexdigest()[:12] + picked.suffix.lower()
             _link_or_copy(picked, media_dir / local_music)
@@ -1438,6 +1475,12 @@ def _build(job_id: str):
         _update(job_id, progress=.03, step="Проверяю готовые кадры и создаю недостающие…")
         media_map = _make_images(job_id, analysis, scenes, refs, settings, options)
         _check_control(job_id)
+        track = None
+        if options.get("folder_music", True) and options.get("folder_music_source") == "compose":
+            try:
+                track = _project_music(job_id, analysis, scenes, settings, options)
+            except UserError as exc:
+                _update(job_id, warnings=list(job.get("warnings") or []) + [f"Музыку сочинить не получилось ({exc}), беру из библиотеки."])
         english_file = (analysis["languages"].get("en") or {}).get("narration_file")
         english = Path(english_file).read_text("utf-8", errors="replace").strip() if english_file else ""
         done = dict(job.get("langs_done") or {})
@@ -1470,7 +1513,7 @@ def _build(job_id: str):
                 _check_control(job_id)
                 _update(job_id, progress=round(lo + share * .4, 3), step=f"[{lang.upper()}] Распределяю движения, переходы, главы и моушен…")
                 pid, project_dir = _local_project(job_id, analysis, scenes, texts, lang_media, durations, words, settings,
-                                                  options, lang_cache, lang, inserts, chapters)
+                                                  options, lang_cache, lang, inserts, chapters, track)
                 project_dirs.append(project_dir)
                 _check_control(job_id)
                 rendered = _render_language(job_id, pid, project_dir, lo + share * .42, lo + share * .98, lang)
