@@ -1297,6 +1297,7 @@ def _render_worker(project_id: str, quality: str, cancel_check=None):
         check_cancel()
         _set_render(project_id, progress=.94, step="Смешиваю голос, музыку и звуковые эффекты…")
         _mix(project_dir, project, joined, tmp, total, sfx_path if has_sfx else None)
+        joined.unlink(missing_ok=True)  # an hour of video is gigabytes: never keep two copies longer than needed
         check_cancel()
         if project.get("subtitles") and project.get("transcript", {}).get("words"):
             _set_render(project_id, progress=.97, step="Накладываю субтитры…")

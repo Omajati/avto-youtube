@@ -123,7 +123,61 @@ def _load_queue():
 def _save_queue():
     with _lock:
         public = {key: {k: v for k, v in job.items() if k != "_thread"} for key, job in _jobs.items()}
-        _write_json(QUEUE_FILE, public)
+        try:
+            _write_json(QUEUE_FILE, public)
+        except OSError:
+            # A full disk must not kill the builds: the queue lives in memory and is written at the next change.
+            QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + ".tmp").unlink(missing_ok=True)
+
+
+GB = 1024 ** 3
+
+
+def _free_bytes() -> int:
+    return shutil.disk_usage(DATA_DIR).free
+
+
+def _montage_need(seconds: float) -> int:
+    """Disk space one montage takes at its peak: the scene clips, the joined video, the mixed one and the one with
+    subtitles burned in are each about the size of the final file (~0.06 GB a minute in 1080p), plus a margin."""
+    return int((4 * seconds / 60 * .06 + 3) * GB)
+
+
+def _folder_montage_dirs() -> set[Path]:
+    with _lock:
+        paths = [str(job.get("path") or "") for job in _jobs.values()]
+    return {local_editor.ROOT / _project_id(path, lang) for path in paths if path for lang in LANGS}
+
+
+def _clean_old_montages(keep: set[Path]) -> int:
+    """Removes leftovers of earlier montages of queued folders (not the owner's own montages in «Локальный монтаж»):
+    they are only a cache, rebuilt from the pictures and the voice-over at no cost."""
+    freed = 0
+    with local_editor._lock:
+        busy = {local_editor.ROOT / pid for pid in local_editor._rendering}
+    for folder in _folder_montage_dirs() - keep - busy:
+        if not folder.is_dir():
+            continue
+        for base, _dirs, files in os.walk(folder):
+            for name in files:
+                try:
+                    freed += (Path(base) / name).stat().st_size
+                except OSError:
+                    pass
+        shutil.rmtree(folder, ignore_errors=True)
+    return freed
+
+
+def _wait_for_space(job_id: str, need: int, keep: set[Path] = frozenset(), what: str = "монтажа"):
+    """Waits (pause and stop still work) until the disk has room; first clears the program's own old montages."""
+    if _free_bytes() >= need:
+        return
+    _clean_old_montages(set(keep))
+    while _free_bytes() < need:
+        free = _free_bytes()
+        _update(job_id, step=f"Мало места на диске: для {what} нужно ~{need / GB:.0f} ГБ, свободно {free / GB:.1f} ГБ. "
+                             f"Освободите {max(1, (need - free) / GB):.0f} ГБ (корзина, старые ролики) — продолжу сам.")
+        _sleep_checked(job_id, 60)
 
 
 def _update(job_id: str, **changes):
@@ -1576,21 +1630,31 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
 def _render_language(job_id: str, pid: str, project_dir: Path, lo: float, hi: float, lang: str) -> Path:
     with local_editor._lock:
         local_editor._rendering.add(pid)
+    abort = threading.Event()
 
     def render_cancelled():
+        if abort.is_set():
+            return True
         with _lock:
             return (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping")
 
     render_thread = threading.Thread(target=local_editor._render_worker, args=(pid, "final", render_cancelled),
                                      daemon=True, name=f"folder-final-{job_id}-{lang}")
     render_thread.start()
-    while render_thread.is_alive():
-        render_state = _read_json(project_dir / "edit.json", {}).get("render", {})
-        render_progress = float(render_state.get("progress") or 0)
-        if not render_cancelled():
-            _update(job_id, progress=round(lo + (hi - lo) * render_progress, 3),
-                    step=f"[{lang.upper()}] " + (render_state.get("step") or "Собираю финальное видео 1080p…"))
-        render_thread.join(.6)
+    try:
+        while render_thread.is_alive():
+            render_state = _read_json(project_dir / "edit.json", {}).get("render", {})
+            render_progress = float(render_state.get("progress") or 0)
+            if not render_cancelled():
+                _update(job_id, progress=round(lo + (hi - lo) * render_progress, 3),
+                        step=f"[{lang.upper()}] " + (render_state.get("step") or "Собираю финальное видео 1080p…"))
+            render_thread.join(.6)
+    finally:
+        if render_thread.is_alive():
+            # Anything went wrong here: the montage must not go on alone in the background (it would fill the
+            # disk and run next to the next project's montage); it stops at its next step and is waited for.
+            abort.set()
+            render_thread.join()
     _check_control(job_id)
     rendered = project_dir / "render" / "final.mp4"
     result = _read_json(project_dir / "edit.json", {}).get("render", {})
@@ -1708,6 +1772,8 @@ def _build(job_id: str):
             for lang, (lo, info, lang_cache, texts, lang_media, durations, words, chapters) in prepared.items():
                 try:
                     _check_control(job_id)
+                    _wait_for_space(job_id, _montage_need(sum(durations)),
+                                    {local_editor.ROOT / _project_id(analysis["path"], lang)})
                     inserts = _motion_inserts(job_id, scenes, texts, durations, lang_media, lang, settings, options,
                                               lang_cache, round(lo + share * .36, 3))
                     _check_control(job_id)
@@ -1756,7 +1822,14 @@ def _build(job_id: str):
         _update(job_id, status="stopped", step="Остановлено", error="")
     except Exception as exc:
         tries = int((_jobs.get(job_id) or {}).get("auto_retries") or 0)
-        if tries < JOB_AUTO_RETRIES and not _fatal(exc):
+        if "No space left" in str(exc) or getattr(exc, "errno", None) == 28:
+            # A full disk is not the project's fault: it waits in line without using up its attempts.
+            at = _now() + 5 * 60
+            _update(job_id, status="queued", retry_at=at, error="",
+                    last_error="На диске кончилось место. Освободите место — продолжу сам.",
+                    step=f"На диске кончилось место. Освободите место — продолжу сам в {time.strftime('%H:%M', time.localtime(at))}.")
+            _kick_scheduler()
+        elif tries < JOB_AUTO_RETRIES and not _fatal(exc):
             # Night queue: the project goes back in line and is tried again later; finished stages are not redone.
             at = _now() + JOB_RETRY_WAIT
             _update(job_id, status="queued", auto_retries=tries + 1, retry_at=at, last_error=str(exc)[:400], error="",
