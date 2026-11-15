@@ -1599,6 +1599,52 @@ def _render_language(job_id: str, pid: str, project_dir: Path, lo: float, hi: fl
     return rendered
 
 
+# Montage gate: rendering (and motion inserts) loads the CPU, so only one project renders at a time.
+# Projects behind it keep drawing pictures, composing music and ordering voice-overs meanwhile.
+_render_cond = threading.Condition()
+_render_owner: str | None = None
+_render_waiting: list[str] = []
+
+
+def _render_gate_enter(job_id: str):
+    global _render_owner
+    with _render_cond:
+        if _render_owner == job_id:
+            return
+        if job_id not in _render_waiting:
+            _render_waiting.append(job_id)
+    while True:
+        with _render_cond:
+            # Fair order: the project that was added to the queue first goes first.
+            order = sorted(_render_waiting, key=lambda j: (_jobs.get(j) or {}).get("added", 0))
+            if _render_owner is None and order and order[0] == job_id:
+                _render_waiting.remove(job_id)
+                _render_owner = job_id
+                return
+            owner = (_jobs.get(_render_owner) or {}).get("title") if _render_owner else None
+        if owner:
+            _update(job_id, step=f"Озвучка и картинки готовы. Жду очереди на монтаж (сейчас монтируется «{owner}»)…")
+        try:
+            _check_control(job_id)
+        except (_PauseRequested, _StopRequested):
+            with _render_cond:
+                if job_id in _render_waiting:
+                    _render_waiting.remove(job_id)
+            raise
+        with _render_cond:
+            _render_cond.wait(1.0)
+
+
+def _render_gate_leave(job_id: str):
+    global _render_owner
+    with _render_cond:
+        if job_id in _render_waiting:
+            _render_waiting.remove(job_id)
+        if _render_owner == job_id:
+            _render_owner = None
+        _render_cond.notify_all()
+
+
 def _build(job_id: str):
     try:
         _check_control(job_id)
@@ -1631,6 +1677,8 @@ def _build(job_id: str):
                 outputs[lang] = done[lang]
         share = .52 / max(len(todo), 1)
         project_dirs = []
+        # Stage 1 (network, runs in parallel with other projects): text mapping, voice-over, chapter titles.
+        prepared = {}
         for n, lang in enumerate(todo):
             lo = .48 + share * n
             info = analysis["languages"][lang]
@@ -1647,29 +1695,43 @@ def _build(job_id: str):
                 durations, words = _make_voice(job_id, scenes, texts, narration, settings, options, lang_cache, lang,
                                                (lo + share * .05, lo + share * .35))
                 _check_control(job_id)
-                inserts = _motion_inserts(job_id, scenes, texts, durations, lang_media, lang, settings, options,
-                                          lang_cache, round(lo + share * .36, 3))
                 chapters = _chapter_labels(scenes, lang, settings, lang_cache) if options.get("folder_chapters", True) else {}
-                _check_control(job_id)
-                _update(job_id, progress=round(lo + share * .4, 3), step=f"[{lang.upper()}] Распределяю движения, переходы, главы и моушен…")
-                pid, project_dir = _local_project(job_id, analysis, scenes, texts, lang_media, durations, words, settings,
-                                                  options, lang_cache, lang, inserts, chapters, track)
-                project_dirs.append(project_dir)
-                _check_control(job_id)
-                rendered = _render_language(job_id, pid, project_dir, lo + share * .42, lo + share * .98, lang)
-                output = Path(info["output"])
-                output.parent.mkdir(parents=True, exist_ok=True)
-                tmp = output.with_suffix(".new.mp4")
-                _link_or_copy(rendered, tmp)
-                tmp.replace(output)
-                outputs[lang] = str(output)
-                done[lang] = str(output)
-                _update(job_id, langs_done=done, outputs=outputs, output=str(output))
-                shutil.rmtree(project_dir, ignore_errors=True)
+                prepared[lang] = (lo, info, lang_cache, texts, lang_media, durations, words, chapters)
             except (_PauseRequested, _StopRequested):
                 raise
             except Exception as exc:  # one language failing must not lose the others
                 failures.append(f"{lang.upper()}: {exc}")
+        # Stage 2 (CPU): motion inserts and montage, one project at a time.
+        if prepared:
+            _render_gate_enter(job_id)
+        try:
+            for lang, (lo, info, lang_cache, texts, lang_media, durations, words, chapters) in prepared.items():
+                try:
+                    _check_control(job_id)
+                    inserts = _motion_inserts(job_id, scenes, texts, durations, lang_media, lang, settings, options,
+                                              lang_cache, round(lo + share * .36, 3))
+                    _check_control(job_id)
+                    _update(job_id, progress=round(lo + share * .4, 3), step=f"[{lang.upper()}] Распределяю движения, переходы, главы и моушен…")
+                    pid, project_dir = _local_project(job_id, analysis, scenes, texts, lang_media, durations, words, settings,
+                                                      options, lang_cache, lang, inserts, chapters, track)
+                    project_dirs.append(project_dir)
+                    _check_control(job_id)
+                    rendered = _render_language(job_id, pid, project_dir, lo + share * .42, lo + share * .98, lang)
+                    output = Path(info["output"])
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = output.with_suffix(".new.mp4")
+                    _link_or_copy(rendered, tmp)
+                    tmp.replace(output)
+                    outputs[lang] = str(output)
+                    done[lang] = str(output)
+                    _update(job_id, langs_done=done, outputs=outputs, output=str(output))
+                    shutil.rmtree(project_dir, ignore_errors=True)
+                except (_PauseRequested, _StopRequested):
+                    raise
+                except Exception as exc:  # one language failing must not lose the others
+                    failures.append(f"{lang.upper()}: {exc}")
+        finally:
+            _render_gate_leave(job_id)
         if failures:
             raise UserError("Не собрались: " + "; ".join(failures)
                             + (f". Готовы: {', '.join(x.upper() for x in outputs)}" if outputs else ""))
