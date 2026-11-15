@@ -373,7 +373,10 @@ def _problems(settings: dict, analysis: dict) -> tuple[list[str], list[str]]:
         warnings.append("Карты и линии времени выключены: для них нужен ключ Claude или OpenAI (Настройки → «1. Сценарий»).")
     if settings.get("folder_references", True) and analysis.get("references") and not images.can_reference(settings):
         warnings.append("Референсы включены, но выбранный сервис не умеет рисовать по образцу: обычные сцены будут созданы по тексту.")
-    if settings.get("folder_music", True) and settings.get("folder_music_source") == "compose":
+    brief = _music_brief(analysis["path"]) if analysis.get("path") else None
+    if brief and settings.get("folder_music", True):
+        warnings.append(f"Музыку сочиню по описанию из папки ({Path(brief['file']).name}): {brief['style_ru']}.")
+    if _wants_compose(settings, analysis.get("path") or "."):
         who = music.provider(settings)
         if who == "lumean" and not settings.get("lumean_key") or who == "elevenlabs" and not settings.get("elevenlabs_key"):
             warnings.append("Для сочинения музыки нужен ключ Lumean или ElevenLabs: возьму трек из библиотеки.")
@@ -1399,6 +1402,45 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
     return out
 
 
+MUSIC_BRIEF_NAMES = ("музыка.txt", "music.txt")
+
+
+def _music_brief(root) -> dict | None:
+    """The project's own music description: исходники/музыка.txt.
+    Lines «Стиль: …» (2–4 Russian words for the library) and «Prompt: …» (English, for the generator);
+    without those labels the whole text is the prompt. Lines starting with # are notes."""
+    root = Path(root)
+    folders = [p for p in root.iterdir() if p.is_dir() and p.name.lower() == "исходники"] + [root]
+    for folder in folders:
+        for name in MUSIC_BRIEF_NAMES:
+            f = folder / name
+            if not f.is_file():
+                continue
+            style, prompt, free = "", "", []
+            for line in f.read_text("utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                low = line.lower()
+                if low.startswith(("стиль:", "style:")):
+                    style = line.split(":", 1)[1].strip()
+                elif low.startswith(("prompt:", "промпт:", "промт:")):
+                    prompt = line.split(":", 1)[1].strip()
+                else:
+                    free.append(line)
+            prompt = prompt or " ".join(free)
+            if prompt:
+                return {"prompt": prompt[:1500], "style_ru": style or "своя музыка проекта", "file": str(f)}
+    return None
+
+
+def _wants_compose(options: dict, root) -> bool:
+    """Compose when the setting says so, or when the project carries its own music description."""
+    if not options.get("folder_music", True):
+        return False
+    return options.get("folder_music_source") == "compose" or _music_brief(root) is not None
+
+
 def _project_music(job_id: str, analysis: dict, scenes: list[dict], settings: dict, options: dict) -> Path | None:
     """One new track per project, composed once and shared by all its languages; it also lands in the music
     library, so it can be used again for free."""
@@ -1412,7 +1454,11 @@ def _project_music(job_id: str, analysis: dict, scenes: list[dict], settings: di
     prompt = ("Cinematic documentary underscore, atmospheric and restrained, slow evolving strings and soft piano, "
               "low pulse, no vocals, sits under a narrator")
     style = "документальная, атмосферная"
-    if llm.has_key(settings):
+    brief = _music_brief(analysis["path"])
+    if brief:
+        # The scriptwriter's own description wins: the mood is chosen per channel, not guessed.
+        prompt, style = brief["prompt"] + ". Instrumental, no vocals, sits quietly under a narrator", brief["style_ru"]
+    elif llm.has_key(settings):
         from .pipeline import _helper_settings
         schema = {"type": "object", "properties": {"prompt": {"type": "string"}, "style_ru": {"type": "string"}},
                   "required": ["prompt", "style_ru"]}
@@ -1570,7 +1616,7 @@ def _build(job_id: str):
         media_map = _make_images(job_id, analysis, scenes, refs, settings, options)
         _check_control(job_id)
         track = None
-        if options.get("folder_music", True) and options.get("folder_music_source") == "compose":
+        if _wants_compose(options, analysis["path"]):
             try:
                 track = _project_music(job_id, analysis, scenes, settings, options)
             except UserError as exc:
