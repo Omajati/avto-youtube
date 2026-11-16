@@ -1287,8 +1287,11 @@ def _voice_chunks(text: str, limit: int = 9000) -> list[str]:
 
 
 def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: str,
-                settings: dict, options: dict, cache: Path, lang: str = "en", span: tuple = (.49, .67)):
-    """Voice the complete narration in the fewest allowed requests, then fit scenes to its word timings."""
+                settings: dict, options: dict, cache: Path, lang: str = "en", span: tuple = (.49, .67),
+                keep_dir: Path | None = None):
+    """Voice the complete narration in the fewest allowed requests, then fit scenes to its word timings.
+    keep_dir: the language folder of the project. The voice-over is kept there (озвучка_XX.mp3 plus hidden word
+    timings) and taken from there next time, so a rebuild never orders the same narration again."""
     _check_control(job_id)
     audio = cache / "audio"
     audio.mkdir(parents=True, exist_ok=True)
@@ -1313,6 +1316,16 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
     # Lumean cuts and stitches long text itself: a whole hour of narration goes in one or two orders.
     chunks = _voice_chunks(narration, 45000 if voice_settings.get("voice_provider") == "lumean" else 9000)
     spoken_words = []
+    keep_mp3 = keep_dir / f"озвучка_{lang.upper()}.mp3" if keep_dir else None
+    keep_json = keep_dir / f".озвучка_{lang.upper()}.json" if keep_dir else None
+    kept = _read_json(keep_json, {}) if keep_json else {}
+    if (keep_mp3 and keep_mp3.is_file() and kept.get("narration") == signature and kept.get("words")
+            and (manifest.get("narration") != signature or not spoken.exists())):
+        _update(job_id, step=f"[{lang.upper()}] Беру готовую озвучку из папки проекта…")
+        media.to_wav(keep_mp3, spoken)
+        spoken_words = [(str(w), float(a), float(b)) for w, a, b in kept["words"]]
+        manifest = {"narration": signature, "parts": {}, "chunk_count": 0}
+        _write_json(manifest_path, manifest)
     if manifest.get("narration") != signature or not spoken.exists():
         saved_parts = manifest.get("parts") if isinstance(manifest.get("parts"), dict) else {}
         part_wavs = []
@@ -1361,6 +1374,8 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
                 offset += duration
         else:
             spoken_words = captions._scene_words(narration, mp3.with_suffix(".json"), speech_duration)
+    if keep_mp3 and spoken_words and (kept.get("narration") != signature or not keep_mp3.is_file()):
+        _keep_voice(audio, len(chunks), spoken, keep_mp3, keep_json, signature, spoken_words)
     intro = 3.0 if scenes and scenes[0].get("preview") else 0.0
     parts = []
     if intro:
@@ -1403,6 +1418,28 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
             cuts[index + 1] += wanted - current
     durations = [round(end - start, 3) for start, end in zip(cuts, cuts[1:])]
     return durations, words
+
+
+def _keep_voice(audio: Path, chunk_count: int, spoken: Path, keep_mp3: Path, keep_json: Path, signature: str,
+                words: list):
+    """The ordered voice-over goes to the project's language folder: the API's own MP3 parts glued without
+    re-encoding (or the WAV packed into MP3 when the parts are gone), plus the word timings for the subtitles."""
+    try:
+        keep_mp3.parent.mkdir(parents=True, exist_ok=True)
+        tmp = keep_mp3.with_name(f".{keep_mp3.stem}.tmp.mp3")
+        parts = [audio / f"narration-part-{n:03d}.mp3" for n in range(1, chunk_count + 1)]
+        if parts and all(p.is_file() for p in parts):
+            listing = audio / "keep.txt"
+            listing.write_text("".join(f"file '{p.resolve()}'\n" for p in parts), "utf-8")
+            media.run(["-f", "concat", "-safe", 0, "-i", listing.resolve(), "-c", "copy", tmp.resolve()], "Озвучка в папку проекта")
+            listing.unlink(missing_ok=True)
+        else:
+            media.run(["-i", spoken.resolve(), "-c:a", "libmp3lame", "-b:a", "192k", tmp.resolve()], "Озвучка в папку проекта")
+        tmp.replace(keep_mp3)
+        # Timings measured on this very file, so the subtitles match it exactly when it is used again.
+        _write_json(keep_json, {"narration": signature, "words": [[w, round(a, 3), round(b, 3)] for w, a, b in words]})
+    except (OSError, UserError):
+        pass  # keeping a copy is a convenience: the video is still built from the internal one
 
 
 def _link_or_copy(source: Path, target: Path):
@@ -1927,7 +1964,7 @@ def _build(job_id: str):
                                               if any(part.lower() == lang for part in path.parent.parts[-3:])}}
                 _update(job_id, progress=round(lo + share * .05, 3), step=f"[{lang.upper()}] Готовлю озвучку…")
                 durations, words = _make_voice(job_id, scenes, texts, narration, settings, options, lang_cache, lang,
-                                               (lo + share * .05, lo + share * .35))
+                                               (lo + share * .05, lo + share * .35), Path(info["output"]).parent)
                 _check_control(job_id)
                 chapters = _chapter_labels(scenes, lang, settings, lang_cache) if options.get("folder_chapters", True) and not fast else {}
                 prepared[lang] = (lo, info, lang_cache, texts, lang_media, durations, words, chapters)
