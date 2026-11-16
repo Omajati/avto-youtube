@@ -3674,7 +3674,7 @@ async function viewFolderBuilder() {
   if (FB_UPLOAD_ON && !OCTO.profiles) await loadOcto(false);
   main.innerHTML = `<h1>📂 Сборка роликов из папок</h1>
   <p class="muted">Выберите готовые папки проектов и нажмите одну кнопку. Программа возьмёт тексты озвучки из папок <code>EN</code>, <code>RU</code>, <code>DE</code>, <code>ES</code>, готовые файлы <code>S001…</code>, создаст недостающие изображения и положит готовый MP4 в папку каждого языка.</p>
-  <div class="card fb-fast"><label class="check" style="margin:0"><input type="checkbox" data-fbo="folder_fast" id="fb-fast" ${q("folder_fast", false) ? "checked" : ""}><span><b>⚡ Быстрая сборка</b><span class="muted small">Кадры как есть, озвучка, музыка и субтитры — склейка за один проход на видеочипе Mac. Без движения камеры, переходов, эффектов, карт и глав; сцены привязываются без ИИ. Выключите — соберётся со всем монтажом, как раньше.</span></span></label></div>
+  <div class="card fb-fast"><label class="check" style="margin:0"><input type="checkbox" data-fbo="folder_fast" id="fb-fast" ${q("folder_fast", false) ? "checked" : ""}><span><b>⚡ Быстрая сборка</b><span class="muted small">Самый простой ролик: картинки по порядку, озвучка как есть, обычные субтитры строками. Без музыки, караоке, эффектов, переходов и движения камеры; сцены привязываются без ИИ. Часовой ролик — около полутора минут. Выключите — соберётся со всем монтажом, как раньше.</span></span></label></div>
   <div class="card fb-settings"><div class="row"><h2 class="grow" style="margin:0">Перед запуском — все настройки</h2><a class="btn sm" href="#/settings">⚙️ Открыть полные настройки и ключи</a></div>
     <div class="grid2"><div>
       <label class="f">Сервис и модель изображений</label><div class="fb-readonly"><b>${esc(data.summary.image_provider)}</b><br><span>${esc(data.summary.image_model)}</span><br><span>С референсом: ${esc(data.summary.reference_model || "недоступна")}</span></div>
@@ -3722,13 +3722,13 @@ async function viewFolderBuilder() {
   <div class="row fb-actions"><button class="primary big" id="fb-add">＋ Добавить папки</button><button class="blue big" id="fb-start" ${data.jobs.length ? "" : "disabled"}>▶ Собрать всю очередь</button><span class="muted small">Можно выбрать несколько папок сразу. Все готовые этапы кэшируются.</span></div>
   <div id="fb-jobs" style="margin-top:16px"></div>`;
   drawFolderJobs(data);
-  const fastOff = ["folder_edit_style", "folder_edit_tempo", "folder_effect_level", "folder_chapters", "folder_auto_graphics", "folder_motion_inserts", "folder_render_speed", "render_parallel"];
+  const fastOff = ["folder_subtitle_preset", "folder_music", "folder_music_source", "folder_music_volume", "folder_edit_style", "folder_edit_tempo", "folder_effect_level", "folder_chapters", "folder_auto_graphics", "folder_motion_inserts", "folder_render_speed", "render_parallel"];
   const markFast = () => {
     const on = $("#fb-fast").checked;
     fastOff.forEach(k => { const el = main.querySelector(`[data-fbo="${k}"]`); const box = el && (el.closest("label.check") || el); if (box) box.classList.toggle("fb-fast-off", on); });
     const bind = $("#fb-binding"); if (bind) bind.querySelector('option[value="smart"]').textContent = on ? "ИИ уточняет по смыслу (в быстрой сборке — «Голос:»)" : "ИИ уточняет по смыслу";
   };
-  $("#fb-fast").addEventListener("change", markFast); markFast();
+  $("#fb-fast").addEventListener("change", () => { markFast(); subPreview(); }); markFast();
   let subTimer = null, subSeq = 0;
   const subPreview = () => {
     clearTimeout(subTimer);
@@ -3736,7 +3736,7 @@ async function viewFolderBuilder() {
       const img = $("#fb-subprev"), wait = $("#fb-subprev-wait"); if (!img) return;
       const v = k => (main.querySelector(`[data-fbo="${k}"]`) || {}).value || "";
       const lang = (main.querySelector("[data-fb-lang]:checked") || {}).dataset?.fbLang || "en";
-      const qs = new URLSearchParams({ preset: v("folder_subtitle_preset"), font: v("folder_subtitle_font"), size: v("folder_subtitle_size"), position: v("folder_subtitles_position"), lang, n: ++subSeq });
+      const qs = new URLSearchParams({ preset: $("#fb-fast")?.checked ? "clean" : v("folder_subtitle_preset"), font: v("folder_subtitle_font"), size: v("folder_subtitle_size"), position: v("folder_subtitles_position"), lang, n: ++subSeq });
       wait.textContent = "Рисую кадр…"; wait.style.display = "";
       img.onload = () => { wait.style.display = "none"; };
       img.onerror = () => { wait.textContent = "Не удалось нарисовать предпросмотр"; wait.style.display = ""; };

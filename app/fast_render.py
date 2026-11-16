@@ -1,16 +1,19 @@
-"""Fast build: still frames as they are, narration, music, subtitles - glued in one encoding pass.
+"""Fast build: still frames as they are, narration, music, subtitles.
 
-No camera moves, colour looks, transitions, graphics or sound effects. Each scene becomes a short normalised
-segment (a still compresses to almost nothing, so this takes well under a second per scene); the segments are then
-read through the concat demuxer straight into one final pass that burns the subtitles, mixes the sound and encodes
-with the Mac's hardware H.264 encoder.
+The picture of such a video only changes when a scene or a subtitle line (or a karaoke word) changes, so only those
+moments are encoded: a few thousand frames for an hour instead of ~100 000. Each still is scaled once into a
+one-frame segment; a concat list repeats it at every change point; libass draws the subtitles on those frames only.
+The sound is made at the same time in a separate process: loudness is measured once (fast) and set with a plain gain,
+the music is a quiet bed, and the Apple AAC encoder does the encoding. At the end video and sound are only muxed.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -20,6 +23,8 @@ from .net import UserError
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".avif", ".heic"}
 WIDTH, HEIGHT = 1920, 1080
+MAX_GAP = 2.0  # a still is repeated at least once a second: players and YouTube seek and process it normally
+TARGET_LUFS = -14.0
 
 
 class Cancelled(Exception):
@@ -29,23 +34,6 @@ class Cancelled(Exception):
 def _cover(width: int, height: int) -> str:
     return (f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
             f"crop={width}:{height},setsar=1")
-
-
-def _segment(source: Path, frames: int, fps: int, out: Path):
-    """One scene as an H.264 segment. A picture is a single frame: the concat list gives it its duration and the
-    final pass repeats it, so a 20-second still costs one encoded frame. A clip has exactly `frames` frames.
-    All segments share the same codec settings, so the concat demuxer reads them one after another."""
-    common = ["-an", "-r", fps, "-c:v", "libx264", "-preset", "veryfast", "-crf", 17, "-pix_fmt", "yuv420p",
-              "-profile:v", "high", "-video_track_timescale", fps * 1000]
-    if source.suffix.lower() in IMAGE_EXT:
-        args = ["-i", source, "-vf", _cover(WIDTH, HEIGHT), "-frames:v", 1]
-    else:
-        # A clip shorter than its scene holds its last frame; a longer one is cut.
-        args = ["-i", source, "-vf", f"{_cover(WIDTH, HEIGHT)},fps={fps},tpad=stop_mode=clone:stop_duration={frames / fps + 1:.3f}",
-                "-frames:v", frames]
-    tmp = out.with_name(f".{out.stem}.tmp.mp4")
-    media.run([*args, *common, tmp], "Сцена быстрой сборки")
-    tmp.replace(out)
 
 
 def _frame_counts(durations: list[float], fps: int) -> list[int]:
@@ -59,23 +47,96 @@ def _frame_counts(durations: list[float], fps: int) -> list[int]:
     return counts
 
 
-def _audio_graph(has_music: bool, music_volume: float, total: float) -> tuple[str, str]:
-    voice = f"[1:a]aformat=sample_rates=44100:channel_layouts=stereo,apad,atrim=0:{total:.3f}"
-    if not has_music:
-        return voice + ",loudnorm=I=-14:LRA=11:TP=-1.5,alimiter=limit=0.95,aresample=44100[a]", "[a]"
-    return ";".join([
-        voice + ",asplit=2[voice][side]",
-        f"[2:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={music_volume:.3f},atrim=0:{total:.3f}[mb]",
-        "[mb][side]sidechaincompress=threshold=0.025:ratio=10:attack=20:release=350[music]",
-        "[voice][music]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14:LRA=11:TP=-1.5,alimiter=limit=0.95,aresample=44100[a]",
-    ]), "[a]"
+_TIME = re.compile(r"(\d+):(\d+):(\d+(?:\.\d+)?)")
 
 
-def _encoders() -> list[list]:
-    hardware = ["-c:v", "h264_videotoolbox", "-b:v", "10M", "-maxrate", "14M", "-bufsize", "20M",
-                "-profile:v", "high", "-allow_sw", "1"]
-    software = ["-c:v", "libx264", "-preset", "veryfast", "-crf", 20]
-    return [hardware, software]
+def _seconds(stamp: str) -> float:
+    h, m, s = _TIME.match(stamp.strip()).groups()
+    return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+def _static_subtitles(ass: Path) -> list[float]:
+    """Removes fades and grow animations (they need every frame) and returns every moment the subtitles change:
+    line starts and ends and, for karaoke, the moment each next word lights up."""
+    points: list[float] = []
+    lines = []
+    for line in ass.read_text("utf-8").splitlines():
+        if line.startswith("Dialogue:"):
+            head, text = line.split(",,0,0,0,,", 1) if ",,0,0,0,," in line else (line, "")
+            text = re.sub(r"\\fad\([^)]*\)|\\t\([^)]*\)|\\fscx\d+\\fscy\d+", "", text)
+            fields = head.split(",")
+            start, end = _seconds(fields[1]), _seconds(fields[2])
+            points += [start, end]
+            elapsed = 0
+            for k in re.findall(r"\\k(\d+)", text):
+                elapsed += int(k)
+                if start + elapsed / 100 < end:
+                    points.append(start + elapsed / 100)
+            line = f"{head},,0,0,0,,{text}"
+        lines.append(line)
+    ass.write_text("\n".join(lines) + "\n", "utf-8")
+    return points
+
+
+def _keep_frames(start_frame: int, count: int, fps: int, points: list[float]) -> list[int]:
+    """Frame numbers inside a still scene that must exist: its first frame, every change of the subtitles,
+    and at least one a second (players and YouTube seek and process such a video normally)."""
+    keep = {0}
+    keep.update(range(0, count, max(1, round(MAX_GAP * fps))))
+    for point in points:
+        n = round(point * fps) - start_frame
+        if 0 < n < count:
+            keep.add(n)
+    return sorted(keep)
+
+
+def _scene(source: Path, start_frame: int, count: int, fps: int, points: list[float], subtitle_filter: str,
+           exe: str | None, cwd: Path, out: Path):
+    """One scene with its subtitles, ready to be glued with stream copy.
+    A still is scaled once and only the frames where something changes are drawn and encoded;
+    a clip keeps all its frames. The subtitles are drawn at the scene's own place in the video."""
+    still = source.suffix.lower() in IMAGE_EXT
+    to_absolute = f"setpts=(N+{start_frame})/{fps}/TB"
+    if still:
+        keep = _keep_frames(start_frame, count, fps, points)
+        choose = "+".join(f"eq(n,{n})" for n in keep)
+        vf = f"{_cover(WIDTH, HEIGHT)},loop=loop={count - 1}:size=1:start=0,{to_absolute},select='{choose}'"
+        args = ["-i", source.resolve()]
+    else:
+        # A clip shorter than its scene holds its last frame; a longer one is cut.
+        vf = (f"{_cover(WIDTH, HEIGHT)},fps={fps},tpad=stop_mode=clone:stop_duration={count / fps + 1:.3f},"
+              f"trim=end_frame={count},{to_absolute}")
+        args = ["-i", source.resolve()]
+    if subtitle_filter:
+        vf += "," + subtitle_filter
+    vf += ",setpts=PTS-STARTPTS,format=yuv420p"
+    tmp = out.with_name(f".{out.stem}.tmp.mp4")
+    media.run([*args, "-vf", vf, "-an", "-fps_mode", "passthrough", "-c:v", "libx264", "-preset", "veryfast",
+               "-crf", 18, "-profile:v", "high", "-level", "4.1", "-pix_fmt", "yuv420p",
+               "-force_key_frames", "expr:gte(t,n_forced*2)", "-video_track_timescale", 90000, tmp.resolve()],
+              "Сцена быстрой сборки", cwd=cwd, exe=exe)
+    tmp.replace(out)
+
+
+def _loudness(path: Path) -> float | None:
+    """Integrated loudness (LUFS) of the narration: an analysis pass is a few seconds for an hour."""
+    process = subprocess.run([media.ffmpeg(), "-hide_banner", "-nostats", "-i", str(path), "-af", "ebur128=framelog=quiet",
+                              "-f", "null", "-"], capture_output=True, text=True)
+    found = re.findall(r"I:\s+(-?\d+(?:\.\d+)?) LUFS", process.stderr)
+    return float(found[-1]) if found else None
+
+
+def _aac() -> list:
+    """Apple's AAC encoder is ~4× faster here than FFmpeg's own."""
+    probe = subprocess.run([media.ffmpeg(), "-hide_banner", "-encoders"], capture_output=True, text=True)
+    return ["-c:a", "aac_at", "-b:a", "192k"] if " aac_at " in probe.stdout else ["-c:a", "aac", "-b:a", "192k"]
+
+
+def _sound(narration: Path, music: Path | None, music_volume: float, total: float, out: Path):
+    """The voice as it is: no mixing, no loudness changes, only packed into AAC (Apple's encoder)."""
+    tmp = out.with_name(f".{out.stem}.tmp.m4a")
+    media.run(["-i", narration.resolve(), *_aac(), "-t", f"{total:.3f}", tmp.resolve()], "Звук быстрой сборки")
+    tmp.replace(out)
 
 
 def render(work: Path, out: Path, sources: list[Path], durations: list[float], narration: Path, words: list,
@@ -91,78 +152,73 @@ def render(work: Path, out: Path, sources: list[Path], durations: list[float], n
     segments_dir.mkdir(exist_ok=True)
     frames = _frame_counts(durations, fps)
     total = sum(frames) / fps
-    # Scenes with no time (a silent preview card) are skipped; the same picture held twice is encoded once.
-    jobs: dict[str, tuple[Path, int, Path]] = {}
-    order: list[tuple[Path, int]] = []
-    for source, count in zip(sources, frames):
-        if count <= 0:
-            continue
-        stat = source.stat()
-        still = source.suffix.lower() in IMAGE_EXT
-        key = hashlib.sha256(json.dumps([str(source), stat.st_size, stat.st_mtime_ns, 0 if still else count, fps, WIDTH, HEIGHT, 3])
-                             .encode()).hexdigest()[:20]
-        seg = segments_dir / f"{key}.mp4"
-        jobs[key] = (source, count, seg)
-        order.append((seg, count))
-    todo = [job for job in jobs.values() if not (job[2].is_file() and job[2].stat().st_size > 500)]
-    done = len(jobs) - len(todo)
-    report(done / max(len(jobs), 1) * .25, "Готовлю кадры…")
+
+    # The sound does not depend on the picture: it is made meanwhile in its own process.
+    audio = work / "sound.m4a"
+    sound_error: list[Exception] = []
+
+    def make_sound():
+        try:
+            _sound(narration, music, music_volume, total, audio)
+        except Exception as exc:  # noqa: BLE001 - reported after the picture is ready
+            sound_error.append(exc)
+
+    sound_thread = threading.Thread(target=make_sound, daemon=True, name="fast-sound")
+    sound_thread.start()
+
+    points: list[float] = []
+    subtitle_filter, exe = "", None
+    if subtitles and words:
+        style = sub_style or {}
+        ass = work / "subtitles.ass"
+        fonts = captions.styled_ass(words, ass, WIDTH, HEIGHT, "clean", style.get("font", "auto"),
+                                    style.get("size", "medium"), style.get("position", "mid_low"))
+        points = _static_subtitles(ass)
+        fonts_arg = str(fonts.resolve()).replace("\\", "/").replace(":", "\\:")
+        subtitle_filter = f"subtitles=filename={ass.name}:fontsdir={fonts_arg}"
+        exe = media.ffmpeg_with_subtitles()
+
+    # Scenes with no time (a silent preview card) are skipped. Every scene is drawn in its own small process.
+    jobs, start = [], 0
+    for index, (source, count) in enumerate(zip(sources, frames)):
+        if count > 0:
+            jobs.append((source, start, count, segments_dir / f"{index:04d}.mp4"))
+        start += count
+    done = 0
+    report(0, "Готовлю сцены…")
     with ThreadPoolExecutor(max_workers=max(1, min(parallel, 6))) as pool:
-        futures = [pool.submit(_segment, source, count, fps, seg) for source, count, seg in todo]
+        futures = [pool.submit(_scene, source, first, count, fps, points, subtitle_filter, exe, work, seg)
+                   for source, first, count, seg in jobs]
         try:
             for future in as_completed(futures):
                 future.result()
                 if stop():
                     raise Cancelled()
                 done += 1
-                report(done / max(len(jobs), 1) * .25, f"Готовлю кадры: {done} из {len(jobs)}")
+                report(done / max(len(jobs), 1) * .9, f"Сцены с субтитрами: {done} из {len(jobs)}")
         except BaseException:
             for future in futures:
                 future.cancel()
             raise
     listing = work / "scenes.txt"
-    # «duration» places every next segment exactly; fps= in the final pass repeats a still until then.
-    # The last segment is listed once more so the last still lasts to the end of the voice (-t cuts the rest).
-    listing.write_text("".join(f"file '{seg.resolve()}'\nduration {count / fps:.6f}\n" for seg, count in order)
-                       + f"file '{order[-1][0].resolve()}'\n", "utf-8")
-
-    filters = [f"[0:v]setpts=PTS-STARTPTS,fps={fps}"]
-    exe = None
-    if subtitles and words:
-        style = sub_style or {}
-        ass = work / "subtitles.ass"
-        fonts = captions.styled_ass(words, ass, WIDTH, HEIGHT, style.get("preset", "karaoke"), style.get("font", "auto"),
-                                    style.get("size", "medium"), style.get("position", "mid_low"))
-        fonts_arg = str(fonts.resolve()).replace("\\", "/").replace(":", "\\:")
-        filters[0] += f",subtitles=filename={ass.name}:fontsdir={fonts_arg}"
-        exe = media.ffmpeg_with_subtitles()
-    filters[0] += ",format=yuv420p[v]"
-    burn = exe is not None
-    audio, audio_map = _audio_graph(bool(music), music_volume, total)
-    inputs = ["-f", "concat", "-safe", 0, "-i", listing.resolve(), "-i", narration.resolve()]
-    if music:
-        inputs += ["-stream_loop", -1, "-i", Path(music).resolve()]
+    listing.write_text("".join(f"file '{seg.resolve()}'\nduration {count / fps:.6f}\n" for _, _, count, seg in jobs), "utf-8")
+    report(.92, "Жду звук…")
+    while sound_thread.is_alive():
+        if stop():
+            raise Cancelled()
+        sound_thread.join(.5)
+    if sound_error:
+        raise sound_error[0]
+    report(.96, "Склеиваю сцены и звук…")
     tmp = out.with_name(f".{out.stem}.fast.tmp.mp4")
-    last_error = ""
-    # No subtitles: the video is not re-encoded at all, the ready segments are only glued; just the sound is made.
-    variants = [(filters, "[v]", [*encoder, "-r", fps]) for encoder in _encoders()] if burn else [([], "0:v", ["-c:v", "copy"])]
-    label = "Склеиваю, накладываю субтитры и звук…" if burn else "Склеиваю кадры и звук…"
-    for video_filters, video_map, video_args in variants:
-        args = [*inputs, "-filter_complex", ";".join(video_filters + [audio]), "-map", video_map, "-map", audio_map,
-                *video_args, "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", "-movflags", "+faststart",
-                tmp.resolve()]
-        try:
-            _run_final(args, exe, work, total, lambda f: report(.25 + .75 * f, label), stop)
-            tmp.replace(out)
-            return out
-        except UserError as exc:
-            last_error = str(exc)
-            tmp.unlink(missing_ok=True)
-    raise UserError(last_error or "Быстрая сборка не удалась.")
+    media.run(["-f", "concat", "-safe", 0, "-i", listing.resolve(), "-i", audio.resolve(), "-map", "0:v", "-map", "1:a",
+               "-c", "copy", "-t", f"{total:.3f}", "-movflags", "+faststart", tmp.resolve()], "Склейка быстрой сборки")
+    tmp.replace(out)
+    return out
 
 
 def _run_final(args: list, exe: str | None, cwd: Path, total: float, progress, stop):
-    """The long final pass, stoppable: a pause or stop kills FFmpeg instead of waiting for an hour of video."""
+    """A long FFmpeg pass that can be stopped: a pause or stop kills it instead of waiting."""
     process = subprocess.Popen([exe or media.ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-progress", "pipe:1",
                                 "-nostats", *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, cwd=cwd)
