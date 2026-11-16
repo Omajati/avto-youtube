@@ -2025,8 +2025,7 @@ def _build(job_id: str):
             shutil.rmtree(project_dir, ignore_errors=True)
         _drop_drafts(job)
         shutil.rmtree(Path(analysis["frame_dir"]) / "референсы", ignore_errors=True)
-        if options.get("folder_clean_frames", True):
-            _delete_generated_frames(analysis)
+        # The pictures stay in the project folder (кадры): a rebuild never draws and pays for them again.
     except _ReviewRequested:
         _update(job_id, status="review", progress=.99, error="",
                 step="Ролики собраны. Проверьте превью и нажмите «Выложить».")
