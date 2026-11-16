@@ -3654,7 +3654,6 @@ async function viewFolderBuilder() {
   const data = await api("/api/folder-builder");
   const s = data.settings, q = (k, fallback = "") => s[k] ?? fallback;
   const checks = [
-    ["folder_smart_mapping", "Уточнять сцены через ИИ", "Опционально: Claude или OpenAI сверяют смысл описаний с текстом на любом языке. Добавляет отдельный долгий запрос. Для максимальной скорости оставьте выключенным.", false],
     ["folder_references", "Референсы персонажей и объектов", "Сначала создаются R1, R2… и используются в подходящих сценах. Если выключить — каждая картинка рисуется только по своему описанию."],
     ["folder_chapters", "Названия глав", "Текст главы автоматически появляется на сценах «КАРТОЧКА ГЛАВЫ»."],
     ["folder_subtitles", "Караоке-субтитры на видео", "Слова подсвечиваются точно по озвучке."],
@@ -3664,6 +3663,12 @@ async function viewFolderBuilder() {
     ["folder_clean_frames", "После сборки удалять нарисованные кадры", "Когда все языки собраны, в папке проекта остаются только готовые MP4 и превью: кадры, нарисованные программой (папка «кадры»), удаляются. Ваши свои картинки, видео и сток не трогаются. Если потом понадобится пересобрать ролик, кадры нарисуются заново (это снова траты кредитов)."],
     ["folder_motion_inserts", "Карты, линии времени и графики", "Немного, только в первой половине ролика: где текст называет страны, маршруты, даты или цифры, вместо картинки рисуется анимированная карта или линия времени. Нужен ключ Claude или OpenAI."],
   ];
+  const binding = ["hints", "smart", "even"].includes(q("folder_scene_binding")) ? q("folder_scene_binding") : (q("folder_smart_mapping", false) ? "smart" : "hints");
+  const bindingHelp = {
+    hints: "Кадр начинается на словах из строки «Голос:» в файле сцен. Работает локально, за доли секунды.",
+    smart: "Claude или OpenAI сверяют смысл описаний с текстом на любом языке. Точнее, но это отдельный долгий платный запрос.",
+    even: "Подсказки «Голос:» не используются: картинки делят текст поровну, склейки по концам предложений. Время сборки почти не меняется, но кадр может не совпасть со словами.",
+  };
   const langsOn = String(q("folder_languages", "en") || "en").split(/[,\s]+/).filter(Boolean);
   FB_UPLOAD_ON = !!q("folder_upload", false);
   if (FB_UPLOAD_ON && !OCTO.profiles) await loadOcto(false);
@@ -3684,6 +3689,8 @@ async function viewFolderBuilder() {
       <div class="grid2"><div><label class="f">Темп</label><select data-fbo="folder_edit_tempo">${[["calm","Спокойный"],["balanced","Сбалансированный"],["dynamic","Динамичный"]].map(([v,n])=>`<option value="${v}" ${q("folder_edit_tempo","balanced")===v?"selected":""}>${n}</option>`).join("")}</select></div>
       <div><label class="f">Эффекты</label><select data-fbo="folder_effect_level">${[["low","Минимум"],["normal","Нормально"],["juicy","Сочно"]].map(([v,n])=>`<option value="${v}" ${q("folder_effect_level","normal")===v?"selected":""}>${n}</option>`).join("")}</select></div></div>
     </div><div>
+      <label class="f">Привязка сцен к озвучке</label><select data-fbo="folder_scene_binding" id="fb-binding">${[["hints","По озвучке (подсказки «Голос:»)"],["smart","ИИ уточняет по смыслу"],["even","Равномерно, на глаз"]].map(([v,n])=>`<option value="${v}" ${binding===v?"selected":""}>${n}</option>`).join("")}</select>
+      <div class="muted small" id="fb-binding-help" style="margin:4px 0 10px">${esc(bindingHelp[binding])}</div>
       ${checks.map(([k,n,h,d=true])=>`<label class="check"><input type="checkbox" data-fbo="${k}" ${q(k,d)?"checked":""}><span><b>${n}</b><span class="muted small">${h}</span></span></label>`).join("")}
       <div class="grid2"><div><label class="f">Стиль субтитров</label><select data-fbo="folder_subtitle_preset">${[["karaoke","Караоке с подсветкой"],["documentary","Документальные"],["words","По одному слову"],["clean","Чистые"],["box","В плашке"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_preset","karaoke")===v?"selected":""}>${n}</option>`).join("")}</select></div>
       <div><label class="f">Размер субтитров</label><select data-fbo="folder_subtitle_size">${[["small","Небольшие"],["medium","Средние"],["large","Крупные"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_size","medium")===v?"selected":""}>${n}</option>`).join("")}</select></div></div>
@@ -3713,6 +3720,7 @@ async function viewFolderBuilder() {
   <div id="fb-jobs" style="margin-top:16px"></div>`;
   drawFolderJobs(data);
   $("#fb-music").oninput = e => $("#fb-music-v").textContent = `${Math.round(+e.target.value*100)}%`;
+  $("#fb-binding").addEventListener("change", e => $("#fb-binding-help").textContent = bindingHelp[e.target.value] || "");
   main.querySelectorAll("[data-fbo]").forEach(el => el.addEventListener("change", scheduleFolderOptionsSave));
   main.querySelectorAll("[data-fb-voice]").forEach(x => x.addEventListener("change", scheduleFolderOptionsSave));
   main.querySelectorAll("[data-fb-lang]").forEach(x => x.addEventListener("change", () => {

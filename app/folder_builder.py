@@ -49,7 +49,7 @@ FOLDER_OPTION_KEYS = (
     "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
-    "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_references", "folder_chapters", "folder_subtitles",
+    "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
     "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
     "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
     "folder_effect_level", "folder_render_speed", "folder_jobs_parallel", "image_parallel", "render_parallel",
@@ -387,7 +387,7 @@ def _problems(settings: dict, analysis: dict) -> tuple[list[str], list[str]]:
         pass
     if needs_images and not settings.get(provider["key_field"]):
         problems.append(f"Не указан ключ для {provider['name']}.")
-    if settings.get("folder_smart_mapping", False) and not llm.has_key(settings):
+    if scene_binding(settings) == "smart" and not llm.has_key(settings):
         problems.append("Не указан ключ выбранной языковой модели для распределения текста по сценам.")
     if settings.get("voice_provider") == "royal":
         if not settings.get("royal_key"):
@@ -409,9 +409,12 @@ def _problems(settings: dict, analysis: dict) -> tuple[list[str], list[str]]:
     for lang in present:
         if not settings.get(f"folder_voice_{lang}_id") and not (lang == "en" and settings.get("elevenlabs_voice_id")):
             problems.append(f"Не выбран голос для языка «{LANG_RU[lang]}».")
-    if "en" not in found and any(lang != "en" for lang in present) and not settings.get("folder_smart_mapping"):
+    if scene_binding(settings) == "even":
+        warnings.append("Сцены раскладываются равномерно по тексту, без подсказок «Голос:»: "
+                        "кадр может не совпасть с тем, о чём говорит голос.")
+    elif "en" not in found and any(lang != "en" for lang in present) and scene_binding(settings) == "hints":
         warnings.append("Нет английского текста: сцены других языков будут привязаны по подсказкам «Голос:» "
-                        "и пропорционально. Для точной привязки включите «Уточнять сцены через ИИ».")
+                        "и пропорционально. Для точной привязки выберите «ИИ уточняет» в «Привязке сцен».")
     if settings.get("folder_upload"):
         if not settings.get("octo_token"):
             problems.append("Автовыкладка включена, но не указан API-токен Octo Browser.")
@@ -819,16 +822,81 @@ def _fast_mapping(scenes: list[dict], narration: str) -> tuple[list[str], int]:
     return texts, matched
 
 
+SCENE_BINDINGS = ("hints", "smart", "even")
+
+
+def scene_binding(settings: dict) -> str:
+    """How scenes are placed on the narration: «Голос:» hints, a model call, or evenly by sentences.
+    Older settings only had folder_smart_mapping (true = the model call)."""
+    mode = settings.get("folder_scene_binding")
+    if mode in SCENE_BINDINGS:
+        return mode
+    return "smart" if settings.get("folder_smart_mapping", False) else "hints"
+
+
+def _spread_by_sentences(scenes: list[dict], sentences: list[str], got: list) -> list[str]:
+    """Scene texts from sentence boundaries; missing boundaries fall back to an even split."""
+    ends, prev, total = [], 0, len(sentences)
+    for index, scene in enumerate(scenes):
+        fallback = round(total * (index + 1) / max(len(scenes), 1))
+        try:
+            end = int(got[index] if index < len(got) else fallback)
+        except (TypeError, ValueError):
+            end = fallback
+        if scene.get("preview"):
+            end = prev
+        else:
+            future_spoken = sum(not item.get("preview") for item in scenes[index + 1:])
+            minimum = min(prev + 1, total)
+            maximum = max(minimum, total - future_spoken)
+            end = min(max(end, minimum), maximum)
+        ends.append(end)
+        prev = end
+    if ends:
+        ends[-1] = total
+    texts, start = [], 0
+    for end in ends:
+        texts.append(" ".join(sentences[start:end]).strip())
+        start = end
+    return texts
+
+
+def _even_mapping(scenes: list[dict], narration: str) -> list[str]:
+    """Scenes spread evenly over the narration, cutting on sentence ends, with no hints and no model call."""
+    sentences = _sentences(narration)
+    spoken = sum(not scene.get("preview") for scene in scenes)
+    if len(sentences) >= spoken:
+        return _spread_by_sentences(scenes, sentences, [])
+    # Fewer sentences than pictures: split by words instead, so no picture is left without voice.
+    words = narration.split()
+    texts, done, seen = [], 0, 0
+    for scene in scenes:
+        if scene.get("preview"):
+            texts.append("")
+            continue
+        seen += 1
+        end = len(words) if seen == spoken else round(len(words) * seen / max(spoken, 1))
+        texts.append(" ".join(words[done:end]).strip())
+        done = max(done, end)
+    return texts
+
+
 def _mapping(job_id: str, scenes: list[dict], narration: str, settings: dict, cache: Path,
              english: str = "", progress: float = .04) -> list[str]:
     """english: the English narration of the same project, to place the scenes of another language."""
-    smart = bool(settings.get("folder_smart_mapping", False))
+    mode = scene_binding(settings)
+    smart = mode == "smart"
     sentences = _sentences(narration)
-    fingerprint = hashlib.sha256((narration + json.dumps(scenes, ensure_ascii=False, sort_keys=True) + str(smart)
+    fingerprint = hashlib.sha256((narration + json.dumps(scenes, ensure_ascii=False, sort_keys=True) + mode
                                   + hashlib.sha256(english.encode()).hexdigest()).encode()).hexdigest()
     saved = _read_json(cache / "mapping.json", {})
     if saved.get("fingerprint") == fingerprint and len(saved.get("texts") or []) == len(scenes):
         return saved["texts"]
+    if mode == "even":
+        _update(job_id, progress=progress, step="Раскладываю сцены равномерно по тексту…")
+        texts = _even_mapping(scenes, narration)
+        _write_json(cache / "mapping.json", {"fingerprint": fingerprint, "texts": texts, "mode": "even"})
+        return texts
     if not smart or not llm.has_key(settings):
         _update(job_id, progress=progress, step="Быстро привязываю сцены к подсказкам «Голос:»…")
         texts, matched = _fast_mapping(scenes, narration)
@@ -869,28 +937,7 @@ def _mapping(job_id: str, scenes: list[dict], narration: str, settings: dict, ca
         _update(job_id, step="ИИ исчерпал лимит ответа — использую быстрые подсказки «Голос:»…")
         _write_json(cache / "mapping.json", {"fingerprint": fingerprint, "texts": texts, "mode": "fast-fallback", "matched": matched})
         return texts
-    ends, prev, total = [], 0, len(sentences)
-    for index, scene in enumerate(scenes):
-        fallback = round(total * (index + 1) / max(len(scenes), 1))
-        try:
-            end = int(got[index] if index < len(got) else fallback)
-        except (TypeError, ValueError):
-            end = fallback
-        if scene.get("preview"):
-            end = prev
-        else:
-            future_spoken = sum(not item.get("preview") for item in scenes[index + 1:])
-            minimum = min(prev + 1, total)
-            maximum = max(minimum, total - future_spoken)
-            end = min(max(end, minimum), maximum)
-        ends.append(end)
-        prev = end
-    if ends:
-        ends[-1] = total
-    texts, start = [], 0
-    for end in ends:
-        texts.append(" ".join(sentences[start:end]).strip())
-        start = end
+    texts = _spread_by_sentences(scenes, sentences, got)
     _write_json(cache / "mapping.json", {"fingerprint": fingerprint, "texts": texts, "usage": usage})
     return texts
 

@@ -140,6 +140,7 @@ DEFAULTS = {
     "folder_upload_privacy": "public",  # public, unlisted, private
     "folder_thumb_review": True,  # stop with the thumbnails shown before anything goes to YouTube  # a few maps, timelines and charts in the first half of the video
     "folder_smart_mapping": False,
+    "folder_scene_binding": "",  # hints, smart, even; empty = take it from folder_smart_mapping
     "folder_references": True,
     "folder_chapters": True,
     "folder_subtitles": True,
