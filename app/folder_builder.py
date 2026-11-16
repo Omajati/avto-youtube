@@ -22,7 +22,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body
 
-from . import captions, editing_styles, graphics, images, llm, local_editor, media, motion, music, octo, tts, upload_package
+from . import captions, editing_styles, fast_render, graphics, images, llm, local_editor, media, motion, music, octo, tts, upload_package
 from .config import DATA_DIR, load_settings, save_settings
 from .net import UserError
 
@@ -52,7 +52,7 @@ FOLDER_OPTION_KEYS = (
     "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
     "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
     "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
-    "folder_effect_level", "folder_render_speed", "folder_jobs_parallel", "image_parallel", "render_parallel",
+    "folder_effect_level", "folder_render_speed", "folder_fast", "folder_jobs_parallel", "image_parallel", "render_parallel",
 )
 
 
@@ -664,6 +664,34 @@ def octo_rule(data: dict = Body(...)):
         rules.pop(f"{channel}|{lang}", None)
     save_settings({"octo_rules": rules})
     return {"rules": rules}
+
+
+@router.get("/subtitle-preview")
+def subtitle_preview(preset: str = "karaoke", font: str = "auto", size: str = "medium", position: str = "mid_low",
+                     job: str = "", lang: str = ""):
+    """A frame of the project (its first scene) with a sample subtitle line in the chosen style, size and place."""
+    from fastapi.responses import FileResponse
+    with _lock:
+        jobs = list(_jobs.values())
+    picked = next((x for x in jobs if x.get("id") == job), None) or (jobs[0] if jobs else None)
+    langs = selected_langs(load_settings())
+    lang = lang if lang in LANGS else (langs[0] if langs else "en")
+    background = None
+    if picked and Path(str(picked.get("path") or "")).is_dir():
+        found = _scan_media(Path(picked["path"]), lang)
+        stills = [found[k] for k in sorted(found) if found[k].suffix.lower() in IMAGE_EXT]
+        background = (stills or [found[k] for k in sorted(found)] or [None])[0]
+    out_dir = ROOT / "subtitle-preview"
+    key = hashlib.sha256(json.dumps([preset, font, size, position, lang, str(background),
+                                     background.stat().st_mtime_ns if background else 0]).encode()).hexdigest()[:16]
+    out = out_dir / f"{key}.jpg"
+    if not out.is_file():
+        if out_dir.exists():
+            for old in out_dir.glob("*.jpg"):
+                old.unlink(missing_ok=True)
+        fast_render.preview(background, out, {"preset": preset, "font": font, "size": size, "position": position},
+                            lang, out_dir)
+    return FileResponse(out, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/{job_id}/thumb/{lang}")
@@ -1675,6 +1703,47 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
     return pid, project_dir
 
 
+def _fast_language(job_id: str, analysis: dict, scenes: list[dict], texts: list[str], media_map: dict[str, Path],
+                   durations: list[float], words: list, options: dict, cache: Path, lang: str, track: Path | None,
+                   info: dict, lo: float, share: float, outputs: dict, done: dict):
+    """«Быстрая сборка»: the pictures as they are, the voice, music and subtitles - one encoding pass."""
+    music_path = None
+    if options.get("folder_music", True):
+        music_path = track or music.pick(" ".join([analysis["title"], " ".join(texts[:5])]))
+    output = Path(info["output"])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    work = cache / "fast"
+    lo, hi = lo + share * .4, lo + share * .98
+
+    def progress(fraction: float, text: str):
+        with _lock:
+            if (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping"):
+                return
+        _update(job_id, progress=round(lo + (hi - lo) * fraction, 3), step=f"[{lang.upper()}] Быстрая сборка: {text}")
+
+    def cancelled() -> bool:
+        with _lock:
+            return (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping")
+
+    try:
+        fast_render.render(
+            work, output.with_suffix(".new.mp4"), [media_map[scene["id"]] for scene in scenes], durations,
+            cache / "narration.wav", words, music_path, float(options.get("folder_music_volume", .12)),
+            bool(options.get("folder_subtitles", True)),
+            {"preset": options.get("folder_subtitle_preset") or "karaoke", "font": options.get("folder_subtitle_font") or "auto",
+             "size": options.get("folder_subtitle_size") or "medium", "position": options.get("folder_subtitles_position") or "mid_low"},
+            fps=int(load_settings().get("fps") or 30), parallel=max(2, min(int(options.get("render_parallel") or 4), 6)),
+            on_progress=progress, cancelled=cancelled)
+    except fast_render.Cancelled:
+        _check_control(job_id)
+        raise _StopRequested()
+    output.with_suffix(".new.mp4").replace(output)
+    outputs[lang] = str(output)
+    done[lang] = str(output)
+    _update(job_id, langs_done=done, outputs=outputs, output=str(output))
+    fast_render.clear(work)
+
+
 def _drop_drafts(job: dict):
     """The montage drafts of one folder (all its languages): only a render cache, rebuilt for free if needed."""
     for lang in LANGS:
@@ -1810,6 +1879,9 @@ def _build(job_id: str):
         analysis = _analyze(Path(job["path"]))
         settings = load_settings()
         options = {**settings, **(job.get("options") or {})}
+        fast = bool(options.get("folder_fast"))
+        if fast and scene_binding(options) == "smart":
+            options["folder_scene_binding"] = "hints"  # the fast build never waits for a model call
         langs = [x for x in selected_langs(options) if x in analysis["languages"]]
         if not langs:
             raise UserError("В папке нет текста озвучки на выбранных языках.")
@@ -1824,7 +1896,7 @@ def _build(job_id: str):
             media_map = _make_images(job_id, analysis, scenes, refs, settings, options)
         _check_control(job_id)
         track = None
-        if not all_built and _wants_compose(options, analysis["path"]):
+        if not all_built and not fast and _wants_compose(options, analysis["path"]):
             try:
                 track = _project_music(job_id, analysis, scenes, settings, options)
             except UserError as exc:
@@ -1857,7 +1929,7 @@ def _build(job_id: str):
                 durations, words = _make_voice(job_id, scenes, texts, narration, settings, options, lang_cache, lang,
                                                (lo + share * .05, lo + share * .35))
                 _check_control(job_id)
-                chapters = _chapter_labels(scenes, lang, settings, lang_cache) if options.get("folder_chapters", True) else {}
+                chapters = _chapter_labels(scenes, lang, settings, lang_cache) if options.get("folder_chapters", True) and not fast else {}
                 prepared[lang] = (lo, info, lang_cache, texts, lang_media, durations, words, chapters)
             except (_PauseRequested, _StopRequested):
                 raise
@@ -1872,6 +1944,10 @@ def _build(job_id: str):
                     _check_control(job_id)
                     _wait_for_space(job_id, _montage_need(sum(durations)),
                                     {local_editor.ROOT / _project_id(analysis["path"], lang)})
+                    if fast:
+                        _fast_language(job_id, analysis, scenes, texts, lang_media, durations, words, options,
+                                       lang_cache, lang, track, info, lo, share, outputs, done)
+                        continue
                     inserts = _motion_inserts(job_id, scenes, texts, durations, lang_media, lang, settings, options,
                                               lang_cache, round(lo + share * .36, 3))
                     _check_control(job_id)

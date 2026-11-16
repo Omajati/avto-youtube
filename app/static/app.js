@@ -3674,6 +3674,7 @@ async function viewFolderBuilder() {
   if (FB_UPLOAD_ON && !OCTO.profiles) await loadOcto(false);
   main.innerHTML = `<h1>📂 Сборка роликов из папок</h1>
   <p class="muted">Выберите готовые папки проектов и нажмите одну кнопку. Программа возьмёт тексты озвучки из папок <code>EN</code>, <code>RU</code>, <code>DE</code>, <code>ES</code>, готовые файлы <code>S001…</code>, создаст недостающие изображения и положит готовый MP4 в папку каждого языка.</p>
+  <div class="card fb-fast"><label class="check" style="margin:0"><input type="checkbox" data-fbo="folder_fast" id="fb-fast" ${q("folder_fast", false) ? "checked" : ""}><span><b>⚡ Быстрая сборка</b><span class="muted small">Кадры как есть, озвучка, музыка и субтитры — склейка за один проход на видеочипе Mac. Без движения камеры, переходов, эффектов, карт и глав; сцены привязываются без ИИ. Выключите — соберётся со всем монтажом, как раньше.</span></span></label></div>
   <div class="card fb-settings"><div class="row"><h2 class="grow" style="margin:0">Перед запуском — все настройки</h2><a class="btn sm" href="#/settings">⚙️ Открыть полные настройки и ключи</a></div>
     <div class="grid2"><div>
       <label class="f">Сервис и модель изображений</label><div class="fb-readonly"><b>${esc(data.summary.image_provider)}</b><br><span>${esc(data.summary.image_model)}</span><br><span>С референсом: ${esc(data.summary.reference_model || "недоступна")}</span></div>
@@ -3696,6 +3697,8 @@ async function viewFolderBuilder() {
       <div><label class="f">Размер субтитров</label><select data-fbo="folder_subtitle_size">${[["small","Небольшие"],["medium","Средние"],["large","Крупные"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_size","medium")===v?"selected":""}>${n}</option>`).join("")}</select></div></div>
       <label class="f">Шрифт субтитров</label><select data-fbo="folder_subtitle_font">${[["auto","Автоматически"],["arial_black","Arial Black"],["impact","Impact"],["arial_bold","Arial Bold"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_font","auto")===v?"selected":""}>${n}</option>`).join("")}</select>
       <label class="f">Положение субтитров</label><select data-fbo="folder_subtitles_position">${[["low","Внизу"],["mid_low","Ниже центра"],["mid","Средняя высота"],["center","По центру"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitles_position","mid_low")===v?"selected":""}>${n}</option>`).join("")}</select>
+      <label class="f">Так субтитры будут выглядеть на кадре <span class="hint">Первая сцена первой папки в очереди, 1920×1080. Рисуется тем же движком, что и ролик.</span></label>
+      <div class="fb-subprev"><img id="fb-subprev" alt="Предпросмотр субтитров"><div class="fb-subprev-wait" id="fb-subprev-wait">Рисую кадр…</div></div>
       <label class="f">Откуда музыка</label><select data-fbo="folder_music_source">${[["library", "Из раздела «Музыка» (подходящий трек)"], ["compose", "Сочинять новую под каждый проект (Lumean, сохраняется в «Музыку»)"]].map(([v, n]) => `<option value="${v}" ${q("folder_music_source", "library") === v ? "selected" : ""}>${n}</option>`).join("")}</select>
       <label class="f">Громкость музыки: <span id="fb-music-v">${Math.round(+q("folder_music_volume",.12)*100)}%</span></label><input type="range" data-fbo="folder_music_volume" id="fb-music" min="0" max="0.35" step="0.01" value="${esc(q("folder_music_volume",.12))}">
       <div class="grid2"><div><label class="f">Изображений одновременно</label><input type="number" min="1" max="8" data-fbo="image_parallel" value="${esc(q("image_parallel",4))}"></div>
@@ -3719,6 +3722,30 @@ async function viewFolderBuilder() {
   <div class="row fb-actions"><button class="primary big" id="fb-add">＋ Добавить папки</button><button class="blue big" id="fb-start" ${data.jobs.length ? "" : "disabled"}>▶ Собрать всю очередь</button><span class="muted small">Можно выбрать несколько папок сразу. Все готовые этапы кэшируются.</span></div>
   <div id="fb-jobs" style="margin-top:16px"></div>`;
   drawFolderJobs(data);
+  const fastOff = ["folder_edit_style", "folder_edit_tempo", "folder_effect_level", "folder_chapters", "folder_auto_graphics", "folder_motion_inserts", "folder_render_speed", "render_parallel"];
+  const markFast = () => {
+    const on = $("#fb-fast").checked;
+    fastOff.forEach(k => { const el = main.querySelector(`[data-fbo="${k}"]`); const box = el && (el.closest("label.check") || el); if (box) box.classList.toggle("fb-fast-off", on); });
+    const bind = $("#fb-binding"); if (bind) bind.querySelector('option[value="smart"]').textContent = on ? "ИИ уточняет по смыслу (в быстрой сборке — «Голос:»)" : "ИИ уточняет по смыслу";
+  };
+  $("#fb-fast").addEventListener("change", markFast); markFast();
+  let subTimer = null, subSeq = 0;
+  const subPreview = () => {
+    clearTimeout(subTimer);
+    subTimer = setTimeout(() => {
+      const img = $("#fb-subprev"), wait = $("#fb-subprev-wait"); if (!img) return;
+      const v = k => (main.querySelector(`[data-fbo="${k}"]`) || {}).value || "";
+      const lang = (main.querySelector("[data-fb-lang]:checked") || {}).dataset?.fbLang || "en";
+      const qs = new URLSearchParams({ preset: v("folder_subtitle_preset"), font: v("folder_subtitle_font"), size: v("folder_subtitle_size"), position: v("folder_subtitles_position"), lang, n: ++subSeq });
+      wait.textContent = "Рисую кадр…"; wait.style.display = "";
+      img.onload = () => { wait.style.display = "none"; };
+      img.onerror = () => { wait.textContent = "Не удалось нарисовать предпросмотр"; wait.style.display = ""; };
+      img.src = `/api/folder-builder/subtitle-preview?${qs}`;
+    }, 200);
+  };
+  ["folder_subtitle_preset", "folder_subtitle_size", "folder_subtitle_font", "folder_subtitles_position"].forEach(k => main.querySelector(`[data-fbo="${k}"]`).addEventListener("change", subPreview));
+  main.querySelectorAll("[data-fb-lang]").forEach(x => x.addEventListener("change", subPreview));
+  subPreview();
   $("#fb-music").oninput = e => $("#fb-music-v").textContent = `${Math.round(+e.target.value*100)}%`;
   $("#fb-binding").addEventListener("change", e => $("#fb-binding-help").textContent = bindingHelp[e.target.value] || "");
   main.querySelectorAll("[data-fbo]").forEach(el => el.addEventListener("change", scheduleFolderOptionsSave));

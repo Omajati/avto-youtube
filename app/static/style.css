@@ -593,3 +593,10 @@ details.mc.st-subs { border-left-color: #2563eb; }
   .le-actions { grid-column: 3 / -1; }
   .le-total { margin-left: 0; width: 100%; }
 }
+
+/* Сборка из папок: быстрый режим и предпросмотр субтитров */
+.fb-fast { border: 1px solid #f5b301; }
+.fb-fast-off { opacity: .4; }
+.fb-subprev { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #1b2027; border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
+.fb-subprev img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.fb-subprev-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cfd6de; font-size: 13px; background: rgba(0,0,0,.35); }

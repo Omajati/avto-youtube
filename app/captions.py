@@ -360,6 +360,25 @@ POS_SHARE = {True: {"low": 0.17, "mid_low": 0.22, "mid": 0.30, "center": 0.42},
              False: {"low": 0.04, "mid_low": 0.065, "mid": 0.12, "center": 0.40}}
 
 
+SIZE_SCALE = {"small": .82, "medium": 1.0, "large": 1.24}
+
+
+def styled_ass(words: list, out: Path, width: int, height: int, preset: str = "documentary", font_name: str = "auto",
+               size_name: str = "medium", position: str = "mid_low", cues: list = None) -> Path:
+    """The owner's subtitle settings (style, font, size, height) written as .ass; returns the fonts folder.
+    One place for the montage, the fast build and the subtitle preview, so the preview shows exactly the video."""
+    vertical = height > width
+    words = [(str(w[0]), float(w[1]), float(w[2]), *(w[3:4] or [0])) for w in words]
+    if cues is None:
+        cues = group(words, 3, 18) if vertical else group(words, 8, 42)
+    fonts, family = font_choice(str(font_name or "auto"))
+    margin = int(height * POS_SHARE[vertical].get(position, POS_SHARE[vertical]["mid_low"]))
+    size = round((96 if vertical else 60) * SIZE_SCALE.get(size_name, 1.0) * height / (1920 if vertical else 1080))
+    write_ass_preset(cues, [(w[0], w[1], w[2]) for w in words], out, width, height, vertical, family, margin,
+                     str(preset or "documentary"), size)
+    return Path(fonts)
+
+
 def build(dir_: Path, prefix: str, scenes: list, durations: list, width: int, height: int, smart: bool = False,
           blocked: dict = None, pos: str = "") -> dict:
     """Writes output/<name>.srt always and an .ass file next to the clips. Returns paths and font info.

@@ -148,6 +148,7 @@ DEFAULTS = {
     "folder_subtitle_font": "auto",
     "folder_subtitle_size": "medium",
     "folder_subtitles_position": "mid_low",
+    "folder_fast": False,  # «Быстрая сборка»: static frames, no effects, one encoding pass
     "folder_music": True,
     "folder_music_volume": 0.12,
     "folder_auto_graphics": True,

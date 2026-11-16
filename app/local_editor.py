@@ -1104,7 +1104,9 @@ def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: 
             shutil.rmtree(work, ignore_errors=True)
 
 
-def _mix(project_dir: Path, project: dict, video: Path, out: Path, total: float, sfx_path: Path | None = None):
+def _mix(project_dir: Path, project: dict, video: Path, out: Path, total: float, sfx_path: Path | None = None,
+         subtitles: tuple | None = None):
+    """subtitles: (ass, fonts) - burned in this same pass on the Mac's video chip; no separate subtitle pass."""
     args: list = ["-i", video]
     filters = []
     audio_labels = []
@@ -1155,36 +1157,44 @@ def _mix(project_dir: Path, project: dict, video: Path, out: Path, total: float,
         filters.append("".join(audio_labels) + f"amix=inputs={len(audio_labels)}:duration=longest:normalize=0[a]")
         audio_map = "[a]"
     if audio_labels and project.get("audio_master", True):
-        filters.append(f"{audio_map}loudnorm=I=-14:LRA=11:TP=-1.5,alimiter=limit=0.95[master]")
+        filters.append(f"{audio_map}loudnorm=I=-14:LRA=11:TP=-1.5,alimiter=limit=0.95,aresample=44100[master]")
         audio_map = "[master]"
-    filter_args = ["-filter_complex", ";".join(filters)] if filters else []
-    media.run([*args, *filter_args, "-map", "0:v", "-map", audio_map, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-               "-t", f"{total:.3f}", "-movflags", "+faststart", out], "Звук локального монтажа")
+    if not subtitles:
+        filter_args = ["-filter_complex", ";".join(filters)] if filters else []
+        media.run([*args, *filter_args, "-map", "0:v", "-map", audio_map, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                   "-t", f"{total:.3f}", "-movflags", "+faststart", out], "Звук локального монтажа")
+        return
+    ass, fonts = subtitles
+    fonts_arg = str(Path(fonts).resolve()).replace("\\", "/").replace(":", "\\:")
+    filters.insert(0, f"[0:v]subtitles=filename={ass.name}:fontsdir={fonts_arg},format=yuv420p[v]")
+    args = [str(Path(a).resolve()) if isinstance(a, Path) else a for a in args]
+    last = None
+    for encoder in (["-c:v", "h264_videotoolbox", "-b:v", "10M", "-maxrate", "14M", "-bufsize", "20M", "-profile:v", "high", "-allow_sw", 1],
+                    ["-c:v", "libx264", "-preset", "veryfast", "-crf", 20]):
+        try:
+            media.run([*args, "-filter_complex", ";".join(filters), "-map", "[v]", "-map", audio_map, *encoder,
+                       "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", "-movflags", "+faststart",
+                       Path(out).resolve()], "Звук и субтитры локального монтажа", cwd=ass.parent, exe=media.ffmpeg_with_subtitles())
+            return
+        except UserError as exc:
+            last = exc
+            Path(out).unlink(missing_ok=True)
+    raise last
 
 
-def _burn_subtitles(project: dict, video: Path, out: Path, width: int, height: int, fast: bool = False):
+def _subtitle_files(project: dict, width: int, height: int) -> tuple | None:
+    """(subtitles.ass, fonts folder) for the owner's subtitle settings, or None when there is nothing to show."""
     cues = _transcript_cues(project)
     if not cues:
-        shutil.copy2(video, out)
-        return
+        return None
     render_dir = _project_dir(project["id"]) / "render"
-    srt, ass = render_dir / "subtitles.srt", render_dir / "subtitles.ass"
-    captions.write_srt(cues, srt)
-    fonts, family = captions.font_choice(str(project.get("subtitle_font") or "auto"))
-    vertical = height > width
-    pos = project.get("subtitles_position", "mid_low")
-    margin = int(height * captions.POS_SHARE[vertical].get(pos, captions.POS_SHARE[vertical]["mid_low"]))
-    base_size = 96 if vertical else 60
-    size = round(base_size * {"small": .82, "medium": 1.0, "large": 1.24}.get(project.get("subtitle_size"), 1.0))
+    ass = render_dir / "subtitles.ass"
+    captions.write_srt(cues, render_dir / "subtitles.srt")
     words = [(str(w[0]), float(w[1]), float(w[2])) for w in project.get("transcript", {}).get("words", [])]
-    captions.write_ass_preset(cues, words, ass, width, height, vertical, family, margin,
-                              str(project.get("subtitle_preset") or "documentary"), size)
-    rel_fonts = str(Path(fonts).resolve()).replace("\\", "/").replace(":", "\\:")
-    media.run(["-i", video.resolve(), "-vf", f"subtitles=filename={ass.name}:fontsdir={rel_fonts}",
-               "-c:v", "libx264", "-preset", "superfast" if fast else "veryfast", "-crf", 19 if fast else 20,
-               "-threads", 3 if fast else 0, "-pix_fmt", "yuv420p",
-               "-c:a", "copy", "-movflags", "+faststart", out.resolve()],
-              "Субтитры локального монтажа", cwd=render_dir, exe=media.ffmpeg_with_subtitles())
+    fonts = captions.styled_ass(words, ass, width, height, str(project.get("subtitle_preset") or "documentary"),
+                                str(project.get("subtitle_font") or "auto"), str(project.get("subtitle_size") or "medium"),
+                                str(project.get("subtitles_position") or "mid_low"), cues=cues)
+    return ass, fonts
 
 
 def _render_worker(project_id: str, quality: str, cancel_check=None):
@@ -1296,17 +1306,16 @@ def _render_worker(project_id: str, quality: str, cancel_check=None):
                                           sfx_path, float(project.get("sfx_volume", .18)))
         check_cancel()
         _set_render(project_id, progress=.94, step="Смешиваю голос, музыку и звуковые эффекты…")
-        _mix(project_dir, project, joined, tmp, total, sfx_path if has_sfx else None)
+        subtitles = None
+        if project.get("subtitles") and project.get("transcript", {}).get("words"):
+            # Subtitles go in together with the sound: one pass on the video chip, not another hour of CPU encoding.
+            subtitles = _subtitle_files(project, width, height)
+            if subtitles:
+                _set_render(project_id, progress=.94, step="Смешиваю звук и накладываю субтитры…")
+        _mix(project_dir, project, joined, tmp, total, sfx_path if has_sfx else None, subtitles)
         joined.unlink(missing_ok=True)  # an hour of video is gigabytes: never keep two copies longer than needed
         check_cancel()
-        if project.get("subtitles") and project.get("transcript", {}).get("words"):
-            _set_render(project_id, progress=.97, step="Накладываю субтитры…")
-            burned = project_dir / "render" / f".{quality}.subtitled.tmp.mp4"
-            _burn_subtitles(project, tmp, burned, width, height, fast)
-            burned.replace(target)
-            tmp.unlink(missing_ok=True)
-        else:
-            tmp.replace(target)
+        tmp.replace(target)
         _set_render(project_id, status="done", progress=1, quality=quality, error="", finished=_now())
         active_cache = {f"{key}.mp4" for key in cache_keys}
         for old_cache in cache_dir.glob("*.mp4"):
