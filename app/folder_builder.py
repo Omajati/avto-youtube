@@ -91,12 +91,25 @@ def channel_custom(settings: dict, channel: str) -> dict:
     return {k: v for k, v in stored.items() if k in CHANNEL_OPTION_KEYS}
 
 
+def channel_parent(settings: dict, channel: str) -> str:
+    """«Животные - Звери EN» belongs to the family «Животные EN»: while the family channel has its own settings,
+    every «Животные - … EN» channel builds with them (its own settings, if any, go on top). Octo profiles stay per channel."""
+    name = folder_inbox._nfc(channel or "").strip()
+    if " - " not in name:
+        return ""
+    head, lang = name.split(" - ", 1)[0].strip(), channel_lang(name)
+    parent = f"{head} {lang.upper()}" if lang else head
+    return parent if parent != name and channel_custom(settings, parent) else ""
+
+
 def channel_settings(settings: dict, channel: str) -> dict:
-    """Common settings with the channel's own on top. Without its own languages a channel named «… EN» builds English."""
+    """Common settings, then the family channel's (see channel_parent), then the channel's own on top.
+    Without languages of its own a channel named «… EN» builds English."""
     out = dict(settings)
     if not channel:
         return out
-    custom = channel_custom(settings, channel)
+    parent = channel_parent(settings, channel)
+    custom = {**(channel_custom(settings, parent) if parent else {}), **channel_custom(settings, channel)}
     if "folder_languages" not in custom and channel_lang(channel):
         out["folder_languages"] = channel_lang(channel)
     out.update(custom)
@@ -118,7 +131,7 @@ def known_channels(settings: dict) -> list[dict]:
         except OSError:
             pass
     names = {folder_inbox._nfc(n).strip() for n in names if n and n.strip()}
-    return [{"name": n, "custom": bool(channel_custom(settings, n)),
+    return [{"name": n, "custom": bool(channel_custom(settings, n)), "parent": channel_parent(settings, n),
              "langs": selected_langs(channel_settings(settings, n))} for n in sorted(names, key=str.lower)]
 
 
@@ -631,6 +644,7 @@ def list_queue(channel: str = ""):
     return {"jobs": jobs, "settings": {k: shown.get(k) for k in FOLDER_OPTION_KEYS}, "inbox": _inbox_public(),
         "summary": _setting_summary(settings), "octo_token_set": bool(settings.get("octo_token")),
         "channel": channel, "channel_custom": bool(channel and channel_custom(settings, channel)),
+        "channel_parent": channel_parent(settings, channel) if channel else "",
         "channels": known_channels(settings)}
 
 

@@ -3579,9 +3579,26 @@ function folderJobHtml(job) {
     </div></div>`;
 }
 
+const fbNorm = s => String(s || "").normalize("NFC").trim();
+// Jobs of the channel tab that is open; on «Общие» — every job of every channel.
+const fbShownJobs = jobs => FB_CHANNEL ? (jobs || []).filter(j => fbNorm(fbChannel(j.path)) === fbNorm(FB_CHANNEL)) : (jobs || []);
+let FB_SHOWN_IDS = [];
+function fbJobsSummary(jobs) {
+  const n = st => jobs.filter(j => st.includes(j.status || "ready")).length;
+  const parts = [["▶ делается", n(["running", "pausing", "stopping"])], ["⏳ в очереди", n(["queued"])], ["👀 ждёт проверки", n(["review"])], ["⏸ не запущено", n(["ready", "paused", "stopped"])], ["✅ готово", n(["done"])], ["⚠️ ошибки", n(["error"])]].filter(([, c]) => c);
+  const where = FB_CHANNEL ? `Канал «${esc(FB_CHANNEL)}»` : "Все каналы";
+  return `<div class="muted small" style="margin:0 0 10px"><b>${where}</b> · проектов: ${jobs.length}${parts.length ? " · " + parts.map(([k, c]) => `${k}: ${c}`).join(" · ") : ""}</div>`;
+}
 function drawFolderJobs(data) {
   const box = $("#fb-jobs"); if (!box) return;
-  box.innerHTML = data.jobs.length ? data.jobs.map(folderJobHtml).join("") : `<div class="card le-empty">Очередь пуста. Нажмите «Добавить папки» и выберите один или несколько проектов.</div>`;
+  const jobs = fbShownJobs(data.jobs);
+  FB_SHOWN_IDS = jobs.map(j => j.id);
+  const btn = $("#fb-start");
+  if (btn && !btn.dataset.busy) { btn.disabled = !jobs.length; btn.textContent = FB_CHANNEL ? "▶ Собрать очередь канала" : "▶ Собрать всю очередь"; }
+  const empty = FB_CHANNEL
+    ? `<div class="card le-empty">В канале «${esc(FB_CHANNEL)}» пока нет проектов. Новые архивы из папки «${esc(FB_CHANNEL)}» появятся здесь сами, а весь список всех каналов — на вкладке «Общие».</div>`
+    : `<div class="card le-empty">Очередь пуста. Нажмите «Добавить папки» и выберите один или несколько проектов.</div>`;
+  box.innerHTML = jobs.length ? fbJobsSummary(jobs) + jobs.map(folderJobHtml).join("") : empty;
   box.querySelectorAll("[data-fb-id]").forEach(card => {
     const id = card.dataset.fbId;
     card.querySelector("[data-fb-remove]")?.addEventListener("click", async () => {
@@ -3637,13 +3654,18 @@ function scheduleFolderOptionsSave(e) {
 }
 
 async function startFolderQueue(ids = null) {
-  const btn = $("#fb-start"); if (btn) btn.disabled = true;
+  if (ids === null && FB_CHANNEL) {
+    ids = [...FB_SHOWN_IDS];
+    if (!ids.length) { toast(`В канале «${FB_CHANNEL}» нет проектов`, true); return; }
+  }
+  const btn = $("#fb-start"); if (btn) { btn.disabled = true; btn.dataset.busy = "1"; }
   try {
     const r = await api("/api/folder-builder/start", { json: { ids, options: folderOptions(), channel: FB_CHANNEL, own: FB_DIRTY } });
     if (!r.queued.length) toast("Нечего запускать: проверьте предупреждения у проектов", true); else toast(`Поставлено в очередь: ${r.queued.length}`);
+    if (btn) delete btn.dataset.busy;
     await refreshFolderBuilder();
   } catch (e) { toast(e.message, true); }
-  if (btn) btn.disabled = false;
+  if (btn) { delete btn.dataset.busy; btn.disabled = !FB_SHOWN_IDS.length; }
 }
 
 let fbInboxTimer = null;
@@ -3703,13 +3725,13 @@ async function viewFolderBuilder() {
   <p class="muted">Выберите готовые папки проектов и нажмите одну кнопку. Программа возьмёт тексты озвучки из папок <code>EN</code>, <code>RU</code>, <code>DE</code>, <code>ES</code>, готовые файлы <code>S001…</code>, создаст недостающие изображения и положит готовый MP4 в папку каждого языка.</p>
   <div class="card fb-fast"><label class="check" style="margin:0"><input type="checkbox" data-fbo="folder_fast" id="fb-fast" ${q("folder_fast", false) ? "checked" : ""}><span><b>⚡ Быстрая сборка</b><span class="muted small">Самый простой ролик: картинки по порядку, озвучка как есть, обычные субтитры строками. Без музыки, караоке, эффектов, переходов и движения камеры; сцены привязываются без ИИ. Часовой ролик — около полутора минут. Выключите — соберётся со всем монтажом, как раньше.</span></span></label></div>
   <div class="card fb-channels"><h2 style="margin-top:0">🗂 Каналы (ниши)</h2>
-    <p class="muted small">Канал — это папка, в которой лежит проект: <code>Семейные драмы ES</code>, <code>Животные EN</code>, <code>Истории RU</code>. Готовые MP4 ложатся в папку своего канала, выкладка идёт в его профиль Octo. У каждого канала могут быть свои голоса, языки, музыка, монтаж и субтитры. Канал без своих настроек собирается с общими; язык он берёт из конца названия (EN, RU, DE, ES).</p>
+    <p class="muted small">Канал — это папка, в которой лежит проект: <code>Семейные драмы ES</code>, <code>Животные EN</code>, <code>Истории RU</code>. Каналы вида <code>Животные - Звери EN</code> без своих настроек берут настройки канала <code>Животные EN</code> (↳). Внизу — проекты выбранного канала; на вкладке «Общие» — все. Готовые MP4 ложатся в папку своего канала, выкладка идёт в его профиль Octo. У каждого канала могут быть свои голоса, языки, музыка, монтаж и субтитры. Канал без своих настроек собирается с общими; язык он берёт из конца названия (EN, RU, DE, ES).</p>
     <div class="row" style="gap:6px;flex-wrap:wrap">
       <button class="sm ${FB_CHANNEL ? "" : "primary"}" data-fb-channel="">Общие</button>
-      ${(data.channels || []).map(c => `<button class="sm ${FB_CHANNEL === c.name ? "primary" : ""}" data-fb-channel="${esc(c.name)}" title="${c.custom ? "Свои настройки" : "Пока с общими настройками"}">${esc(c.name)}${c.custom ? " ✱" : ""}</button>`).join("")}
+      ${(data.channels || []).map(c => `<button class="sm ${FB_CHANNEL === c.name ? "primary" : ""}" data-fb-channel="${esc(c.name)}" title="${c.custom ? "Свои настройки" : c.parent ? `С настройками канала «${esc(c.parent)}»` : "Пока с общими настройками"}">${esc(c.name)}${c.custom ? " ✱" : c.parent ? " ↳" : ""}</button>`).join("")}
       <button class="sm" id="fb-channel-add">＋ Канал</button>
     </div>
-    ${FB_CHANNEL ? `<div class="banner ${data.channel_custom ? "" : "warn"} small" style="margin-top:10px">Ниже — настройки канала <b>${esc(FB_CHANNEL)}</b>. ${data.channel_custom ? "У него свои настройки: изменения здесь касаются только его." : "Своих настроек пока нет, показаны общие. Измените что-нибудь — и у канала появятся свои."} Папки, потоки и скорость сборки — общие для всех каналов.
+    ${FB_CHANNEL ? `<div class="banner ${data.channel_custom ? "" : "warn"} small" style="margin-top:10px">Ниже — настройки канала <b>${esc(FB_CHANNEL)}</b>. ${data.channel_custom ? (data.channel_parent ? `У него свои настройки поверх настроек канала «${esc(data.channel_parent)}»: изменения здесь касаются только его.` : "У него свои настройки: изменения здесь касаются только его.") : data.channel_parent ? `Своих настроек нет — собирается с настройками канала <b>${esc(data.channel_parent)}</b> (голоса, музыка, монтаж, субтитры). Измените что-нибудь — и у канала появятся свои. Профиль Octo у каждого канала свой.` : "Своих настроек пока нет, показаны общие. Измените что-нибудь — и у канала появятся свои."} Папки, потоки и скорость сборки — общие для всех каналов.
       ${data.channel_custom ? `<button class="sm" id="fb-channel-reset" style="margin-left:8px">Вернуть общие настройки</button>` : ""}</div>
       <div id="fb-channel-octo" style="margin-top:8px"></div>` : `<div class="muted small" style="margin-top:8px">Ниже — общие настройки: ими собираются каналы без своих настроек (✱ — у канала свои).</div>`}
   </div>
@@ -3773,7 +3795,7 @@ async function viewFolderBuilder() {
     <label class="check"><input type="checkbox" data-fbo="folder_inbox_autostart" ${q("folder_inbox_autostart", false) ? "checked" : ""}><span><b>Запускать сразу</b><span class="muted small">Подхваченный проект сразу начинает собираться с настройками ниже. Выключено — он просто появится в очереди, а запускаете вы.</span></span></label>
     <div class="row"><span class="muted small grow" id="fb-inbox-status"></span><button class="btn sm" id="fb-inbox-check">🔄 Проверить сейчас</button></div>
   </div>
-  <div class="row fb-actions"><button class="primary big" id="fb-add">＋ Добавить папки</button><button class="blue big" id="fb-start" ${data.jobs.length ? "" : "disabled"}>▶ Собрать всю очередь</button><span class="muted small">Можно выбрать несколько папок сразу. Все готовые этапы кэшируются.</span></div>
+  <div class="row fb-actions"><button class="primary big" id="fb-add">＋ Добавить папки</button><button class="blue big" id="fb-start" ${fbShownJobs(data.jobs).length ? "" : "disabled"}>${FB_CHANNEL ? "▶ Собрать очередь канала" : "▶ Собрать всю очередь"}</button><span class="muted small">Можно выбрать несколько папок сразу. Все готовые этапы кэшируются.</span></div>
   <div id="fb-jobs" style="margin-top:16px"></div>`;
   drawFolderJobs(data);
   main.querySelectorAll("[data-fb-channel]").forEach(b => b.onclick = async () => {
