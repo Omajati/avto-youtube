@@ -986,7 +986,7 @@ def _join_scene_clips(clips: list[Path], scenes: list[dict], out: Path, fast: bo
 def _image_filter(scene: dict, width: int, height: int, fps: int, frames: int, look: str,
                   fast: bool = False) -> str:
     fit = scene.get("fit", "cover")
-    motion = scene.get("motion", "none")
+    motion = editing_styles.smooth_motion(scene.get("motion", "none"))
     if motion == "none" or fit == "contain":
         vf = f"{_fit_filter(width, height, fit)},fps={fps}"
     else:
@@ -1049,7 +1049,9 @@ def _clip_cache_key(project_dir: Path, scene: dict, width: int, height: int, fps
     if graphics_enabled:
         visual["graphic"] = scene.get("graphic")
         visual["lang"] = lang
-    payload = [3, visual, source_state, width, height, fps, graphics_enabled, color_look, fast]
+    visual["motion"] = editing_styles.smooth_motion(str(visual.get("motion") or "none"))
+    # 4: clips cached with the old shaking zooms are rendered again as smooth pans.
+    payload = [4, visual, source_state, width, height, fps, graphics_enabled, color_look, fast]
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:24]
 

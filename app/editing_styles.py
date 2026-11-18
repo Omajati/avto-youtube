@@ -15,49 +15,49 @@ from collections import Counter
 STYLES = {
     "cinematic": {
         "name": "Кинодокументалистика", "icon": "🎬", "color": "cinematic",
-        "motions": ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up"],
+        "motions": ["pan_left", "pan_right"],
         "transitions": ["fade", "dissolve", "light_leak"],
         "subtitle": "documentary", "graphic": "cinematic", "voice": "warm",
         "description": "Плавная камера, сдержанный цвет и редкие выразительные акценты.",
     },
     "investigation": {
         "name": "Расследование", "icon": "🔎", "color": "cool",
-        "motions": ["zoom_in", "pan_left", "pan_right", "diagonal_in"],
+        "motions": ["pan_left", "pan_right"],
         "transitions": ["fade", "flash", "film"],
         "subtitle": "box", "graphic": "broadcast", "voice": "radio",
         "description": "Документы, холодный цвет и напряжённые смысловые акценты.",
     },
     "archive": {
         "name": "Архивная хроника", "icon": "📽", "color": "archive",
-        "motions": ["pan_left", "pan_right", "pan_up", "pan_down", "zoom_in"],
+        "motions": ["pan_left", "pan_right"],
         "transitions": ["film", "fade", "dissolve"],
         "subtitle": "clean", "graphic": "minimal", "voice": "warm",
         "description": "Тёплая плёнка, даты и спокойное движение старых фотографий.",
     },
     "dynamic": {
         "name": "Динамичный YouTube", "icon": "⚡", "color": "vivid",
-        "motions": ["punch_in", "zoom_in", "diagonal_in", "pan_left", "pan_right"],
+        "motions": ["pan_left", "pan_right"],
         "transitions": ["flash", "light_leak", "dissolve"],
         "subtitle": "shorts", "graphic": "neon", "voice": "bright",
         "description": "Быстрые акценты, контрастная картинка и крупная типографика.",
     },
     "science": {
         "name": "Научпоп", "icon": "🧪", "color": "natural",
-        "motions": ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_down"],
+        "motions": ["pan_left", "pan_right"],
         "transitions": ["dissolve", "flash", "fade"],
         "subtitle": "documentary", "graphic": "glass", "voice": "natural",
         "description": "Чистая картинка, схемы, числа и понятный визуальный ритм.",
     },
     "mystery": {
         "name": "Мистика", "icon": "🌒", "color": "dark",
-        "motions": ["zoom_in", "zoom_out", "pan_up", "diagonal_in"],
+        "motions": ["pan_left", "pan_right"],
         "transitions": ["fade", "film", "flash"],
         "subtitle": "box", "graphic": "cinematic", "voice": "deep",
         "description": "Тёмный образ, медленные наезды и тревожные паузы.",
     },
     "minimal": {
         "name": "Премиальный минимализм", "icon": "◻️", "color": "natural",
-        "motions": ["zoom_in", "zoom_out", "pan_left", "pan_right"],
+        "motions": ["pan_left", "pan_right"],
         "transitions": ["dissolve", "fade"],
         "subtitle": "clean", "graphic": "minimal", "voice": "natural",
         "description": "Чистый монтаж, минимум эффектов и аккуратная типографика.",
@@ -70,6 +70,16 @@ EFFECT_LEVELS = {"low", "normal", "juicy"}
 COLOR_LOOKS = {"auto", "natural", "warm", "cool", "cinematic", "archive", "dark", "vivid", "bw"}
 VOICE_TONES = {"auto", "natural", "warm", "deep", "bright", "radio"}
 MOTIONS = {"none", "zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "diagonal_in", "punch_in"}
+# The owner's decision (18.11.2026): only the side pans are used. Zooms, the diagonal and up/down pans shook
+# (zoompan moves the picture by whole pixels: measured 0.3–0.6 px of speed jump per frame on zooms against
+# ~0.06 px on side pans). Any other motion, also in older projects, is turned into a side pan when rendered.
+SMOOTH = {"pan_left", "pan_right"}
+SMOOTH_FOR = {"zoom_in": "pan_right", "diagonal_in": "pan_right", "pan_down": "pan_right",
+              "zoom_out": "pan_left", "punch_in": "pan_left", "pan_up": "pan_left"}
+
+
+def smooth_motion(motion: str) -> str:
+    return motion if motion in SMOOTH or motion == "none" else SMOOTH_FOR.get(motion, "pan_right")
 TRANSITIONS = {"cut", "fade", "dissolve", "flash", "light_leak", "film"}
 
 COLOR_FILTERS = {
@@ -167,6 +177,7 @@ def build_plan(project: dict, recent: list[str]) -> dict:
     scenes = project.get("scenes", [])
     phrases = _scene_phrases(project)
     last_motion = ""
+    moves_so_far: list[str] = []
     last_audio_accent = -99
     visible_transitions = 0
     max_visible_transitions = 0 if len(scenes) < 3 else max(1, int(len(scenes) * .34))
@@ -176,15 +187,21 @@ def build_plan(project: dict, recent: list[str]) -> dict:
     for index, scene in enumerate(scenes):
         phrase = phrases[index] if index < len(phrases) else ""
         if scene.get("kind") == "image":
-            pool = [m for m in style["motions"] if m != last_motion] or list(style["motions"])
+            # Camera moves alternate with still shots (the owner, 18.11.2026): about every other picture stands
+            # still, never two stills in a row, and a picture longer than 9 s always moves so it does not freeze.
+            moving = [m for m in style["motions"] if m != "none"]
+            last_move = next((m for m in reversed(moves_so_far) if m != "none"), "")
+            pool = [m for m in moving if m != last_move] or moving
             motion = rng.choice(pool)
-            still_chance = {"low": .28, "normal": .10, "juicy": .035}[level]
+            still_chance = {"low": .6, "normal": .5, "juicy": .35}[level]
             if style_id == "minimal":
                 still_chance += .10
-            if rng.random() < still_chance:
+            if (last_motion != "none" and float(scene.get("duration") or 0) <= 9.0
+                    and rng.random() < still_chance):
                 motion = "none"
             scene["motion"] = motion
             last_motion = motion
+            moves_so_far.append(motion)
             motion_counts[motion] += 1
         if index == 0 and max_visible_transitions:
             transition = "fade" if style_id in {"cinematic", "archive", "mystery"} else "cut"
@@ -215,8 +232,6 @@ def build_plan(project: dict, recent: list[str]) -> dict:
         if scene["sfx"] != "none":
             last_audio_accent = index
             sfx_counts[scene["sfx"]] += 1
-            if scene.get("kind") == "image" and scene["effect"] == "punch_in":
-                scene["motion"] = "punch_in"
         graphic = scene.get("graphic")
         if isinstance(graphic, dict) and (graphic.get("auto") or not graphic.get("style")):
             graphic["style"] = style["graphic"]
@@ -254,7 +269,7 @@ def quality_report(project: dict) -> list[dict]:
         return [{"level": "bad", "text": "Нет ни одной сцены."}]
     total = sum(float(s.get("duration") or 0) for s in scenes)
     long_stills = [i + 1 for i, s in enumerate(scenes)
-                   if s.get("kind") == "image" and float(s.get("duration") or 0) > 7 and s.get("motion") == "none"]
+                   if s.get("kind") == "image" and float(s.get("duration") or 0) > 9 and s.get("motion") == "none"]
     if long_stills:
         issues.append({"level": "warn", "text": f"Долгие неподвижные кадры: {', '.join(map(str, long_stills[:8]))}."})
     effect_share = sum(s.get("transition") != "cut" for s in scenes) / len(scenes)

@@ -142,7 +142,7 @@ def concat_wavs(parts: list, out: Path) -> list:
     return durations
 
 
-MOTIONS = ["zoom_in", "pan_right", "zoom_out", "pan_left"]
+MOTIONS = ["pan_right", "pan_left"]  # zooms shook (whole-pixel steps of zoompan): only side pans, owner 18.11.2026
 
 
 def _shake(width: int, height: int) -> str:
@@ -156,6 +156,10 @@ def render_clip(img: Path, out: Path, frames: int, width: int, height: int, fps:
                 motion: str, strength: float, fade_in: bool = False, fade_out: bool = False, effect: str = "none"):
     n = max(frames, 1)
     s = float(strength)
+    if motion not in ("pan_right", "pan_left"):
+        motion = "pan_left" if motion in ("zoom_out", "pan_up") else "pan_right"
+    if effect in ("punch_in", "zoom_out"):
+        effect = "none"  # fast zooms shook the same way
     p = f"(on/{n})"
     hit = max(int(fps * 0.35), 1)  # frames of a fast punch-in
     if effect == "punch_in":
