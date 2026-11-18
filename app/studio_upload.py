@@ -57,6 +57,33 @@ def category_id(text: str) -> str:
     return best[0]
 
 
+def _set_file(page, locator, path: Path):
+    """Puts a file into an <input type=file>. Octo's browser runs on this same Mac but Playwright reaches it through
+    the debug port and refuses to send files over 50 MB «to a browser not co-located with the server». So the
+    browser is given the file's path straight through the DevTools protocol (DOM.setFileInputFiles): it reads the
+    file from disk itself, any size, and fires the same change event as a person picking the file."""
+    handle = locator.element_handle(timeout=90_000)
+    cdp = page.context.new_cdp_session(page)
+    try:
+        handle.evaluate("e => { window.__ayFileInput = e; }")
+        obj = cdp.send("Runtime.evaluate", {"expression": "window.__ayFileInput"})
+        object_id = (obj.get("result") or {}).get("objectId")
+        if not object_id:
+            raise RuntimeError("не нашёл поле выбора файла")
+        cdp.send("DOM.setFileInputFiles", {"files": [str(path.resolve())], "objectId": object_id})
+    except Exception:  # noqa: BLE001
+        if path.stat().st_size < 45 * 1024 * 1024:
+            locator.set_input_files(str(path))  # small files: Playwright's own way still works
+        else:
+            raise
+    finally:
+        try:
+            page.evaluate("() => { delete window.__ayFileInput; }")
+            cdp.detach()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _expand(page, state: dict):
     """Opens «Show more» once (tags, category and the AI label live there)."""
     if state.get("open"):
@@ -168,7 +195,7 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
             picker = page.locator("ytcp-uploads-file-picker input[type=file], input[type=file][name=Filedata]").first
             picker.wait_for(state="attached", timeout=90_000)
             log("Загружаю файл видео…")
-            picker.set_input_files(str(video))
+            _set_file(page, picker, video)
             page.locator("#title-textarea #textbox").first.wait_for(state="visible", timeout=180_000)
             time.sleep(2)
             log("Вписываю название и описание…")
@@ -178,8 +205,8 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
             if thumb and thumb.is_file():
                 log("Ставлю превью…")
                 try:
-                    page.locator("input#file-loader[type=file], ytcp-thumbnails-compact-editor-uploader input[type=file]"
-                                 ).first.set_input_files(str(thumb))
+                    _set_file(page, page.locator("input#file-loader[type=file], "
+                                                 "ytcp-thumbnails-compact-editor-uploader input[type=file]").first, thumb)
                     time.sleep(4)
                 except Exception as e:  # noqa: BLE001
                     raise UserError(f"YouTube не принял превью ({e}). Возможно, канал не подтверждён по телефону: "
