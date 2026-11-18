@@ -121,7 +121,9 @@ def choose_style(project: dict, recent: list[str], revision: int) -> str:
         "science": r"учен|исслед|наук|эксперимент|технолог|космос|открыт|теори|scient|research|experiment|geolog|fossil|asteroid|dinosaur|theory|paleont",
         "mystery": r"мист|загад|страш|прокля|исчез|аномал|взорв|смерт|озер|mystery|strange|curse|vanish|anomal|explode|death|deadly|lake",
         "dynamic": r"топ|самый|шок|невероят|срочно|за минут|ошибк|факт|top|shocking|unbeliev|urgent|mistake|facts?",
-        "cinematic": r"путешеств|биограф|судьб|африк|океан|город|страна|природ|journey|biograph|destiny|africa|ocean|nature|wildlife|river|forest",
+        "cinematic": r"путешеств|биограф|судьб|африк|океан|город|страна|природ|journey|biograph|destiny|africa|ocean|nature|wildlife|river|forest"
+                     r"|семь|мать|сын|дочь|внук|муж|family|mother|daughter|grandson|husband"
+                     r"|familia|madre|hijo|hija|nieto|marido|navidad|familie|mutter|sohn|tochter|enkel|weihnacht",
         "minimal": r"бизнес|бренд|дизайн|архитект|преми|интерьер|business|brand|design|architect|premium|interior",
     }
     for style, pattern in rules.items():
@@ -190,7 +192,9 @@ def build_plan(project: dict, recent: list[str]) -> dict:
             transition = rng.choice(style["transitions"])
         else:
             transition = "cut"
-        if index and visible_transitions < max_visible_transitions and re.search(r"тем временем|глава|часть|спустя|позже|в другой|перенесемся|meanwhile|years later", phrase):
+        if index and visible_transitions < max_visible_transitions and re.search(r"тем временем|глава|часть|спустя|позже|в другой|перенесемся|meanwhile|years later"
+                                                                                   r"|mientras tanto|años después|meses después|semanas después|días después|más tarde|al día siguiente|capítulo"
+                                                                                   r"|inzwischen|währenddessen|jahre später|monate später|wochen später|tage später|am nächsten tag|kapitel", phrase):
             transition = "fade"
         scene["transition"] = transition
         if transition != "cut":
@@ -199,9 +203,12 @@ def build_plan(project: dict, recent: list[str]) -> dict:
         scene["effect"], scene["sfx"] = "none", "none"
         accent_gap = {"low": 8, "normal": 5, "juicy": 3}[level]
         can_accent = index - last_audio_accent >= accent_gap
-        if can_accent and re.search(r"взрыв|удар|рухнул|погиб|катастроф|шок|опас|убил|explod|crash|danger", phrase):
+        if can_accent and re.search(r"взрыв|удар|рухнул|погиб|катастроф|шок|опас|убил|explod|crash|danger"
+                                   r"|explot|golpe|choque|accidente|murió|peligr|disparo|grit[óo]"
+                                   r"|unfall|starb|gefahr|schlag|schock|schrie", phrase):
             scene["effect"], scene["sfx"] = "punch_in", "impact"
-        elif can_accent and re.search(r"тысяч|миллион|миллиард|огромн|весь мир|масштаб|thousand|million", phrase):
+        elif can_accent and re.search(r"тысяч|миллион|миллиард|огромн|весь мир|масштаб|thousand|million"
+                                     r"|\bmiles\b|millones|enorme|todo el mundo|tausend|millionen|milliard|riesig|ganze welt", phrase):
             scene["effect"], scene["sfx"] = "zoom_out", "whoosh"
         elif can_accent and transition != "cut":
             scene["sfx"] = "swoosh" if transition in {"dissolve", "film"} else "whoosh"

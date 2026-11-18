@@ -1580,6 +1580,48 @@ def _chapter_labels(scenes: list[dict], lang: str, settings: dict, cache: Path) 
     return {**titles, **done}
 
 
+def _package_chapters(root: Path, lang: str, scenes: list[dict], texts: list[str],
+                      durations: list[float]) -> tuple[dict[str, str], list[float]]:
+    """Chapters from the «0:00 Title» lines of загрузка_YouTube_<LANG>.md, for a scene file without chapter cards.
+    Those times are estimates (words ÷ words per minute), so each one is turned back into a word of the narration,
+    the chapter starts at the scene that holds that word, and its real time is measured on the voice-over.
+    Returns ({scene id: title} for the chapter plates (not the opening one), [real start of every chapter])."""
+    home = _lang_home(root, lang)
+    file = upload_package.find_file(home, lang) if home else None
+    if not file:
+        return {}, []
+    package = upload_package.parse(file)
+    marks = package.get("chapters") or []
+    if len(marks) < 2:
+        return {}, []
+    counts = [len((t or "").split()) for t in texts]
+    starts_word, starts_time, total_w, total_t = [], [], 0, 0.0
+    for count, duration in zip(counts, durations):
+        starts_word.append(total_w)
+        starts_time.append(total_t)
+        total_w += count
+        total_t += float(duration or 0)
+    wpm = max(60, int(package.get("wpm") or 150))
+    plates, times, prev = {}, [], -1
+    for seconds, title in marks:
+        if seconds <= 0:
+            times.append(0.0)
+            prev = max(prev, 0)
+            continue
+        word = min(total_w - 1, round(seconds / 60 * wpm))
+        # The first scene that starts at or after the estimated word: chapters begin on a cut.
+        index = next((i for i, w in enumerate(starts_word) if w >= word), len(scenes) - 1)
+        index = max(index, prev + 1)
+        if index >= len(scenes):
+            break
+        prev = index
+        times.append(starts_time[index])
+        plates[scenes[index]["id"]] = title
+    if len(times) != len(marks):
+        return plates, []
+    return plates, times
+
+
 MOTION_KINDS = ("map", "timeline", "chart", "compare")
 
 
@@ -1818,7 +1860,7 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
     chapters = chapters or {}
     if options.get("folder_chapters", True):
         for source in scenes:
-            if source.get("chapter"):
+            if source.get("chapter") or source["id"] in chapters:
                 target = next((item for item in project["scenes"] if item.get("scene_code") == source["id"]), None)
                 if not target:
                     continue
@@ -2055,6 +2097,15 @@ def _build(job_id: str):
                                                (lo + share * .05, lo + share * .35), Path(info["output"]).parent)
                 _check_control(job_id)
                 chapters = _chapter_labels(scenes, lang, settings, lang_cache) if options.get("folder_chapters", True) and not fast else {}
+                if not any(s.get("chapter") for s in scenes):
+                    # The plain scene file has no chapter cards: chapters come from the upload file's timecodes.
+                    plates, times = _package_chapters(Path(analysis["path"]), lang, scenes, texts, durations)
+                    if options.get("folder_chapters", True) and not fast:
+                        chapters = plates
+                    if times:
+                        with _lock:
+                            _jobs[job_id].setdefault("chapter_times", {})[lang] = times
+                        _save_queue()
                 prepared[lang] = (lo, info, lang_cache, texts, lang_media, durations, words, chapters)
             except (_PauseRequested, _StopRequested):
                 raise
@@ -2202,6 +2253,10 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
             skipped[lang] = f"не выбран профиль Octo для «{channel} · {lang.upper()}»"
             continue
         package = upload_package.parse(file)
+        real = (job.get("chapter_times") or {}).get(lang)
+        if real:
+            # The description's timecodes were estimated before the voice-over existed: put the measured ones.
+            package["description"] = upload_package.retime_description(package["description"], real)
         if not package.get("title"):
             skipped[lang] = "в файле загрузки нет названия (раздел «1. Название»)"
             continue

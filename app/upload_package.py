@@ -160,8 +160,42 @@ def parse(path: Path) -> dict:
             word = word.strip(" -–«»\"").strip()
             if word:
                 lines.append((word, "плашк" in how or how.startswith("красн")))
+    wpm = re.search(r"(\d{2,3})\s+(?:словах|слов)\s+в\s+минуту", text)
     return {"title": title[:100], "description": description[:5000], "tags": tags, "category": category, "kids": kids,
-            "thumb_prompt": prompt, "thumb_lines": lines, "file": str(path)}
+            "thumb_prompt": prompt, "thumb_lines": lines, "file": str(path),
+            "chapters": chapters(description), "wpm": int(wpm.group(1)) if wpm else 150}
+
+
+TIMECODE = re.compile(r"(?m)^[ \t]*((?:\d{1,2}:)?\d{1,2}:\d{2})[ \t]+(?:[-–—][ \t]*)?(\S[^\n]*)$")
+
+
+def _seconds(code: str) -> int:
+    total = 0
+    for part in code.split(":"):
+        total = total * 60 + int(part)
+    return total
+
+
+def timecode(seconds: float) -> str:
+    s = int(round(seconds))
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+
+def chapters(description: str) -> list[tuple[int, str]]:
+    """The «0:00 Title» lines of the description, in order."""
+    return [(_seconds(m.group(1)), m.group(2).strip()) for m in TIMECODE.finditer(description)]
+
+
+def retime_description(description: str, times: list[float]) -> str:
+    """The same «0:00 Title» lines with the times measured on the real voice-over."""
+    found = list(TIMECODE.finditer(description))
+    if len(found) != len(times):
+        return description
+    out, last = [], 0
+    for m, t in zip(found, times):
+        out.append(description[last:m.start(1)] + timecode(t))
+        last = m.end(1)
+    return "".join(out) + description[last:]
 
 
 def _font(size: int, text: str):
