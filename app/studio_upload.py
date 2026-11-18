@@ -84,6 +84,91 @@ def _set_file(page, locator, path: Path):
             pass
 
 
+PICKER = "ytcp-uploads-file-picker input[type=file], input[type=file][name=Filedata], ytcp-uploads-dialog input[type=file]"
+
+
+def _dismiss(page):
+    """Closes the welcome / news / «what's new» windows Studio sometimes shows over everything."""
+    for sel in ("ytcp-warm-welcome-dialog #dismiss-button", "#dismiss-button", "ytcp-button#close-button",
+                "#close-button", "tp-yt-paper-dialog #close-icon-button", "ytcp-dialog #close-button"):
+        try:
+            btn = page.locator(sel)
+            if btn.count() and btn.first.is_visible():
+                btn.first.click(timeout=3000)
+                time.sleep(1)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        page.keyboard.press("Escape")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _picker_ready(page, wait_s: int):
+    picker = page.locator(PICKER).first
+    try:
+        picker.wait_for(state="attached", timeout=wait_s * 1000)
+        return picker
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _open_upload(page, video: Path, log):
+    """Opens Studio's upload window and returns its file field: first the «Создать → Загрузить видео» button in
+    Studio (the windows that may cover the page are closed first), the /upload address only as a spare way."""
+    if "studio.youtube.com" not in page.url:
+        page.goto(STUDIO, wait_until="domcontentloaded", timeout=120_000)
+        time.sleep(5)
+    _check_url(page)
+    log("Нажимаю «Создать → Загрузить видео»…")
+    for attempt in range(3):
+        _dismiss(page)
+        clicked = False
+        try:
+            page.locator("ytcp-button#create-icon, #create-icon").first.click(timeout=15_000)
+            time.sleep(1)
+            page.locator("tp-yt-paper-item#text-item-0, #text-item-0").first.click(timeout=10_000)
+            clicked = True
+        except Exception:  # noqa: BLE001
+            pass
+        if not clicked:
+            for sel in ("ytcp-quick-actions #upload-icon", "#upload-icon"):
+                try:
+                    btn = page.locator(sel)
+                    if btn.count() and btn.first.is_visible():
+                        btn.first.click(timeout=5000)
+                        break
+                except Exception:  # noqa: BLE001
+                    pass
+        picker = _picker_ready(page, 30)
+        if picker:
+            return picker
+    log("Кнопка не открыла окно загрузки — пробую адрес youtube.com/upload…")
+    page.goto(STUDIO.replace("studio.", "www.") + "/upload", wait_until="domcontentloaded", timeout=120_000)
+    picker = _picker_ready(page, 40)
+    if picker:
+        return picker
+    _check_url(page)
+    shot = video.parent / f".ошибка_выкладки_{int(time.time())}.png"
+    try:
+        page.screenshot(path=str(shot))
+    except Exception:  # noqa: BLE001
+        pass
+    raise UserError(f"YouTube Studio не открыл окно загрузки видео (страница: {page.url[:120]}). Откройте этот профиль "
+                    f"Octo руками и посмотрите, что на экране: выбор канала, подтверждение, окно приветствия. "
+                    f"Снимок экрана: {shot}")
+
+
+def _check_url(page):
+    url = page.url
+    if "accounts.google.com" in url or "ServiceLogin" in url:
+        raise UserError("В этом профиле Octo не выполнен вход в YouTube (или Google просит войти заново). Откройте "
+                        "профиль, войдите в канал и нажмите «Повторить выкладку».")
+    if "channel_switcher" in url or "select_site" in url or "/channel_switcher" in url:
+        raise UserError("YouTube просит выбрать канал: в этом аккаунте Google их несколько. Откройте профиль Octo, "
+                        "выберите нужный канал (он запомнится) и нажмите «Повторить выкладку».")
+
+
 def _expand(page, state: dict):
     """Opens «Show more» once (tags, category and the AI label live there)."""
     if state.get("open"):
@@ -191,9 +276,7 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
             if "accounts.google.com" in page.url or "ServiceLogin" in page.url:
                 raise UserError("В этом профиле Octo не выполнен вход в YouTube. Откройте профиль, войдите в канал "
                                 "и нажмите «Повторить выкладку».")
-            page.goto(STUDIO.replace("studio.", "www.") + "/upload", wait_until="domcontentloaded", timeout=120_000)
-            picker = page.locator("ytcp-uploads-file-picker input[type=file], input[type=file][name=Filedata]").first
-            picker.wait_for(state="attached", timeout=90_000)
+            picker = _open_upload(page, video, log)
             log("Загружаю файл видео…")
             _set_file(page, picker, video)
             page.locator("#title-textarea #textbox").first.wait_for(state="visible", timeout=180_000)
