@@ -972,7 +972,8 @@ def octo_profiles(refresh: bool = False):
     settings = load_settings()
     if refresh or time.time() - _profiles_cache["at"] > 300 or not _profiles_cache["items"]:
         _profiles_cache.update(at=time.time(), items=octo.profiles(settings))
-    return {"profiles": _profiles_cache["items"], "rules": settings.get("octo_rules") or {}}
+    return {"profiles": _profiles_cache["items"], "rules": settings.get("octo_rules") or {},
+            "keep_open": settings.get("octo_keep_open") or []}
 
 
 def _local_list() -> list[dict]:
@@ -983,7 +984,8 @@ def _save_local(items: list[dict]) -> dict:
     save_settings({"octo_local_profiles": items})
     _profiles_cache.update(at=0, items=[])
     settings = load_settings()
-    return {"profiles": octo.profiles(settings), "rules": settings.get("octo_rules") or {}}
+    return {"profiles": octo.profiles(settings), "rules": settings.get("octo_rules") or {},
+            "keep_open": settings.get("octo_keep_open") or []}
 
 
 @router.post("/octo/scan")
@@ -1020,6 +1022,17 @@ def octo_local_profile(data: dict = Body(...)):
         else:
             items.append({"uuid": uuid, "title": title or f"Профиль {uuid[:8]}"})
     return _save_local(items)
+
+
+@router.post("/octo/keep")
+def octo_keep(data: dict = Body(...)):
+    """Profiles the program must not close after uploading."""
+    uuid, keep = str(data.get("uuid") or ""), bool(data.get("keep"))
+    if not uuid:
+        raise UserError("Не понял, какой профиль.")
+    items = [u for u in (load_settings().get("octo_keep_open") or []) if u != uuid] + ([uuid] if keep else [])
+    save_settings({"octo_keep_open": items})
+    return {"keep_open": items}
 
 
 @router.post("/octo/rule")
@@ -2693,11 +2706,18 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
                 _update(job_id, progress=.99, step=f"{tag} Запускаю профиль Octo…")
                 ws = octo.start(uuid)
                 check: dict = {}
-                link = studio_upload.upload(
-                    ws, Path(outputs[lang]), package, thumb, privacy,
-                    log=lambda m, t=tag: _update(job_id, step=f"{t} {m}"),
-                    cancelled=lambda: (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping"),
-                    result=check)
+                try:
+                    link = studio_upload.upload(
+                        ws, Path(outputs[lang]), package, thumb, privacy,
+                        log=lambda m, t=tag: _update(job_id, step=f"{t} {m}"),
+                        cancelled=lambda: (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping"),
+                        result=check)
+                finally:
+                    # The program closes the profile it used, so profiles do not pile up open; the owner can mark
+                    # some profiles «не закрывать» (settings octo_keep_open). A screenshot of a failure is already saved.
+                    if uuid not in (load_settings().get("octo_keep_open") or []):
+                        _update(job_id, step=f"{tag} Закрываю профиль Octo…")
+                        octo.stop(uuid)
             uploaded[lang] = link or "опубликовано"
             _update(job_id, uploaded=uploaded)
             if options.get("folder_trash_mp4", True) and check.get("verified"):

@@ -3476,10 +3476,10 @@ const FB_STATUS = {
   stopping: "Останавливается", stopped: "Остановлен", done: "Готово", error: "Ошибка",
   review: "Ждёт проверки превью"
 };
-let OCTO = { profiles: null, rules: {}, error: "" };
+let OCTO = { profiles: null, rules: {}, keep: [], error: "" };
 const fbChannel = path => String(path || "").replace(/\/+$/, "").split("/").slice(-2, -1)[0] || "";
 async function loadOcto(refresh) {
-  try { const d = await api(`/api/folder-builder/octo/profiles${refresh ? "?refresh=1" : ""}`); OCTO = { profiles: d.profiles, rules: d.rules, error: "" }; }
+  try { const d = await api(`/api/folder-builder/octo/profiles${refresh ? "?refresh=1" : ""}`); OCTO = { profiles: d.profiles, rules: d.rules, keep: d.keep_open || [], error: "" }; }
   catch (e) { OCTO = { profiles: null, rules: OCTO.rules, error: e.message }; }
   return OCTO;
 }
@@ -3794,7 +3794,10 @@ async function viewFolderBuilder() {
       <div class="row" style="gap:6px"><button class="sm" id="fb-octo-scan">🔍 Найти открытые профили</button><span class="muted small" id="fb-octo-scan-r"></span></div>
       <div id="fb-octo-local-list" style="margin-top:6px"></div>
       <div class="row" style="gap:6px;flex-wrap:nowrap;margin-top:6px"><input type="text" class="grow" id="fb-octo-uuid" placeholder="или вставьте UUID профиля из Octo (карточка профиля)"><button class="sm" id="fb-octo-add">Добавить</button></div>
-    </details></div>
+    </details>
+    <div style="margin-top:10px"><b class="small">Закрывать профиль после выкладки</b>
+      <div class="muted small">После выкладки программа закрывает профиль Octo, чтобы открытые профили не копились. Отметьте те, которые закрывать не надо.</div>
+      <div id="fb-octo-keep" style="margin-top:4px"></div></div></div>
   <div class="card fb-inbox"><h2 style="margin-top:0">📥 Автоподхват из папки</h2>
     <p class="muted small">Положите <code>.zip</code> сценария (или готовую папку проекта) в подпапку канала внутри «Папки входящих» — программа раз в минуту проверит её, распакует проект в «Рабочую папку» (в подпапку с тем же именем канала) и поставит в очередь. Готовые архивы переезжают в <code>_обработано</code>, неудачные — в <code>_ошибки</code> с файлом-объяснением.</p>
     <label class="f">Папка входящих (любая папка на этом Mac, внутри — папки каналов; если сценарии приходят из GitHub, Google Drive не нужен)</label>
@@ -3927,7 +3930,7 @@ async function viewFolderBuilder() {
       r.textContent = "Загружаю профили…";
       const o = await loadOcto(true);
       r.textContent = o.error ? "❌ " + o.error : `✅ Профилей в Octo: ${o.profiles.length}`;
-      $("#fb-octo-token").value = ""; drawOctoLocal(); if (FB_CHANNEL) drawChannelOcto(); refreshFolderBuilder();
+      $("#fb-octo-token").value = ""; drawOctoLocal(); drawOctoKeep(); if (FB_CHANNEL) drawChannelOcto(); refreshFolderBuilder();
     } catch (e) { r.textContent = "❌ " + e.message; }
   };
   const drawOctoLocal = () => {
@@ -3944,8 +3947,18 @@ async function viewFolderBuilder() {
       catch (e) { toast(e.message, true); }
     });
   };
+  const drawOctoKeep = () => {
+    const box = $("#fb-octo-keep"); if (!box) return;
+    const list = OCTO.profiles || [];
+    box.innerHTML = list.length ? list.map(x => `<label class="small" style="display:inline-flex;gap:6px;align-items:center;margin:2px 14px 2px 0"><input type="checkbox" data-octo-keep="${esc(x.uuid)}" ${(OCTO.keep || []).includes(x.uuid) ? "checked" : ""}> не закрывать «${esc(x.title)}»</label>`).join("") : `<span class="muted small">Профили появятся здесь, когда программа их найдёт (токен или «Найти открытые профили»).</span>`;
+    box.querySelectorAll("[data-octo-keep]").forEach(c => c.onchange = async () => {
+      try { const r = await api("/api/folder-builder/octo/keep", { json: { uuid: c.dataset.octoKeep, keep: c.checked } }); OCTO.keep = r.keep_open; toast(c.checked ? "Этот профиль программа закрывать не будет" : "Этот профиль будет закрываться после выкладки"); }
+      catch (e) { toast(e.message, true); c.checked = !c.checked; }
+    });
+  };
+  drawOctoKeep();
   const octoLocalDone = (o, msg) => {
-    OCTO.profiles = o.profiles; OCTO.rules = o.rules; OCTO.error = ""; if (msg) toast(msg);
+    OCTO.profiles = o.profiles; OCTO.rules = o.rules; OCTO.keep = o.keep_open || OCTO.keep; OCTO.error = ""; if (msg) toast(msg); drawOctoKeep();
     const r = $("#fb-octo-r"); if (r) r.textContent = `Профилей: ${o.profiles.length}`;
     drawOctoLocal(); if (FB_CHANNEL) drawChannelOcto(); refreshFolderBuilder();
   };
