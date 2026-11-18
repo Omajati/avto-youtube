@@ -3543,7 +3543,7 @@ function folderJobHtml(job) {
   const thumbs = job.thumbs || {};
   const reviewBlock = Object.keys(thumbs).length ? `<div class="fb-thumbs" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">${Object.keys(thumbs).map(l => `<figure style="margin:0;width:260px">
       <img src="/api/folder-builder/${esc(job.id)}/thumb/${l}?t=${job.updated || 0}" style="width:100%;border-radius:8px;display:block">
-      <figcaption class="small">${LANG_FLAG[l] || ""} ${l.toUpperCase()}${(job.uploaded || {})[l] ? ` · ✅ ${String(job.uploaded[l]).startsWith("http") ? `<a href="${esc(job.uploaded[l])}" target="_blank">на YouTube</a>` : "выложено"}` : ""}</figcaption></figure>`).join("")}</div>` : "";
+      <figcaption class="small">${LANG_FLAG[l] || ""} ${l.toUpperCase()}${(job.uploaded || {})[l] ? ` · ✅ ${String(job.uploaded[l]).startsWith("http") ? `<a href="${esc(job.uploaded[l])}" target="_blank">на YouTube</a>` : "выложено"}` : ""}${(job.trashed || {})[l] ? " · 🗑 MP4 в Корзине" : ""}</figcaption></figure>`).join("")}</div>` : "";
   const thumbNotes = Object.entries(job.thumb_problems || {}).map(([l, why]) => `<div class="banner warn small">Превью ${l.toUpperCase()} не нарисовано: ${esc(why)}</div>`).join("");
   const skippedNotes = thumbNotes + Object.entries(job.upload_skipped || {}).map(([l, why]) => `<div class="banner warn small">${l.toUpperCase()} не выложен: ${esc(why)}</div>`).join("");
   const active = ["running", "queued", "pausing", "stopping"].includes(status);
@@ -3778,6 +3778,7 @@ async function viewFolderBuilder() {
     <label class="check"><input type="checkbox" data-fbo="folder_upload" ${q("folder_upload", false) ? "checked" : ""}><span><b>Выкладывать готовые ролики</b><span class="muted small">Каждый язык уходит в профиль Octo, выбранный для его канала. Название, описание и теги берутся из файла <code>загрузка_YouTube_EN.md</code> (и т. п.) в папке языка, превью — из раздела «2. Превью». Octo Browser должен быть открыт.</span></span></label>
     <div class="grid2"><div>
       <label class="f">Доступ после загрузки</label><select data-fbo="folder_upload_privacy">${[["public", "Открытый доступ"], ["unlisted", "Доступ по ссылке"], ["private", "Ограниченный доступ"]].map(([v, n]) => `<option value="${v}" ${q("folder_upload_privacy", "public") === v ? "selected" : ""}>${n}</option>`).join("")}</select>
+      <label class="check"><input type="checkbox" data-fbo="folder_trash_mp4" ${q("folder_trash_mp4", true) ? "checked" : ""}><span><b>Убирать MP4 в Корзину после выкладки</b><span class="muted small">Когда ролик опубликован, программа ещё раз открывает его в Studio и сверяет название. Только если он на канале — готовый MP4 этого языка уходит в Корзину Mac (оттуда его можно вернуть). Превью и исходники остаются.</span></span></label>
       <label class="check"><input type="checkbox" data-fbo="folder_thumb_review" ${q("folder_thumb_review", true) ? "checked" : ""}><span><b>Показать превью перед выкладкой</b><span class="muted small">Ролик собирается, программа показывает превью и ждёт кнопку «Выложить». Без галочки ролик сразу уходит на канал.</span></span></label>
     </div><div>
       <label class="f">API-токен Octo Browser <span class="hint">Octo → настройки мастер-аккаунта → вкладка «Дополнительно».</span></label>

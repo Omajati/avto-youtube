@@ -50,7 +50,7 @@ LANG_RU = {"en": "английский", "ru": "русский", "de": "неме
 NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech", "vertonung", "текст")
 
 FOLDER_OPTION_KEYS = (
-    "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review",
+    "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
     "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
@@ -2445,7 +2445,9 @@ def _build(job_id: str):
         english = Path(english_file).read_text("utf-8", errors="replace").strip() if english_file else ""
         done = dict(job.get("langs_done") or {})
         outputs, failures = {}, []
-        todo = [x for x in langs if not (done.get(x) and Path(done[x]).is_file())]
+        # A language already published keeps counting as done even when its MP4 went to the Trash afterwards.
+        published = (_jobs.get(job_id) or {}).get("uploaded") or {}
+        todo = [x for x in langs if not (done.get(x) and (Path(done[x]).is_file() or x in published))]
         for lang in langs:
             if lang not in todo:
                 outputs[lang] = done[lang]
@@ -2603,6 +2605,32 @@ def _make_thumbs(job_id: str, analysis: dict, outputs: dict, settings: dict):
     _update(job_id, thumbs=thumbs, thumbs_generated=generated, thumb_problems=problems)
 
 
+def _to_trash(path: Path) -> str:
+    """Moves a published MP4 to the Mac's Trash (it can be put back from there). Returns "" if it could not."""
+    if not path.is_file():
+        return ""
+    if sys.platform == "darwin":
+        # Through Finder: the file gets «Put Back» in the Trash. macOS may ask once to let the program use Finder.
+        script = f'tell application "Finder" to delete (POSIX file {json.dumps(str(path.resolve()))} as alias)'
+        try:
+            r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0 and not path.exists():
+                return "Корзина"
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    trash = Path.home() / ".Trash"
+    if trash.is_dir():
+        target = trash / path.name
+        if target.exists():
+            target = trash / f"{path.stem} {time.strftime('%H-%M-%S')}{path.suffix}"
+        try:
+            shutil.move(str(path), str(target))
+            return str(target)
+        except OSError:
+            pass
+    return ""
+
+
 def _profile_for(job: dict, channel: str, lang: str, rules: dict) -> str:
     """The profile picked for this video, else the channel's; ASK when the channel wants a pick that is not made."""
     return (job.get("octo_pick") or {}).get(lang) or rules.get(f"{channel}|{lang}") or ""
@@ -2664,12 +2692,20 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
             with _profile_lock(uuid):
                 _update(job_id, progress=.99, step=f"{tag} Запускаю профиль Octo…")
                 ws = octo.start(uuid)
+                check: dict = {}
                 link = studio_upload.upload(
                     ws, Path(outputs[lang]), package, thumb, privacy,
                     log=lambda m, t=tag: _update(job_id, step=f"{t} {m}"),
-                    cancelled=lambda: (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping"))
+                    cancelled=lambda: (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping"),
+                    result=check)
             uploaded[lang] = link or "опубликовано"
             _update(job_id, uploaded=uploaded)
+            if options.get("folder_trash_mp4", True) and check.get("verified"):
+                where = _to_trash(Path(outputs[lang]))
+                trashed = dict(job.get("trashed") or {})
+                trashed[lang] = where or ""
+                _update(job_id, trashed=trashed,
+                        step=f"{tag} " + ("MP4 отправлен в Корзину" if where else "MP4 не удалось убрать в Корзину — лежит на месте"))
         except UserError as exc:
             failures.append(f"{lang.upper()}: {exc}")
     _check_control(job_id)

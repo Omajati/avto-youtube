@@ -432,8 +432,38 @@ def _publish_button(page):
     return btn.first
 
 
+def video_id(link: str) -> str:
+    m = re.search(r"(?:youtu\.be/|[?&]v=|/video/|/shorts/)([A-Za-z0-9_-]{11})", link or "")
+    return m.group(1) if m else ""
+
+
+def _verify(page, link: str, title: str, log) -> bool:
+    """After publishing: opens the video's own page in Studio again and checks it is there with our title.
+    Only then the finished MP4 may go to the Trash."""
+    vid = video_id(link)
+    if not vid:
+        log("Ссылку на ролик не нашёл — не могу перепроверить, MP4 оставляю")
+        return False
+    log("Перепроверяю, что ролик есть на канале…")
+    for attempt in range(3):
+        try:
+            page.goto(f"{STUDIO}/video/{vid}/edit", wait_until="domcontentloaded", timeout=120_000)
+            box = page.locator("#title-textarea #textbox").first
+            box.wait_for(state="visible", timeout=60_000)
+            time.sleep(2)
+            if _norm(box.inner_text()) == _norm(title):
+                log("Ролик на канале, название совпадает")
+                return True
+            log(f"На странице ролика другое название: «{_norm(box.inner_text())[:60]}» — MP4 оставляю")
+            return False
+        except Exception:  # noqa: BLE001
+            time.sleep(10)
+    log("Страница ролика в Studio не открылась — MP4 оставляю")
+    return False
+
+
 def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privacy: str = "public",
-           log=lambda s: None, cancelled=lambda: False) -> str:
+           log=lambda s: None, cancelled=lambda: False, result: dict | None = None) -> str:
     """Uploads and publishes; returns the video link. meta: {title, description, tags, kids, category, altered}."""
     from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 
@@ -551,6 +581,9 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
                 except PWTimeout:
                     link = ""
             log("Опубликовано")
+            if result is not None:
+                result["video_id"] = video_id(link)
+                result["verified"] = _verify(page, link, title, log)
             return link
         except _Stop:
             raise UserError("Выкладка остановлена.")

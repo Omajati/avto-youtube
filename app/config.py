@@ -138,6 +138,7 @@ DEFAULTS = {
     "folder_clean_frames": False,  # after a finished build the pictures the program drew are deleted (MP4 + thumbnail stay)  # draw each language's thumbnail together with its video
     "folder_upload": False,
     "folder_upload_privacy": "public",  # public, unlisted, private
+    "folder_trash_mp4": True,  # a published and re-checked MP4 goes to the Mac's Trash
     "folder_thumb_review": True,  # stop with the thumbnails shown before anything goes to YouTube  # a few maps, timelines and charts in the first half of the video
     "folder_smart_mapping": False,
     "folder_scene_binding": "",  # hints, smart, even; empty = take it from folder_smart_mapping
