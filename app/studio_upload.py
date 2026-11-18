@@ -62,11 +62,17 @@ def _set_file(page, locator, path: Path):
     the debug port and refuses to send files over 50 MB «to a browser not co-located with the server». So the
     browser is given the file's path straight through the DevTools protocol (DOM.setFileInputFiles): it reads the
     file from disk itself, any size, and fires the same change event as a person picking the file."""
-    handle = locator.element_handle(timeout=90_000)
+    handle = locator.element_handle(timeout=90_000) if hasattr(locator, "element_handle") else locator
     cdp = page.context.new_cdp_session(page)
     try:
-        handle.evaluate("e => { window.__ayFileInput = e; }")
-        obj = cdp.send("Runtime.evaluate", {"expression": "window.__ayFileInput"})
+        # A mark on the element is seen from every script world (a file-window handle may live in another one);
+        # the search also walks into shadow roots.
+        handle.evaluate("e => e.setAttribute('data-ay-file', '1')")
+        obj = cdp.send("Runtime.evaluate", {"expression": """(() => {
+            const walk = root => { const hit = root.querySelector('[data-ay-file]'); if (hit) return hit;
+              for (const el of root.querySelectorAll('*')) if (el.shadowRoot) { const h = walk(el.shadowRoot); if (h) return h; }
+              return null; };
+            return walk(document); })()"""})
         object_id = (obj.get("result") or {}).get("objectId")
         if not object_id:
             raise RuntimeError("не нашёл поле выбора файла")
@@ -78,13 +84,19 @@ def _set_file(page, locator, path: Path):
             raise
     finally:
         try:
-            page.evaluate("() => { delete window.__ayFileInput; }")
+            handle.evaluate("e => e.removeAttribute('data-ay-file')")
             cdp.detach()
         except Exception:  # noqa: BLE001
             pass
 
 
-PICKER = "ytcp-uploads-file-picker input[type=file], input[type=file][name=Filedata], ytcp-uploads-dialog input[type=file]"
+PICKER = ("ytcp-uploads-file-picker input[type=file], input[type=file][name=Filedata], "
+          "ytcp-uploads-dialog input[type=file]")
+# Studio's new look (November 2026) has a labelled «Create» button; its inner names may change, so the buttons are
+# also found by their text in the languages the owner's Studio may show.
+CREATE_TEXT = r"^\s*(Create|Создать|Crear|Erstellen|Criar|Créer)\s*$"
+UPLOAD_TEXT = r"(Upload videos?|Загрузить видео|Subir v[íi]deos?|Videos? hochladen|Carregar v[íi]deos?|Importer des v[ée]os)"
+SELECT_TEXT = r"(Select files|Выбрать файлы|Seleccionar archivos|Dateien auswählen|Selecionar arquivos|Sélectionner des fichiers)"
 
 
 def _dismiss(page):
@@ -110,6 +122,69 @@ def _picker_ready(page, wait_s: int):
         picker.wait_for(state="attached", timeout=wait_s * 1000)
         return picker
     except Exception:  # noqa: BLE001
+        pass
+    # Studio's new look may rename the upload window: any file field that accepts video will do.
+    any_video = page.locator("input[type=file][accept*='video'], input[type=file][accept*='mp4']")
+    try:
+        if any_video.count():
+            return any_video.first
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _first_visible(locator, wait_s: float):
+    end = time.time() + wait_s
+    while time.time() < end:
+        try:
+            for i in range(min(locator.count(), 10)):
+                if locator.nth(i).is_visible():
+                    return locator.nth(i)
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(.5)
+    return None
+
+
+def _click_create_upload(page) -> bool:
+    """«Create» → «Upload videos»: by the old inner names first, then by the visible text."""
+    import re as _re
+    create = _first_visible(page.locator("ytcp-button#create-icon, #create-icon"), 4) or _first_visible(
+        page.get_by_role("button", name=_re.compile(CREATE_TEXT, _re.I)), 10) or _first_visible(
+        page.locator("button, ytcp-button, [role=button]").filter(has_text=_re.compile(CREATE_TEXT, _re.I)), 5)
+    if not create:
+        return False
+    try:
+        create.click(timeout=10_000)
+    except Exception:  # noqa: BLE001
+        return False
+    time.sleep(1)
+    item = _first_visible(page.locator("tp-yt-paper-item#text-item-0, #text-item-0"), 3) or _first_visible(
+        page.get_by_role("menuitem", name=_re.compile(UPLOAD_TEXT, _re.I)), 5) or _first_visible(
+        page.locator("tp-yt-paper-item, [role=menuitem], [role=option], li, a, button").filter(
+            has_text=_re.compile(UPLOAD_TEXT, _re.I)), 5) or _first_visible(
+        page.get_by_text(_re.compile(r"^\s*" + UPLOAD_TEXT + r"\s*$", _re.I)), 3)
+    if not item:
+        return False
+    try:
+        item.click(timeout=10_000)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _picker_via_chooser(page):
+    """Last resort: press «Select files» and take the file field the browser's file window was opened for."""
+    import re as _re
+    btn = _first_visible(page.locator("#select-files-button, ytcp-button#select-files-button"), 2) or _first_visible(
+        page.get_by_role("button", name=_re.compile(SELECT_TEXT, _re.I)), 5)
+    if not btn:
+        return None
+    try:
+        with page.expect_file_chooser(timeout=15_000) as info:
+            btn.click(timeout=10_000)
+        return info.value.element
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -123,14 +198,7 @@ def _open_upload(page, video: Path, log):
     log("Нажимаю «Создать → Загрузить видео»…")
     for attempt in range(3):
         _dismiss(page)
-        clicked = False
-        try:
-            page.locator("ytcp-button#create-icon, #create-icon").first.click(timeout=15_000)
-            time.sleep(1)
-            page.locator("tp-yt-paper-item#text-item-0, #text-item-0").first.click(timeout=10_000)
-            clicked = True
-        except Exception:  # noqa: BLE001
-            pass
+        clicked = _click_create_upload(page)
         if not clicked:
             for sel in ("ytcp-quick-actions #upload-icon", "#upload-icon"):
                 try:
@@ -140,7 +208,10 @@ def _open_upload(page, video: Path, log):
                         break
                 except Exception:  # noqa: BLE001
                     pass
-        picker = _picker_ready(page, 30)
+        picker = _picker_ready(page, 20)
+        if picker:
+            return picker
+        picker = _picker_via_chooser(page)
         if picker:
             return picker
     log("Кнопка не открыла окно загрузки — пробую адрес youtube.com/upload…")
