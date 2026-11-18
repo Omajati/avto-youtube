@@ -3527,15 +3527,17 @@ function folderJobHtml(job) {
   const channel = fbChannel(job.path), langs = Object.keys(a.languages || {});
   const uploadOn = !!(o.folder_upload ?? FB_UPLOAD_ON);
   const profileSel = l => {
-    const cur = OCTO.rules[`${channel}|${l}`] || "";
+    const rule = OCTO.rules[`${channel}|${l}`] || "", pick = (job.octo_pick || {})[l] || "";
     const list = OCTO.profiles || [];
-    const known = list.find(p => p.uuid === cur);
-    return `<label class="small" style="display:inline-flex;gap:6px;align-items:center;margin-right:12px">${LANG_FLAG[l] || ""} ${l.toUpperCase()} → <select class="sm" data-fb-profile="${l}" data-channel="${esc(channel)}" style="width:auto;max-width:240px">
-      <option value="">— профиль не выбран —</option>${list.map(p => `<option value="${esc(p.uuid)}" ${p.uuid === cur ? "selected" : ""}>${esc(p.title)}</option>`).join("")}
-      ${cur && !known ? `<option value="${esc(cur)}" selected>${list.length ? "профиль удалён?" : "выбран (список не загружен)"}</option>` : ""}</select></label>`;
+    const name = u => (list.find(p => p.uuid === u) || {}).title || (list.length ? "профиль удалён?" : "выбран");
+    const ask = rule === "ask", need = ask && !pick;
+    const first = ask ? `<option value="">⚠️ выберите канал для этого ролика</option>` : rule ? `<option value="">как у канала: ${esc(name(rule))}</option>` : `<option value="">— профиль не выбран —</option>`;
+    return `<label class="small" style="display:inline-flex;gap:6px;align-items:center;margin-right:12px">${LANG_FLAG[l] || ""} ${l.toUpperCase()} → <select class="sm" data-fb-pick="${l}" style="width:auto;max-width:260px${need ? ";border-color:var(--bad,#d33)" : ""}">
+      ${first}${list.map(p => `<option value="${esc(p.uuid)}" ${p.uuid === pick ? "selected" : ""}>${esc(p.title)}</option>`).join("")}
+      ${pick && !list.find(p => p.uuid === pick) ? `<option value="${esc(pick)}" selected>${esc(name(pick))}</option>` : ""}</select></label>`;
   };
   const uploadBlock = uploadOn && langs.length ? `<div class="fb-upload" style="margin-top:8px">
-    <div class="muted small">Профили Octo для канала <b>${esc(channel)}</b> (запоминаются для всех папок этого канала):</div>
+    <div class="muted small">Куда выложить этот ролик (канал <b>${esc(channel)}</b>; общий профиль канала задаётся в его настройках, здесь — только для этого ролика):</div>
     <div style="margin-top:4px">${langs.map(profileSel).join("")}</div>
     ${OCTO.error ? `<div class="muted small">⚠️ Список профилей не загрузился: ${esc(OCTO.error)}</div>` : ""}</div>` : "";
   const thumbs = job.thumbs || {};
@@ -3607,10 +3609,10 @@ function drawFolderJobs(data) {
     });
     card.querySelectorAll("[data-fb-reveal]").forEach(b => b.addEventListener("click", () => api(`/api/folder-builder/${id}/reveal`, { json: { lang: b.dataset.fbReveal || "" } }).catch(e => toast(e.message, true))));
     card.querySelector("[data-fb-one]")?.addEventListener("click", () => startFolderQueue([id]));
-    card.querySelectorAll("[data-fb-profile]").forEach(sel => sel.addEventListener("change", async () => {
+    card.querySelectorAll("[data-fb-pick]").forEach(sel => sel.addEventListener("change", async () => {
       try {
-        const r = await api("/api/folder-builder/octo/rule", { json: { channel: sel.dataset.channel, lang: sel.dataset.fbProfile, uuid: sel.value } });
-        OCTO.rules = r.rules; toast(sel.value ? `Профиль для «${sel.dataset.channel} · ${sel.dataset.fbProfile.toUpperCase()}» запомнен` : "Профиль убран");
+        await api(`/api/folder-builder/${id}/octo-pick`, { json: { lang: sel.dataset.fbPick, uuid: sel.value } });
+        toast(sel.value ? `Этот ролик (${sel.dataset.fbPick.toUpperCase()}) уйдёт в «${sel.options[sel.selectedIndex].text}»` : "Ролик пойдёт в профиль канала");
         refreshFolderBuilder();
       } catch (e) { toast(e.message, true); }
     }));
@@ -3830,11 +3832,11 @@ async function viewFolderBuilder() {
     const box = $("#fb-channel-octo"); if (!box) return;
     const langs = [...main.querySelectorAll("[data-fb-lang]")].filter(x => x.checked).map(x => x.dataset.fbLang);
     const list = OCTO.profiles || [];
-    box.innerHTML = `<span class="muted small">Профиль Octo (куда выкладывать): </span>` + langs.map(l => {
+    box.innerHTML = `<div class="muted small">Профиль Octo (куда выкладывать). Один YouTube-канал на всю нишу — выберите его профиль. Несколько каналов (например, драмы ES) — «🎯 выбирать у каждого ролика»: перед выкладкой программа остановится и попросит выбрать канал в карточке проекта.</div>` + langs.map(l => {
       const cur = OCTO.rules[`${FB_CHANNEL}|${l}`] || "", known = list.find(p => p.uuid === cur);
       return `<label class="small" style="display:inline-flex;gap:6px;align-items:center;margin-right:12px">${LANG_FLAG[l] || ""} ${l.toUpperCase()} → <select class="sm" data-fb-channel-profile="${l}" style="width:auto;max-width:240px">
-        <option value="">— не выбран —</option>${list.map(p => `<option value="${esc(p.uuid)}" ${p.uuid === cur ? "selected" : ""}>${esc(p.title)}</option>`).join("")}
-        ${cur && !known ? `<option value="${esc(cur)}" selected>${list.length ? "профиль удалён?" : "выбран (список не загружен)"}</option>` : ""}</select></label>`;
+        <option value="">— не выбран —</option><option value="ask" ${cur === "ask" ? "selected" : ""}>🎯 выбирать у каждого ролика</option>${list.map(p => `<option value="${esc(p.uuid)}" ${p.uuid === cur ? "selected" : ""}>${esc(p.title)}</option>`).join("")}
+        ${cur && cur !== "ask" && !known ? `<option value="${esc(cur)}" selected>${list.length ? "профиль удалён?" : "выбран (список не загружен)"}</option>` : ""}</select></label>`;
     }).join("") + (list.length ? "" : `<span class="muted small">— список профилей появится, когда в блоке «Автовыкладка» сохраните токен Octo или нажмёте «Найти открытые профили» (без токена).</span>`);
     box.querySelectorAll("[data-fb-channel-profile]").forEach(sel => sel.onchange = async () => {
       try { const r = await api("/api/folder-builder/octo/rule", { json: { channel: FB_CHANNEL, lang: sel.dataset.fbChannelProfile, uuid: sel.value } }); OCTO.rules = r.rules; toast("Профиль запомнен"); refreshFolderBuilder(); }

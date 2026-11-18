@@ -873,6 +873,40 @@ def _queue_jobs(ids: set, settings: dict, explicit_ids: bool) -> list[str]:
     return queued
 
 
+ASK = "ask"  # the channel's rule: the owner picks the Octo profile for every video of that channel
+
+
+def _missing_picks(job: dict) -> list[str]:
+    """Languages whose channel says «выбирать у каждого ролика» and this video has no profile picked yet."""
+    rules = load_settings().get("octo_rules") or {}
+    channel = Path(job["path"]).parent.name
+    langs = list((job.get("thumbs") or {}).keys()) or list(((job.get("analysis") or {}).get("languages") or {}).keys())
+    picks = job.get("octo_pick") or {}
+    return [lang for lang in langs if rules.get(f"{channel}|{lang}") == ASK and not picks.get(lang)
+            and lang not in (job.get("uploaded") or {})]
+
+
+@router.post("/{job_id}/octo-pick")
+def octo_pick(job_id: str, data: dict = Body(...)):
+    """This one video goes to this Octo profile (over the channel's profile); empty = as the channel says."""
+    lang, uuid = str(data.get("lang") or ""), str(data.get("uuid") or "")
+    if lang not in LANGS:
+        raise UserError("Не понял, для какого языка профиль.")
+    with _lock:
+        job = _jobs.get(job_id)
+        if not job:
+            raise UserError("Проект не найден в очереди.")
+        picks = dict(job.get("octo_pick") or {})
+        if uuid and uuid != ASK:
+            picks[lang] = uuid
+        else:
+            picks.pop(lang, None)
+        job["octo_pick"] = picks
+        job["updated"] = _now()
+        _save_queue()
+    return {"octo_pick": picks}
+
+
 @router.post("/{job_id}/action")
 def control_job(job_id: str, data: dict = Body(...)):
     action = str(data.get("action") or "").lower()
@@ -898,6 +932,10 @@ def control_job(job_id: str, data: dict = Body(...)):
         elif action == "publish":
             if status != "review":
                 raise UserError("Этот проект сейчас не ждёт проверки превью.")
+            missing = _missing_picks(job)
+            if missing:
+                raise UserError("Выберите, на какой канал выкладывать: " + ", ".join(x.upper() for x in missing)
+                                + " (список «Куда выложить этот ролик» в карточке проекта).")
             job["approved"] = {lang: True for lang in (job.get("thumbs") or {})}
             job.update(status="queued", step="Ждёт своей очереди на выкладку…", error="")
         elif action == "redraw":
@@ -2500,9 +2538,12 @@ def _build(job_id: str):
         _drop_drafts(job)
         shutil.rmtree(Path(analysis["frame_dir"]) / "референсы", ignore_errors=True)
         # The pictures stay in the project folder (кадры): a rebuild never draws and pays for them again.
-    except _ReviewRequested:
+    except _ReviewRequested as review:
+        need = review.args[0] if review.args else []
         _update(job_id, status="review", progress=.99, error="",
-                step="Ролики собраны. Проверьте превью и нажмите «Выложить».")
+                step=("Ролики собраны. Выберите, на какой канал выложить ("
+                      + ", ".join(x.upper() for x in need) + "), и нажмите «Выложить»." if need else
+                      "Ролики собраны. Проверьте превью и нажмите «Выложить»."))
     except _PauseRequested:
         _update(job_id, status="paused", step="На паузе", error="")
     except _StopRequested:
@@ -2562,6 +2603,11 @@ def _make_thumbs(job_id: str, analysis: dict, outputs: dict, settings: dict):
     _update(job_id, thumbs=thumbs, thumbs_generated=generated, thumb_problems=problems)
 
 
+def _profile_for(job: dict, channel: str, lang: str, rules: dict) -> str:
+    """The profile picked for this video, else the channel's; ASK when the channel wants a pick that is not made."""
+    return (job.get("octo_pick") or {}).get(lang) or rules.get(f"{channel}|{lang}") or ""
+
+
 def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options: dict):
     """Thumbnails, the owner's check if asked for, then each language goes to its channel's Octo profile."""
     from . import studio_upload
@@ -2584,7 +2630,7 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
         if not file:
             skipped[lang] = f"нет файла загрузки_YouTube_{lang.upper()}.md"
             continue
-        if not rules.get(f"{channel}|{lang}"):
+        if not _profile_for(job, channel, lang, rules):
             skipped[lang] = f"не выбран профиль Octo для «{channel} · {lang.upper()}»"
             continue
         package = upload_package.parse(file)
@@ -2605,13 +2651,14 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
         thumbs[lang] = str(thumb)
         ready[lang] = (package, thumb)
     _update(job_id, thumbs=thumbs, thumbs_generated=generated, upload_skipped=skipped)
-    if options.get("folder_thumb_review", True) and any(not approved.get(lang) for lang in ready):
-        raise _ReviewRequested()
+    need_pick = [lang for lang in ready if _profile_for(job, channel, lang, rules) == ASK]
+    if need_pick or (options.get("folder_thumb_review", True) and any(not approved.get(lang) for lang in ready)):
+        raise _ReviewRequested(need_pick)
     failures = []
     privacy = options.get("folder_upload_privacy") or "public"
     for lang, (package, thumb) in ready.items():
         _check_control(job_id)
-        uuid = rules[f"{channel}|{lang}"]
+        uuid = _profile_for(job, channel, lang, rules)
         tag = f"[{lang.upper()}]"
         try:
             with _profile_lock(uuid):
