@@ -51,6 +51,7 @@ NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech",
 
 FOLDER_OPTION_KEYS = (
     "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
+    "folder_schedule", "folder_schedule_time", "folder_mp4_forever",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
     "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
@@ -63,7 +64,7 @@ FOLDER_OPTION_KEYS = (
 # Folders, threads and speed stay common for the whole Mac.
 CHANNEL_OPTION_KEYS = (
     "folder_languages", "folder_fast", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_upload",
-    "folder_upload_privacy", "folder_thumb_review",
+    "folder_upload_privacy", "folder_thumb_review", "folder_schedule", "folder_schedule_time",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name", "folder_voice_en_id", "folder_voice_en_name",
     "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
@@ -2668,6 +2669,60 @@ def _to_trash(path: Path) -> str:
     return ""
 
 
+# Scheduled publishing: the viewers' time zone of each language (English = the USA, Spanish = Spain).
+SCHEDULE_ZONES = {"en": ("America/New_York", "Нью-Йорку"), "es": ("Europe/Madrid", "Мадриду"),
+                  "de": ("Europe/Berlin", "Берлину"), "ru": ("Europe/Moscow", "Москве")}
+_slot_lock = threading.Lock()
+
+
+def _slot_time(text: str) -> tuple[int, int]:
+    m = re.match(r"\s*(\d{1,2})[:.](\d{2})", str(text or ""))
+    h, mi = (int(m.group(1)), int(m.group(2))) if m else (15, 0)
+    return (h if 0 <= h < 24 else 15), (mi - mi % 15 if 0 <= mi < 60 else 0)  # Studio offers times every 15 minutes
+
+
+def _reserve_slot(key: str, lang: str, at: str):
+    """One video a day per YouTube channel: the first day from today whose «at» (viewers' time) is still at least
+    two hours away and has no video of this channel yet. The day is written down at once, so two videos built side
+    by side never get the same day; _release_slot gives it back if the upload fails."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    zone = ZoneInfo(SCHEDULE_ZONES.get(lang, ("UTC", ""))[0])
+    hour, minute = _slot_time(at)
+    now = datetime.now(zone)
+    with _slot_lock:
+        slots = dict(load_settings().get("upload_slots") or {})
+        taken = set(slots.get(key) or [])
+        day = now.date()
+        while True:
+            when = datetime(day.year, day.month, day.day, hour, minute, tzinfo=zone)
+            if when - now >= timedelta(hours=2) and day.isoformat() not in taken:
+                break
+            day += timedelta(days=1)
+        keep = sorted(d for d in taken if d >= (now.date() - timedelta(days=3)).isoformat())
+        slots[key] = keep + [day.isoformat()]
+        save_settings({"upload_slots": slots})
+    return when
+
+
+def _release_slot(key: str, when):
+    with _slot_lock:
+        slots = dict(load_settings().get("upload_slots") or {})
+        slots[key] = [d for d in slots.get(key) or [] if d != when.date().isoformat()]
+        save_settings({"upload_slots": slots})
+
+
+def _delete_mp4(path: Path, forever: bool) -> str:
+    """After a checked upload: the MP4 is deleted for good (the Mac is short of space) or goes to the Trash."""
+    if not forever:
+        return _to_trash(path)
+    try:
+        path.unlink()
+        return "удалён"
+    except OSError:
+        return ""
+
+
 def _profile_for(job: dict, channel: str, lang: str, rules: dict) -> str:
     """The profile picked for this video, else the channel's; ASK when the channel wants a pick that is not made."""
     return (job.get("octo_pick") or {}).get(lang) or rules.get(f"{channel}|{lang}") or ""
@@ -2732,12 +2787,21 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
                 check: dict = {}
                 yt_key = f"{channel}|{lang}|{uuid}"
                 yt = (load_settings().get("octo_yt_channels") or {}).get(yt_key) or {}
+                when = None
+                if privacy == "public" and options.get("folder_schedule", True):
+                    when = _reserve_slot(yt_key, lang, options.get("folder_schedule_time") or "15:00")
+                    city = SCHEDULE_ZONES.get(lang, ("", "UTC"))[1]
+                    _update(job_id, step=f"{tag} Выйдет {when.strftime('%d.%m')} в {when.strftime('%H:%M')} по {city}")
                 try:
                     link = studio_upload.upload(
                         ws, Path(outputs[lang]), package, thumb, privacy,
                         log=lambda m, t=tag: _update(job_id, step=f"{t} {m}"),
                         cancelled=lambda: (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping"),
-                        result=check, channel_ref=yt.get("id") or yt.get("ref") or "")
+                        result=check, channel_ref=yt.get("id") or yt.get("ref") or "", schedule=when)
+                except BaseException:
+                    if when is not None:
+                        _release_slot(yt_key, when)
+                    raise
                 finally:
                     # The program closes the profile it used, so profiles do not pile up open; the owner can mark
                     # some profiles «не закрывать» (settings octo_keep_open). A screenshot of a failure is already saved.
@@ -2746,6 +2810,15 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
                         octo.stop(uuid)
             uploaded[lang] = link or "опубликовано"
             _update(job_id, uploaded=uploaded)
+            if when is not None:
+                planned = dict(job.get("scheduled") or {})
+                planned[lang] = (f"{when.strftime('%d.%m %H:%M')} по {SCHEDULE_ZONES.get(lang, ('', 'UTC'))[1]}"
+                                 if check.get("scheduled") else "дата не встала — ролик скрыт, поставьте дату в Studio")
+                _update(job_id, scheduled=planned)
+                if not check.get("scheduled"):
+                    failures.append(f"{lang.upper()}: ролик загружен, но дату публикации Studio не принял — он сохранён "
+                                    f"скрытым; поставьте в Studio «Запланировать» на {when.strftime('%d.%m %H:%M')} "
+                                    f"по {SCHEDULE_ZONES.get(lang, ('', 'UTC'))[1]}")
             if check.get("channel_id"):
                 # The channel it went to is remembered for this profile: next time Studio is opened right on it.
                 all_yt = dict(load_settings().get("octo_yt_channels") or {})
@@ -2754,11 +2827,13 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
             if check.get("thumb_ok") is False:
                 failures.append(f"{lang.upper()}: ролик опубликован, но ПРЕВЬЮ НЕ ПОСТАВИЛОСЬ — поставьте его в Studio руками")
             if options.get("folder_trash_mp4", True) and check.get("verified"):
-                where = _to_trash(Path(outputs[lang]))
+                forever = load_settings().get("folder_mp4_forever", True)
+                where = _delete_mp4(Path(outputs[lang]), forever)
                 trashed = dict(job.get("trashed") or {})
                 trashed[lang] = where or ""
+                done = "MP4 удалён" if forever else "MP4 отправлен в Корзину"
                 _update(job_id, trashed=trashed,
-                        step=f"{tag} " + ("MP4 отправлен в Корзину" if where else "MP4 не удалось убрать в Корзину — лежит на месте"))
+                        step=f"{tag} " + (done if where else "MP4 удалить не удалось — лежит на месте"))
         except UserError as exc:
             failures.append(f"{lang.upper()}: {exc}")
     _check_control(job_id)

@@ -465,7 +465,137 @@ def _uploading(page) -> bool:
     return bool(re.search(r"\d+\s?%", text)) and not re.search(r"(?i)process|обработ|verarbeit|procesa", text)
 
 
-PUBLISH_TEXT = r"^\s*(Publish|Опубликовать|Publicar|Veröffentlichen|Save|Сохранить|Guardar|Speichern)\s*$"
+PUBLISH_TEXT = (r"^\s*(Publish|Опубликовать|Publicar|Veröffentlichen|Save|Сохранить|Guardar|Speichern|"
+                r"Schedule|Запланировать|Programar|Planen|Agendar|Programmer)\s*$")
+SCHEDULE_TEXT = r"(Schedule|Запланировать|Programar|Planen|Agendar|Programmer)"
+GMT = re.compile(r"(?:GMT|UTC)\s?([+\-−–])\s?(\d{1,2})(?::?(\d{2}))?")
+
+
+def _studio_zone(page):
+    """The time zone Studio's schedule fields are in: the «GMT+03:00» it shows next to them, else the browser's own
+    (an Octo profile has the zone of its proxy). Returns a tzinfo and its name for the log."""
+    from datetime import timedelta, timezone
+    for line in _status_text(page).splitlines():
+        m = GMT.search(line)
+        if m and len(line) < 80:
+            mins = int(m.group(2)) * 60 + int(m.group(3) or 0)
+            sign = -1 if m.group(1) in "-−–" else 1
+            return timezone(timedelta(minutes=sign * mins)), m.group(0)
+    try:
+        from zoneinfo import ZoneInfo
+        name = page.evaluate("Intl.DateTimeFormat().resolvedOptions().timeZone") or ""
+        if name:
+            return ZoneInfo(name), name
+    except Exception:  # noqa: BLE001
+        pass
+    return None, ""
+
+
+def _page_lang(page) -> str:
+    try:
+        return page.evaluate("document.documentElement.lang || navigator.language") or "en"
+    except Exception:  # noqa: BLE001
+        return "en"
+
+
+def _date_ok(shown: str, day: int, month: int, year: int, months: list[str]) -> bool:
+    low = (shown or "").lower()
+    nums = [int(x) for x in re.findall(r"\d+", low)]
+    if day not in nums or year not in nums:
+        return False
+    return month in [n for n in nums if n not in (year,)] or any(m and m in low for m in months)
+
+
+def _set_schedule(page, when, log) -> bool:
+    """«Schedule»: opens the block on the visibility step, types the date and the time (in the formats of Studio's
+    own language, made by the browser) and reads them back. False if Studio did not take them."""
+    opener = _first_visible(page.locator("#second-container-expand-button, ytcp-icon-button#second-container-expand-button, "
+                                         "tp-yt-paper-radio-button#schedule-radio-button"), 5) or _first_visible(
+        page.locator("#second-container").filter(has_text=re.compile(SCHEDULE_TEXT, re.I)), 3) or _first_visible(
+        page.get_by_text(re.compile(r"^\s*" + SCHEDULE_TEXT, re.I)), 3)
+    trigger_sel = "#datepicker-trigger, ytcp-text-dropdown-trigger#datepicker-trigger, ytcp-date-picker ytcp-dropdown-trigger"
+    if not _first_visible(page.locator(trigger_sel), 1):
+        if not opener:
+            log("Не нашёл блок «Запланировать публикацию»")
+            return False
+        try:
+            opener.scroll_into_view_if_needed(timeout=10_000)
+            opener.click(timeout=10_000)
+        except Exception:  # noqa: BLE001
+            try:
+                opener.evaluate("e => e.click()")
+            except Exception:  # noqa: BLE001
+                pass
+        time.sleep(1.5)
+    trigger = _first_visible(page.locator(trigger_sel), 10)
+    if not trigger:
+        log("Блок «Запланировать» не открылся")
+        return False
+    zone, zone_name = _studio_zone(page)
+    local = when.astimezone(zone) if zone else when
+    lang = _page_lang(page)
+    fmt = page.evaluate("""([y, m, d, hh, mm, lang]) => { const dt = new Date(y, m - 1, d, hh, mm); const out = {dates: [], times: [], months: []};
+        const add = (arr, f) => { try { const v = f(); if (v && !arr.includes(v)) arr.push(v); } catch (e) {} };
+        for (const o of [{dateStyle: 'medium'}, {dateStyle: 'short'}, {year: 'numeric', month: '2-digit', day: '2-digit'}, {dateStyle: 'long'}])
+          add(out.dates, () => new Intl.DateTimeFormat(lang, o).format(dt));
+        add(out.dates, () => new Intl.DateTimeFormat('en-US', {dateStyle: 'medium'}).format(dt));
+        for (const o of [{timeStyle: 'short'}, {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}, {hour: 'numeric', minute: '2-digit', hour12: true}])
+          add(out.times, () => new Intl.DateTimeFormat(lang, o).format(dt).replace(/\u202f|\u00a0/g, ' '));
+        add(out.times, () => new Intl.DateTimeFormat('en-US', {hour: 'numeric', minute: '2-digit', hour12: true}).format(dt).replace(/\u202f|\u00a0/g, ' '));
+        for (const o of [{month: 'long'}, {month: 'short'}]) add(out.months, () => new Intl.DateTimeFormat(lang, o).format(dt).toLowerCase().replace(/[.]$/, ''));
+        return out; }""", [local.year, local.month, local.day, local.hour, local.minute, lang])
+    date_ok = False
+    for text in fmt.get("dates") or []:
+        try:
+            trigger.click(timeout=10_000)
+            time.sleep(1)
+            box = _first_visible(page.locator("ytcp-date-picker tp-yt-paper-input input, ytcp-date-picker input, "
+                                              "tp-yt-paper-dialog ytcp-date-picker input, #datepicker input"), 5)
+            if not box:
+                continue
+            box.fill(text, timeout=10_000)
+            box.press("Enter")
+            time.sleep(1.2)
+            shown = trigger.inner_text(timeout=5000)
+            if _date_ok(shown, local.day, local.month, local.year, fmt.get("months") or []):
+                date_ok = True
+                break
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001
+            pass
+    if not date_ok:
+        log("Studio не принял дату публикации")
+        return False
+    time_ok = False
+    h12 = local.hour % 12 or 12
+    for text in fmt.get("times") or []:
+        try:
+            box = _first_visible(page.locator("#time-of-day-container input, ytcp-form-input-container#time-of-day-container input, "
+                                              "#time-of-day-trigger input, ytcp-visibility-scheduler input"), 5)
+            if not box:
+                break
+            box.click(timeout=10_000)
+            box.fill(text, timeout=10_000)
+            box.press("Enter")
+            time.sleep(1)
+            nums = [int(x) for x in re.findall(r"\d+", box.input_value(timeout=5000) or "")]
+            if len(nums) >= 2 and nums[0] in (local.hour, h12) and nums[1] == local.minute:
+                time_ok = True
+                break
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        page.keyboard.press("Escape")  # a list of times may stay open over the buttons
+    except Exception:  # noqa: BLE001
+        pass
+    if not time_ok:
+        log("Studio не принял время публикации")
+        return False
+    log(f"Публикация запланирована: {local.strftime('%d.%m.%Y %H:%M')} по времени Studio ({zone_name or 'пояс браузера'})")
+    return True
 
 
 def _publish_button(page):
@@ -690,10 +820,12 @@ def _verify(page, link: str, title: str, log) -> bool:
 
 
 def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privacy: str = "public",
-           log=lambda s: None, cancelled=lambda: False, result: dict | None = None, channel_ref: str = "") -> str:
+           log=lambda s: None, cancelled=lambda: False, result: dict | None = None, channel_ref: str = "",
+           schedule=None) -> str:
     """Uploads and publishes; returns the video link. meta: {title, description, tags, kids, category, altered}.
     channel_ref: the YouTube channel it must go to (UC… id, a link or @handle); empty = the one open in the profile.
-    result gets video_id, verified, thumb_ok, channel_id and channel_name."""
+    schedule: an aware datetime — the video goes up now and YouTube itself makes it public then.
+    result gets video_id, verified, thumb_ok, channel_id, channel_name and scheduled (True/False/None)."""
     from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 
     if not video.is_file():
@@ -764,7 +896,16 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
                 nxt.wait_for(state="visible", timeout=60_000)
                 nxt.click()
                 time.sleep(2)
-            page.locator(f"tp-yt-paper-radio-button[name={PRIVACY.get(privacy, 'PUBLIC')}]").first.click()
+            scheduled = None
+            if schedule is not None:
+                log("Ставлю отложенную публикацию…")
+                scheduled = _set_schedule(page, schedule, log)
+                if not scheduled:
+                    # Never public before its time: the video is kept hidden, the owner sets the date in Studio.
+                    log("Дату поставить не получилось — сохраняю ролик скрытым (Ограниченный доступ)")
+                    page.locator("tp-yt-paper-radio-button[name=PRIVATE]").first.click()
+            else:
+                page.locator(f"tp-yt-paper-radio-button[name={PRIVACY.get(privacy, 'PUBLIC')}]").first.click()
             time.sleep(1)
             link = ""
             try:
@@ -815,10 +956,11 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
                     link = page.locator("ytcp-video-share-dialog a, a#share-url").first.get_attribute("href", timeout=15_000) or ""
                 except PWTimeout:
                     link = ""
-            log("Опубликовано")
+            log("Запланировано" if scheduled else "Опубликовано")
             if result is not None:
                 result["video_id"] = video_id(link)
                 result["channel_id"], result["channel_name"] = want, channel_name
+                result["scheduled"] = scheduled
             if thumb_ok is False:
                 thumb_ok = _thumb_on_edit_page(page, link, thumb, log)
             if result is not None:
