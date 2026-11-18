@@ -91,15 +91,33 @@ def channel_custom(settings: dict, channel: str) -> dict:
     return {k: v for k, v in stored.items() if k in CHANNEL_OPTION_KEYS}
 
 
-def channel_parent(settings: dict, channel: str) -> str:
-    """«Животные - Звери EN» belongs to the family «Животные EN»: while the family channel has its own settings,
-    every «Животные - … EN» channel builds with them (its own settings, if any, go on top). Octo profiles stay per channel."""
+def channel_family(channel: str) -> str:
+    """«Животные - Звери EN» → «Животные EN»; a channel without « - » has no family."""
     name = folder_inbox._nfc(channel or "").strip()
     if " - " not in name:
         return ""
     head, lang = name.split(" - ", 1)[0].strip(), channel_lang(name)
     parent = f"{head} {lang.upper()}" if lang else head
-    return parent if parent != name and channel_custom(settings, parent) else ""
+    return parent if parent != name else ""
+
+
+def channel_parent(settings: dict, channel: str) -> str:
+    """«Животные - Звери EN» belongs to the family «Животные EN»: while the family channel has its own settings,
+    every «Животные - … EN» channel builds with them (its own settings, if any, go on top). Octo profiles stay per channel."""
+    parent = channel_family(channel)
+    return parent if parent and channel_custom(settings, parent) else ""
+
+
+def channel_work_dir(settings: dict, channel: str) -> tuple[str, str]:
+    """Where the channel's projects are unpacked and built: (folder, channel whose folder it is).
+    The channel's own folder, else its family's («Животные EN» for «Животные - Звери EN»), else the common one ("")."""
+    dirs = settings.get("folder_channel_work_dirs") or {}
+    name = folder_inbox._nfc(channel or "").strip()
+    for owner in (name, channel_family(name)):
+        raw = str(dirs.get(owner) or "").strip() if owner else ""
+        if raw:
+            return raw, owner
+    return str(settings.get("folder_work_dir") or "").strip(), ""
 
 
 def channel_settings(settings: dict, channel: str) -> dict:
@@ -118,6 +136,7 @@ def channel_settings(settings: dict, channel: str) -> dict:
 
 def known_channels(settings: dict) -> list[dict]:
     names = set(settings.get("folder_channel_settings") or {}) | set(settings.get("folder_channels_extra") or [])
+    names |= set(settings.get("folder_channel_work_dirs") or {})
     names |= {key.split("|", 1)[0] for key in (settings.get("octo_rules") or {}) if "|" in key}
     with _lock:
         names |= {channel_of(job.get("path")) for job in _jobs.values() if job.get("path")}
@@ -645,7 +664,50 @@ def list_queue(channel: str = ""):
         "summary": _setting_summary(settings), "octo_token_set": bool(settings.get("octo_token")),
         "channel": channel, "channel_custom": bool(channel and channel_custom(settings, channel)),
         "channel_parent": channel_parent(settings, channel) if channel else "",
+        "channel_work": _channel_work_public(settings, channel),
         "channels": known_channels(settings)}
+
+
+def _channel_work_public(settings: dict, channel: str) -> dict:
+    if not channel:
+        return {}
+    path, owner = channel_work_dir(settings, channel)
+    own = str((settings.get("folder_channel_work_dirs") or {}).get(channel) or "")
+    return {"own": own, "path": path, "from": owner, "family": channel_family(channel)}
+
+
+def _work_dir_problem(path: str, inbox: str) -> str:
+    try:
+        work_r, inbox_r = Path(path).expanduser().resolve(), Path(inbox).expanduser().resolve() if inbox else None
+    except OSError as exc:
+        return f"Не открывается папка: {exc}"
+    if not Path(path).expanduser().is_absolute():
+        return "Нужен полный путь к папке (лучше выбрать кнопкой «📁 Выбрать»)."
+    if inbox_r and (work_r == inbox_r or inbox_r in work_r.parents or work_r in inbox_r.parents):
+        return "Рабочая папка не должна быть внутри папки входящих (и наоборот). Выберите другую."
+    return ""
+
+
+@router.post("/channel/workdir")
+def set_channel_work_dir(data: dict = Body(...)):
+    """The channel's own work folder; an empty path returns the channel to its family's or the common folder."""
+    name = folder_inbox._nfc(str(data.get("channel") or "")).strip()
+    if not name:
+        raise UserError("Сначала выберите канал.")
+    path = str(data.get("path") or "").strip()
+    settings = load_settings()
+    if path:
+        problem = _work_dir_problem(path, str(settings.get("folder_inbox_dir") or "").strip())
+        if problem:
+            raise UserError(problem)
+    dirs = dict(settings.get("folder_channel_work_dirs") or {})
+    if path:
+        dirs[name] = path
+    else:
+        dirs.pop(name, None)
+    save_settings({"folder_channel_work_dirs": dirs})
+    _inbox_wake.set()
+    return {"ok": True, "channel_work": _channel_work_public(load_settings(), name)}
 
 
 @router.post("/settings")
@@ -2639,8 +2701,14 @@ def inbox_pass(force_github: bool = False) -> dict:
     except Exception as exc:
         state["github_status"] = f"Ошибка: {exc}"
     try:
+        def work_for(channel: str) -> Path:
+            path, owner = channel_work_dir(settings, channel)
+            if owner and _work_dir_problem(path, inbox):
+                return Path(work).expanduser()  # a broken channel folder must not send its archives to «_ошибки»
+            return Path(path).expanduser()
+
         folder_inbox.scan_once(Path(inbox), Path(work), state, is_project=_inbox_is_project, enqueue=_inbox_enqueue,
-                               log=lambda m: print(m, flush=True))
+                               work_for=work_for, log=lambda m: print(m, flush=True))
     except Exception as exc:  # the watcher must survive anything
         state["status"] = f"Ошибка проверки: {exc}"
     try:

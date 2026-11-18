@@ -3731,9 +3731,12 @@ async function viewFolderBuilder() {
       ${(data.channels || []).map(c => `<button class="sm ${FB_CHANNEL === c.name ? "primary" : ""}" data-fb-channel="${esc(c.name)}" title="${c.custom ? "Свои настройки" : c.parent ? `С настройками канала «${esc(c.parent)}»` : "Пока с общими настройками"}">${esc(c.name)}${c.custom ? " ✱" : c.parent ? " ↳" : ""}</button>`).join("")}
       <button class="sm" id="fb-channel-add">＋ Канал</button>
     </div>
-    ${FB_CHANNEL ? `<div class="banner ${data.channel_custom ? "" : "warn"} small" style="margin-top:10px">Ниже — настройки канала <b>${esc(FB_CHANNEL)}</b>. ${data.channel_custom ? (data.channel_parent ? `У него свои настройки поверх настроек канала «${esc(data.channel_parent)}»: изменения здесь касаются только его.` : "У него свои настройки: изменения здесь касаются только его.") : data.channel_parent ? `Своих настроек нет — собирается с настройками канала <b>${esc(data.channel_parent)}</b> (голоса, музыка, монтаж, субтитры). Измените что-нибудь — и у канала появятся свои. Профиль Octo у каждого канала свой.` : "Своих настроек пока нет, показаны общие. Измените что-нибудь — и у канала появятся свои."} Папки, потоки и скорость сборки — общие для всех каналов.
+    ${FB_CHANNEL ? `<div class="banner ${data.channel_custom ? "" : "warn"} small" style="margin-top:10px">Ниже — настройки канала <b>${esc(FB_CHANNEL)}</b>. ${data.channel_custom ? (data.channel_parent ? `У него свои настройки поверх настроек канала «${esc(data.channel_parent)}»: изменения здесь касаются только его.` : "У него свои настройки: изменения здесь касаются только его.") : data.channel_parent ? `Своих настроек нет — собирается с настройками канала <b>${esc(data.channel_parent)}</b> (голоса, музыка, монтаж, субтитры). Измените что-нибудь — и у канала появятся свои. Профиль Octo у каждого канала свой.` : "Своих настроек пока нет, показаны общие. Измените что-нибудь — и у канала появятся свои."} Папка входящих, потоки и скорость сборки — общие для всех каналов; рабочую папку можно задать каналу свою (ниже).
       ${data.channel_custom ? `<button class="sm" id="fb-channel-reset" style="margin-left:8px">Вернуть общие настройки</button>` : ""}</div>
-      <div id="fb-channel-octo" style="margin-top:8px"></div>` : `<div class="muted small" style="margin-top:8px">Ниже — общие настройки: ими собираются каналы без своих настроек (✱ — у канала свои).</div>`}
+      <div id="fb-channel-octo" style="margin-top:8px"></div>
+      <div class="fb-channel-work" style="margin-top:10px"><label class="f">📂 Рабочая папка канала <span class="hint">${data.channel_work?.own ? "своя у этого канала" : data.channel_work?.from ? `берётся у канала «${esc(data.channel_work.from)}»` : "своей нет — общая рабочая папка (внизу страницы)"}</span></label>
+        <div class="row"><input class="grow" type="text" id="fb-channel-work" placeholder="${esc(data.channel_work?.path || "/Users/…/ЮТУБ НИШИ")}" value="${esc(data.channel_work?.own || "")}"><button class="btn" id="fb-channel-work-pick">📁 Выбрать</button><button class="btn" id="fb-channel-work-save">Сохранить</button>${data.channel_work?.own ? `<button class="btn sm" id="fb-channel-work-clear">Убрать</button>` : ""}</div>
+        <div class="muted small">Новые сценарии канала распакуются и соберутся в <code>${esc(data.channel_work?.path || "общую рабочую папку")}/${esc(FB_CHANNEL)}/</code>.${data.channel_work?.family && !data.channel_work?.own ? ` Укажите папку у канала «${esc(data.channel_work.family)}» — и её возьмут все каналы «${esc(data.channel_work.family.replace(/\s+(EN|RU|DE|ES)$/i, ""))} - … ${esc((data.channel_work.family.match(/(EN|RU|DE|ES)$/i) || [""])[0])}».` : ""} Уже распакованные проекты остаются там, где лежат.</div></div>` : `<div class="muted small" style="margin-top:8px">Ниже — общие настройки: ими собираются каналы без своих настроек (✱ — у канала свои).</div>`}
   </div>
   <div class="card fb-settings"><div class="row"><h2 class="grow" style="margin:0">${FB_CHANNEL ? `Настройки канала «${esc(FB_CHANNEL)}»` : "Перед запуском — общие настройки"}</h2><a class="btn sm" href="#/settings">⚙️ Открыть полные настройки и ключи</a></div>
     <div class="grid2"><div>
@@ -3781,8 +3784,8 @@ async function viewFolderBuilder() {
     </div></div></div>
   <div class="card fb-inbox"><h2 style="margin-top:0">📥 Автоподхват из папки</h2>
     <p class="muted small">Положите <code>.zip</code> сценария (или готовую папку проекта) в подпапку канала внутри «Папки входящих» — программа раз в минуту проверит её, распакует проект в «Рабочую папку» (в подпапку с тем же именем канала) и поставит в очередь. Готовые архивы переезжают в <code>_обработано</code>, неудачные — в <code>_ошибки</code> с файлом-объяснением.</p>
-    <label class="f">Папка входящих (папка Google Drive, внутри — папки каналов)</label>
-    <div class="row"><input class="grow" type="text" data-fbo="folder_inbox_dir" id="fb-inbox-dir" placeholder="/Users/…/Google Drive/Мой диск/Авто ютуб входящие" value="${esc(q("folder_inbox_dir", ""))}"><button class="btn" data-fb-pick-dir="fb-inbox-dir" data-prompt="Выберите папку входящих (в Google Drive)">📁 Выбрать</button></div>
+    <label class="f">Папка входящих (любая папка на этом Mac, внутри — папки каналов; если сценарии приходят из GitHub, Google Drive не нужен)</label>
+    <div class="row"><input class="grow" type="text" data-fbo="folder_inbox_dir" id="fb-inbox-dir" placeholder="/Users/…/Авто ютуб входящие" value="${esc(q("folder_inbox_dir", ""))}"><button class="btn" data-fb-pick-dir="fb-inbox-dir" data-prompt="Выберите папку входящих">📁 Выбрать</button></div>
     <label class="f">Рабочая папка (на этом Mac, не в Google Drive: тут будут кадры, озвучка и MP4)</label>
     <div class="row"><input class="grow" type="text" data-fbo="folder_work_dir" id="fb-work-dir" placeholder="/Users/…/Авто ютуб проекты" value="${esc(q("folder_work_dir", ""))}"><button class="btn" data-fb-pick-dir="fb-work-dir" data-prompt="Выберите рабочую папку (не в Google Drive)">📁 Выбрать</button></div>
     <details class="fb-github" ${q("folder_github_repo", "") ? "open" : ""}><summary><b>Сценарии из GitHub</b> <span class="muted small">— сценарист кладёт .zip в закрытый репозиторий, программа сама скачивает их в папку входящих</span></summary>
@@ -3828,6 +3831,16 @@ async function viewFolderBuilder() {
       catch (e) { toast(e.message, true); }
     });
   };
+  const saveChannelWork = async path => {
+    try { await api("/api/folder-builder/channel/workdir", { json: { channel: FB_CHANNEL, path } }); toast(path ? "Рабочая папка канала сохранена" : "Канал снова берёт общую рабочую папку"); viewFolderBuilder(); }
+    catch (e) { toast(e.message, true); }
+  };
+  $("#fb-channel-work-pick")?.addEventListener("click", async () => {
+    try { const r = await api("/api/folder-builder/pick-one", { json: { prompt: `Выберите рабочую папку канала «${FB_CHANNEL}»` } }); if (r.path) await saveChannelWork(r.path); }
+    catch (e) { toast(e.message, true); }
+  });
+  $("#fb-channel-work-save")?.addEventListener("click", () => saveChannelWork($("#fb-channel-work").value.trim()));
+  $("#fb-channel-work-clear")?.addEventListener("click", () => saveChannelWork(""));
   if (FB_CHANNEL) {
     if (!OCTO.profiles && data.octo_token_set) await loadOcto(false);
     drawChannelOcto();

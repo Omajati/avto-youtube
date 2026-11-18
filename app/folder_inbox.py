@@ -218,10 +218,12 @@ def scan_once(inbox: Path, work: Path, state: dict, *,
               enqueue: Callable[[Path, str], None],
               now: float | None = None,
               stable_seconds: float = STABLE_SECONDS,
+              work_for: Callable[[str], Path] | None = None,
               log: Callable[[str], None] = lambda _m: None) -> dict:
     """Один проход наблюдателя. Меняет и возвращает ``state``; сохраняет его вызывающий.
 
     ``is_project(path)`` — есть ли в папке сцены и озвучка;
+    ``work_for(channel)`` — рабочая папка канала (своя у канала или общая ``work``);
     ``enqueue(path, channel)`` — поставить готовую папку в очередь (ошибка → проект в «_ошибки» не уходит,
     но счётчик ошибок растёт).
     """
@@ -284,7 +286,14 @@ def scan_once(inbox: Path, work: Path, state: dict, *,
                     continue  # обычная папка без сцен и озвучки — не трогаем
                 state["pending"].pop(key, None)
                 seen_pending.discard(key)
-                _take(item, is_zip, channel, work, state, done_key, is_project, enqueue, log)
+                base = work
+                if work_for:
+                    try:
+                        base = Path(work_for(channel)).expanduser()
+                        base.mkdir(parents=True, exist_ok=True)
+                    except Exception:
+                        base = work
+                _take(item, is_zip, channel, base, state, done_key, is_project, enqueue, log)
         for key in list(state["pending"]):
             if key not in seen_pending:
                 state["pending"].pop(key, None)
