@@ -292,19 +292,44 @@ def _set_altered(page, yes: bool):
     return False
 
 
+def _clear(page, box):
+    """Empties a Studio text box. YouTube pre-fills the title with the file name; Cmd+A sent through the debug
+    port does not always select everything on a Mac, so the text is also selected and removed by the page itself."""
+    box.click()
+    for keys in ("ControlOrMeta+A", "Meta+A", "Control+A"):
+        try:
+            page.keyboard.press(keys)
+            page.keyboard.press("Backspace")
+        except Exception:  # noqa: BLE001
+            pass
+        if not (box.inner_text() or "").strip():
+            return
+    box.evaluate("""e => { e.focus(); const r = document.createRange(); r.selectNodeContents(e);
+        const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); }""")
+    page.keyboard.press("Delete")
+    if (box.inner_text() or "").strip():
+        box.evaluate("e => { e.textContent = ''; e.dispatchEvent(new InputEvent('input', {bubbles: true})); }")
+
+
+def _norm(t: str) -> str:
+    return " ".join((t or "").split())
+
+
 def _type_into(page, selector: str, text: str):
     box = page.locator(selector).first
     box.wait_for(state="visible", timeout=60_000)
-    box.click()
-    page.keyboard.press("Meta+A")
-    page.keyboard.press("Backspace")
-    # Line breaks in a contenteditable: Shift+Enter keeps them as new lines of the same field.
-    for i, line in enumerate(text.split("\n")):
-        if i:
-            page.keyboard.press("Shift+Enter")
-        if line:
-            page.keyboard.insert_text(line)
-    time.sleep(.4)
+    for attempt in range(3):
+        _clear(page, box)
+        # Line breaks in a contenteditable: Shift+Enter keeps them as new lines of the same field.
+        for i, line in enumerate(text.split("\n")):
+            if i:
+                page.keyboard.press("Shift+Enter")
+            if line:
+                page.keyboard.insert_text(line)
+        time.sleep(.6)
+        if _norm(box.inner_text()) == _norm(text):
+            return
+    raise UserError(f"Не получилось вписать текст в поле YouTube Studio: там «{_norm(box.inner_text())[:80]}».")
 
 
 def _uploading(page) -> bool:
