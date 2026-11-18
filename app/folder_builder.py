@@ -973,7 +973,8 @@ def octo_profiles(refresh: bool = False):
     if refresh or time.time() - _profiles_cache["at"] > 300 or not _profiles_cache["items"]:
         _profiles_cache.update(at=time.time(), items=octo.profiles(settings))
     return {"profiles": _profiles_cache["items"], "rules": settings.get("octo_rules") or {},
-            "keep_open": settings.get("octo_keep_open") or []}
+            "keep_open": settings.get("octo_keep_open") or [],
+            "yt_channels": settings.get("octo_yt_channels") or {}}
 
 
 def _local_list() -> list[dict]:
@@ -985,7 +986,8 @@ def _save_local(items: list[dict]) -> dict:
     _profiles_cache.update(at=0, items=[])
     settings = load_settings()
     return {"profiles": octo.profiles(settings), "rules": settings.get("octo_rules") or {},
-            "keep_open": settings.get("octo_keep_open") or []}
+            "keep_open": settings.get("octo_keep_open") or [],
+            "yt_channels": settings.get("octo_yt_channels") or {}}
 
 
 @router.post("/octo/scan")
@@ -1033,6 +1035,28 @@ def octo_keep(data: dict = Body(...)):
     items = [u for u in (load_settings().get("octo_keep_open") or []) if u != uuid] + ([uuid] if keep else [])
     save_settings({"octo_keep_open": items})
     return {"keep_open": items}
+
+
+@router.post("/octo/yt-channel")
+def octo_yt_channel(data: dict = Body(...)):
+    """The YouTube channel a profile must upload to for this channel+language (an account may own several)."""
+    from .studio_upload import channel_ref_of
+    channel, lang, uuid = str(data.get("channel") or ""), str(data.get("lang") or ""), str(data.get("uuid") or "")
+    text = str(data.get("ref") or "").strip()
+    if not channel or lang not in LANGS or not uuid:
+        raise UserError("Сначала выберите профиль Octo для этого языка.")
+    ref = channel_ref_of(text)
+    if text and not ref:
+        raise UserError("Не понял адрес канала. Вставьте ссылку на канал (youtube.com/channel/UC… или youtube.com/@имя) "
+                        "или его номер UC….")
+    items = dict(load_settings().get("octo_yt_channels") or {})
+    key = f"{channel}|{lang}|{uuid}"
+    if ref:
+        items[key] = {"ref": ref, "id": ref if ref.startswith("UC") else "", "name": ""}
+    else:
+        items.pop(key, None)
+    save_settings({"octo_yt_channels": items})
+    return {"yt_channels": items}
 
 
 @router.post("/octo/rule")
@@ -2706,12 +2730,14 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
                 _update(job_id, progress=.99, step=f"{tag} Запускаю профиль Octo…")
                 ws = octo.start(uuid)
                 check: dict = {}
+                yt_key = f"{channel}|{lang}|{uuid}"
+                yt = (load_settings().get("octo_yt_channels") or {}).get(yt_key) or {}
                 try:
                     link = studio_upload.upload(
                         ws, Path(outputs[lang]), package, thumb, privacy,
                         log=lambda m, t=tag: _update(job_id, step=f"{t} {m}"),
                         cancelled=lambda: (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping"),
-                        result=check)
+                        result=check, channel_ref=yt.get("id") or yt.get("ref") or "")
                 finally:
                     # The program closes the profile it used, so profiles do not pile up open; the owner can mark
                     # some profiles «не закрывать» (settings octo_keep_open). A screenshot of a failure is already saved.
@@ -2720,6 +2746,13 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
                         octo.stop(uuid)
             uploaded[lang] = link or "опубликовано"
             _update(job_id, uploaded=uploaded)
+            if check.get("channel_id"):
+                # The channel it went to is remembered for this profile: next time Studio is opened right on it.
+                all_yt = dict(load_settings().get("octo_yt_channels") or {})
+                all_yt[yt_key] = {**yt, "id": check["channel_id"], "name": check.get("channel_name") or yt.get("name", "")}
+                save_settings({"octo_yt_channels": all_yt})
+            if check.get("thumb_ok") is False:
+                failures.append(f"{lang.upper()}: ролик опубликован, но ПРЕВЬЮ НЕ ПОСТАВИЛОСЬ — поставьте его в Studio руками")
             if options.get("folder_trash_mp4", True) and check.get("verified"):
                 where = _to_trash(Path(outputs[lang]))
                 trashed = dict(job.get("trashed") or {})

@@ -240,13 +240,61 @@ def _check_url(page):
                         "выберите нужный канал (он запомнится) и нажмите «Повторить выкладку».")
 
 
-def _expand(page, state: dict):
-    """Opens «Show more» once (tags, category and the AI label live there)."""
+SHOW_MORE_TEXT = r"^\s*(Show more|Show advanced settings|Развернуть|Показать больше|Ещё|Mostrar más|Mehr anzeigen|Mostrar mais|Afficher plus)\s*$"
+TAGS_BOX = "#tags-container input#text-input, ytcp-form-input-container#tags-container input, #tags-container input"
+
+
+def _more_open(page) -> bool:
+    for sel in (TAGS_BOX, "ytcp-form-select#category, #category ytcp-dropdown-trigger"):
+        try:
+            if _first_visible(page.locator(sel), 1.5):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+    return False
+
+
+def _expand(page, state: dict, log=lambda s: None) -> bool:
+    """Opens «Show more» (tags, category and the AI label live there). Several elements on the page may be named
+    #toggle-button, so the visible one is taken, scrolled to and pressed; then the tags field must show up. Never
+    waits forever: if the section does not open, False and the steps that need it are skipped."""
     if state.get("open"):
-        return
-    page.locator("ytcp-button#toggle-button, #toggle-button").first.click()
-    time.sleep(1)
-    state["open"] = True
+        return True
+    if _more_open(page):
+        state["open"] = True
+        return True
+    for attempt in range(3):
+        btn = _first_visible(page.locator("ytcp-uploads-dialog ytcp-button#toggle-button, ytcp-uploads-dialog #toggle-button, "
+                                          "ytcp-button#toggle-button, #toggle-button"), 5) or _first_visible(
+            page.get_by_role("button", name=re.compile(SHOW_MORE_TEXT, re.I)), 3) or _first_visible(
+            page.locator("ytcp-button, button, [role=button]").filter(has_text=re.compile(SHOW_MORE_TEXT, re.I)), 3)
+        if btn:
+            try:
+                btn.scroll_into_view_if_needed(timeout=10_000)
+                if attempt < 2:
+                    btn.click(timeout=10_000)
+                else:
+                    btn.evaluate("e => e.click()")  # something covers the button: press it from the page itself
+            except Exception:  # noqa: BLE001
+                try:
+                    btn.evaluate("e => e.click()")
+                except Exception:  # noqa: BLE001
+                    pass
+        else:
+            # The button may sit below the visible part of the window: scroll the dialog down and look again.
+            try:
+                page.locator("ytcp-uploads-dialog #scrollable-content, ytcp-uploads-dialog .scrollable").first.evaluate(
+                    "e => e.scrollTop = e.scrollHeight")
+            except Exception:  # noqa: BLE001
+                pass
+        time.sleep(1.5)
+        if _more_open(page):
+            state["open"] = True
+            return True
+    log("Не смог развернуть «Показать больше» — теги и категорию пропускаю, выкладка продолжается")
+    state["open"] = False
+    state["failed"] = True
+    return False
 
 
 def _set_category(page, cid: str, log):
@@ -336,11 +384,16 @@ def _type_into(page, selector: str, text: str):
 UPLOADING_TEXT = re.compile(r"(Uploading|Загрузка|Загружено|Загружается|Subiendo|Wird hochgeladen|Hochladen|"
                             r"Enviando|Carregando|Importation|Mise en ligne)\D{0,8}(\d{1,3})\s?%", re.I)
 # YouTube's checks (copyright and the rules), shown in the same status line once the file is up.
-CHECKS_OK = re.compile(r"(No issues found|Проблем не (обнаружено|найдено|выявлено)|No se ha encontrado ning[uú]n problema|"
-                       r"No se encontraron problemas|Keine Probleme gefunden|Nenhum problema encontrado|"
-                       r"Aucun probl[eè]me d[ée]tect[ée])", re.I)
+CHECKS_OK = re.compile(r"(No issues found|(Проблем|Нарушений) не (обнаружено|найдено|выявлено)|"
+                       r"Не (обнаружено|найдено|выявлено) (проблем|нарушений)|No se ha encontrado ning[uú]n problema|"
+                       r"No se (han )?encontrado problemas|No se encontraron problemas|Keine Probleme gefunden|"
+                       r"Keine Verst[öo](ß|ss)e gefunden|Nenhum problema encontrado|Aucun probl[eè]me d[ée]tect[ée])", re.I)
+# Any other wording of «nothing was found» («Нарушений не найдено»): a «no/не/keine» before the «found» word, on a line
+# that also names issues/violations/copyright (so an unrelated «nothing found» elsewhere on the page does not count).
+CHECKS_NONE = re.compile(r"\b(no|not|не|keine?|nenhum|aucun|ning[uú]n)\b[^.!\n]{0,25}"
+                         r"(found|detected|найден|обнаружен|выявлен|encontr|gefunden|erkannt|d[ée]tect)", re.I)
 CHECKS_BAD = re.compile(r"(Copyright|авторск|derechos de autor|Urheberrecht|direitos autorais|droits d.auteur|"
-                        r"issues?|problems?|проблем|problema|Probleme?)", re.I)
+                        r"issues?|problems?|проблем|нарушени|problema|Probleme?|violation|infracci|Versto)", re.I)
 # …and the same line says something was found: so a «privacy or copyright» link text is not taken for a verdict.
 CHECKS_FOUND = re.compile(r"(found|detected|обнаруж|найден|выявлен|encontr|detect|gefunden|erkannt|encontrad|d[ée]tect)",
                           re.I)
@@ -368,11 +421,11 @@ def _wait_checks(page, log, cancelled, max_s: int = 3 * 3600):
         if cancelled():
             raise _Stop()
         text = _status_text(page)
-        if CHECKS_OK.search(text):
+        if CHECKS_OK.search(text) or any(CHECKS_BAD.search(l) and CHECKS_NONE.search(l) for l in text.splitlines()):
             log("Проверка YouTube пройдена: проблем не найдено")
             return True
         line = next((l for l in text.splitlines() if CHECKS_BAD.search(l) and CHECKS_FOUND.search(l)
-                     and not CHECKS_OK.search(l)), "")
+                     and not CHECKS_OK.search(l) and not CHECKS_NONE.search(l)), "")
         if line:
             raise UserError(f"YouTube при проверке нашёл проблему: «{line[:160]}». Ролик загружен, но НЕ опубликован "
                             "(лежит черновиком в Studio): посмотрите шаг «Checks» и решите сами.")
@@ -432,6 +485,180 @@ def _publish_button(page):
     return btn.first
 
 
+CHANNEL_ID = re.compile(r"\b(UC[A-Za-z0-9_-]{22})\b")
+
+
+def channel_ref_of(text: str) -> str:
+    """What the owner typed for the channel: a link /channel/UC…, a bare UC… id, @handle or a youtube.com/@handle
+    link -> 'UC…' or '@handle'; '' when it is neither."""
+    text = (text or "").strip()
+    m = CHANNEL_ID.search(text)
+    if m:
+        return m.group(1)
+    m = re.search(r"(?:^|/)(@[\w.\-À-ɏЀ-ӿ]{2,})", text)
+    return m.group(1) if m else ""
+
+
+def _resolve_channel(context, page, ref: str, log) -> str:
+    """The UC… id of the channel the video must go to.
+    1) The one the owner set for this channel (an id, or a @handle looked up on its own YouTube page).
+    2) Not set: the channel already open in the profile's own Studio tab, else the one this profile has selected on
+       youtube.com (its «Advanced settings» page shows the channel id). Studio's bare address may open ANOTHER
+       channel of the same Google account (the one used in Studio last), so the address always names the channel."""
+    ref = channel_ref_of(ref)
+    if ref.startswith("UC"):
+        return ref
+    if ref.startswith("@"):
+        try:
+            page.goto(f"https://www.youtube.com/{ref}", wait_until="domcontentloaded", timeout=120_000)
+            time.sleep(2)
+            href = page.locator("link[rel=canonical]").first.get_attribute("href", timeout=10_000) or ""
+            m = CHANNEL_ID.search(href) or CHANNEL_ID.search(page.content())
+            if m:
+                return m.group(1)
+        except Exception:  # noqa: BLE001
+            pass
+        raise UserError(f"Не нашёл на YouTube канал {ref}. Проверьте адрес канала в настройках канала программы "
+                        "(лучше вставить ссылку вида youtube.com/channel/UC…).")
+    for other in list(context.pages):
+        if other is page:
+            continue
+        m = re.search(r"studio\.youtube\.com/channel/(UC[A-Za-z0-9_-]{22})", other.url or "")
+        if m:
+            log("Канал беру из открытой в профиле вкладки Studio")
+            return m.group(1)
+    try:
+        page.goto("https://www.youtube.com/account_advanced", wait_until="domcontentloaded", timeout=120_000)
+        time.sleep(2)
+        m = CHANNEL_ID.search(page.locator("body").inner_text(timeout=15_000) or "")
+        if m:
+            log("Канал беру тот, что выбран в профиле на YouTube")
+            return m.group(1)
+    except Exception:  # noqa: BLE001
+        pass
+    log("Не смог узнать, какой канал выбран в профиле, — Studio откроет свой последний")
+    return ""
+
+
+def _studio_channel(page) -> tuple[str, str]:
+    """(UC… id from Studio's address, the channel name in its left menu)."""
+    m = re.search(r"/channel/(UC[A-Za-z0-9_-]{22})", page.url or "")
+    name = ""
+    try:
+        box = _first_visible(page.locator("ytcp-navigation-drawer #entity-name, #entity-name, .entity-name"), 5)
+        name = _norm(box.inner_text(timeout=3000)) if box else ""
+    except Exception:  # noqa: BLE001
+        pass
+    return (m.group(1) if m else ""), name
+
+
+def _check_channel(page, want: str, log, quiet: bool = False) -> str:
+    """Stops BEFORE anything goes to the wrong channel: Studio must be on the wanted one. Returns its name."""
+    have, name = _studio_channel(page)
+    if want and have and have != want:
+        raise UserError(f"YouTube Studio открыл другой канал{f' «{name}»' if name else ''} ({have}) вместо нужного "
+                        f"({want}) — НЕ выкладываю. Откройте профиль Octo, переключитесь на нужный канал "
+                        "и нажмите «Повторить выкладку».")
+    if not quiet:
+        log(f"Канал в Studio: «{name or '?'}» ({have or want or 'адрес без номера канала'})")
+    return name
+
+
+def _thumb_imgs(page) -> list[str]:
+    """src of the pictures inside Studio's thumbnail block (a set thumbnail shows up there as data:/blob: image)."""
+    try:
+        return page.evaluate("""() => { const out = []; const walk = root => { for (const el of root.querySelectorAll('*')) {
+              if (el.shadowRoot) walk(el.shadowRoot);
+              if (el.tagName === 'IMG' && el.offsetParent !== null) { let p = el, hit = false;
+                for (let i = 0; p && i < 12; i++, p = p.parentElement || (p.getRootNode && p.getRootNode().host))
+                  if (/THUMBNAIL/i.test(p.tagName || '') || /thumbnail/i.test(p.id || '')) { hit = true; break; }
+                if (hit && el.src) out.push(el.src); } } };
+            walk(document); return out; }""") or []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+THUMB_INPUT = ("ytcp-thumbnails-compact-editor-uploader input[type=file], ytcp-thumbnail-uploader input[type=file], "
+               "[id*=thumbnail] input[type=file], input#file-loader[type=file][accept*=image], "
+               "input[type=file][accept*='image/jpeg'], input[type=file][accept*='image/png']")
+THUMB_BUTTON = r"(Upload (file|thumbnail)|Загрузить (файл|значок|превью)|Subir (archivo|miniatura)|Datei hochladen|Carregar arquivo|Importer un fichier)"
+
+
+def _thumb_set(page, before: list[str], wait_s: float = 25) -> bool:
+    end = time.time() + wait_s
+    while time.time() < end:
+        now = _thumb_imgs(page)
+        if any(src.startswith(("data:", "blob:")) and src not in before for src in now):
+            return True
+        time.sleep(1)
+    return False
+
+
+def _set_thumb(page, thumb: Path, log) -> bool:
+    """Puts the thumbnail and makes sure Studio shows it. First the image file field of the thumbnail block (never a
+    video field: those also exist on the page), then the block's «Upload file» button with the browser's file window."""
+    before = _thumb_imgs(page)
+    try:
+        field = None
+        loc = page.locator(THUMB_INPUT)
+        for i in range(min(loc.count(), 10)):
+            acc = (loc.nth(i).get_attribute("accept", timeout=3000) or "").lower()
+            if "video" not in acc:
+                field = loc.nth(i)
+                break
+        if field is not None:
+            _set_file(page, field, thumb)
+            if _thumb_set(page, before):
+                log("Превью поставлено")
+                return True
+    except Exception as e:  # noqa: BLE001
+        log(f"Поле превью не сработало ({str(e).splitlines()[0][:100]}) — пробую кнопкой")
+    try:
+        btn = _first_visible(page.locator("ytcp-thumbnails-compact-editor-uploader, #select-button, "
+                                          "ytcp-thumbnail-uploader button"), 3) or _first_visible(
+            page.get_by_role("button", name=re.compile(THUMB_BUTTON, re.I)), 3) or _first_visible(
+            page.locator("button, ytcp-button, [role=button]").filter(has_text=re.compile(THUMB_BUTTON, re.I)), 3)
+        if btn:
+            btn.scroll_into_view_if_needed(timeout=10_000)
+            with page.expect_file_chooser(timeout=15_000) as info:
+                btn.click(timeout=10_000)
+            info.value.set_files(str(thumb)) if thumb.stat().st_size < 45 * 1024 * 1024 else _set_file(
+                page, info.value.element, thumb)
+            if _thumb_set(page, before):
+                log("Превью поставлено")
+                return True
+    except Exception as e:  # noqa: BLE001
+        log(f"Кнопка превью не сработала ({str(e).splitlines()[0][:100]})")
+    return False
+
+
+def _thumb_on_edit_page(page, link: str, thumb: Path, log) -> bool:
+    """Second try after publishing: the video's own page in Studio, thumbnail, «Save»."""
+    vid = video_id(link)
+    if not vid:
+        log("ПРЕВЬЮ НЕ ПОСТАВЛЕНО: нет ссылки на ролик. Поставьте его руками в Studio")
+        return False
+    try:
+        page.goto(f"{STUDIO}/video/{vid}/edit", wait_until="domcontentloaded", timeout=120_000)
+        page.locator("#title-textarea #textbox").first.wait_for(state="visible", timeout=60_000)
+        time.sleep(2)
+        if _set_thumb(page, thumb, log):
+            save = _first_visible(page.locator("ytcp-button#save, #save"), 10)
+            if save:
+                for _ in range(30):
+                    if save.is_enabled():
+                        break
+                    time.sleep(1)
+                save.click(timeout=10_000)
+                time.sleep(5)
+                log("Превью сохранено на странице ролика")
+                return True
+    except Exception as e:  # noqa: BLE001
+        log(f"Страница ролика: {str(e).splitlines()[0][:100]}")
+    log("ПРЕВЬЮ НЕ ПОСТАВЛЕНО — поставьте его руками в Studio (файл превью лежит в папке ролика)")
+    return False
+
+
 def video_id(link: str) -> str:
     m = re.search(r"(?:youtu\.be/|[?&]v=|/video/|/shorts/)([A-Za-z0-9_-]{11})", link or "")
     return m.group(1) if m else ""
@@ -463,8 +690,10 @@ def _verify(page, link: str, title: str, log) -> bool:
 
 
 def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privacy: str = "public",
-           log=lambda s: None, cancelled=lambda: False, result: dict | None = None) -> str:
-    """Uploads and publishes; returns the video link. meta: {title, description, tags, kids, category, altered}."""
+           log=lambda s: None, cancelled=lambda: False, result: dict | None = None, channel_ref: str = "") -> str:
+    """Uploads and publishes; returns the video link. meta: {title, description, tags, kids, category, altered}.
+    channel_ref: the YouTube channel it must go to (UC… id, a link or @handle); empty = the one open in the profile.
+    result gets video_id, verified, thumb_ok, channel_id and channel_name."""
     from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 
     if not video.is_file():
@@ -480,13 +709,16 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = context.new_page()
         try:
+            want = _resolve_channel(context, page, channel_ref, log)
             log("Открываю YouTube Studio…")
-            page.goto(STUDIO, wait_until="domcontentloaded", timeout=120_000)
+            page.goto(f"{STUDIO}/channel/{want}" if want else STUDIO, wait_until="domcontentloaded", timeout=120_000)
             time.sleep(4)
             if "accounts.google.com" in page.url or "ServiceLogin" in page.url:
                 raise UserError("В этом профиле Octo не выполнен вход в YouTube. Откройте профиль, войдите в канал "
                                 "и нажмите «Повторить выкладку».")
+            channel_name = _check_channel(page, want, log)
             picker = _open_upload(page, video, log)
+            _check_channel(page, want, log, quiet=True)
             log("Загружаю файл видео…")
             _set_file(page, picker, video)
             page.locator("#title-textarea #textbox").first.wait_for(state="visible", timeout=180_000)
@@ -495,34 +727,36 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
             _type_into(page, "#title-textarea #textbox", title)
             if description:
                 _type_into(page, "#description-textarea #textbox", description)
+            thumb_ok = None
             if thumb and thumb.is_file():
                 log("Ставлю превью…")
-                try:
-                    _set_file(page, page.locator("input#file-loader[type=file], "
-                                                 "ytcp-thumbnails-compact-editor-uploader input[type=file]").first, thumb)
-                    time.sleep(4)
-                except Exception as e:  # noqa: BLE001
-                    raise UserError(f"YouTube не принял превью ({e}). Возможно, канал не подтверждён по телефону: "
-                                    "без этого свои превью ставить нельзя.")
+                thumb_ok = _set_thumb(page, thumb, log)
+                if not thumb_ok:
+                    log("Превью в окне загрузки не встало — поставлю его на странице ролика после публикации")
             kids = "VIDEO_MADE_FOR_KIDS_MFK" if meta.get("kids") else "VIDEO_MADE_FOR_KIDS_NOT_MFK"
             page.locator(f"tp-yt-paper-radio-button[name={kids}]").first.click()
             more: dict = {}
             if tags:
                 log("Вписываю теги…")
-                _expand(page, more)
-                tag_box = page.locator("#tags-container input#text-input, ytcp-form-input-container#tags-container input").first
-                tag_box.wait_for(state="visible", timeout=30_000)
-                tag_box.click()
-                tag_box.fill(tags + ",")
-                time.sleep(1)
+                if _expand(page, more, log):
+                    try:
+                        tag_box = _first_visible(page.locator(TAGS_BOX), 20)
+                        if not tag_box:
+                            raise RuntimeError("поле тегов не появилось")
+                        tag_box.scroll_into_view_if_needed(timeout=10_000)
+                        tag_box.click(timeout=10_000)
+                        tag_box.fill(tags + ",")
+                        time.sleep(1)
+                    except Exception as e:  # noqa: BLE001
+                        log(f"Теги вписать не получилось ({str(e).splitlines()[0][:100]}) — продолжаю без них")
             cid = category_id(meta.get("category") or "")
-            if cid:
+            if cid and not more.get("failed"):
                 log("Ставлю категорию…")
-                _expand(page, more)
-                _set_category(page, cid, log)
-            if meta.get("altered") is not None:
-                _expand(page, more)
-                _set_altered(page, bool(meta.get("altered")))
+                if _expand(page, more, log):
+                    _set_category(page, cid, log)
+            if meta.get("altered") is not None and not more.get("failed"):
+                if _expand(page, more, log):
+                    _set_altered(page, bool(meta.get("altered")))
             for _ in range(3):
                 if cancelled():
                     raise _Stop()
@@ -553,6 +787,7 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
                 time.sleep(5)
             if not _wait_checks(page, log, cancelled):
                 log("YouTube не закончил проверку за 3 часа — публикую, проверка продолжится на YouTube")
+            _check_channel(page, want, log, quiet=True)
             log("Публикую…")
             done = _publish_button(page)
             for _ in range(120):
@@ -583,6 +818,11 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
             log("Опубликовано")
             if result is not None:
                 result["video_id"] = video_id(link)
+                result["channel_id"], result["channel_name"] = want, channel_name
+            if thumb_ok is False:
+                thumb_ok = _thumb_on_edit_page(page, link, thumb, log)
+            if result is not None:
+                result["thumb_ok"] = thumb_ok
                 result["verified"] = _verify(page, link, title, log)
             return link
         except _Stop:

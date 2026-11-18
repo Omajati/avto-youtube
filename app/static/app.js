@@ -3476,11 +3476,11 @@ const FB_STATUS = {
   stopping: "Останавливается", stopped: "Остановлен", done: "Готово", error: "Ошибка",
   review: "Ждёт проверки превью"
 };
-let OCTO = { profiles: null, rules: {}, keep: [], error: "" };
+let OCTO = { profiles: null, rules: {}, keep: [], yt: {}, error: "" };
 const fbChannel = path => String(path || "").replace(/\/+$/, "").split("/").slice(-2, -1)[0] || "";
 async function loadOcto(refresh) {
-  try { const d = await api(`/api/folder-builder/octo/profiles${refresh ? "?refresh=1" : ""}`); OCTO = { profiles: d.profiles, rules: d.rules, keep: d.keep_open || [], error: "" }; }
-  catch (e) { OCTO = { profiles: null, rules: OCTO.rules, error: e.message }; }
+  try { const d = await api(`/api/folder-builder/octo/profiles${refresh ? "?refresh=1" : ""}`); OCTO = { profiles: d.profiles, rules: d.rules, keep: d.keep_open || [], yt: d.yt_channels || {}, error: "" }; }
+  catch (e) { OCTO = { profiles: null, rules: OCTO.rules, yt: OCTO.yt || {}, error: e.message }; }
   return OCTO;
 }
 const folderSeenErrors = new Set();
@@ -3840,8 +3840,14 @@ async function viewFolderBuilder() {
       const cur = OCTO.rules[`${FB_CHANNEL}|${l}`] || "", known = list.find(p => p.uuid === cur);
       return `<label class="small" style="display:inline-flex;gap:6px;align-items:center;margin-right:12px">${LANG_FLAG[l] || ""} ${l.toUpperCase()} → <select class="sm" data-fb-channel-profile="${l}" style="width:auto;max-width:240px">
         <option value="">— не выбран —</option><option value="ask" ${cur === "ask" ? "selected" : ""}>🎯 выбирать у каждого ролика</option>${list.map(p => `<option value="${esc(p.uuid)}" ${p.uuid === cur ? "selected" : ""}>${esc(p.title)}</option>`).join("")}
-        ${cur && cur !== "ask" && !known ? `<option value="${esc(cur)}" selected>${list.length ? "профиль удалён?" : "выбран (список не загружен)"}</option>` : ""}</select></label>`;
+        ${cur && cur !== "ask" && !known ? `<option value="${esc(cur)}" selected>${list.length ? "профиль удалён?" : "выбран (список не загружен)"}</option>` : ""}</select>
+        ${cur && cur !== "ask" ? (() => { const yt = (OCTO.yt || {})[`${FB_CHANNEL}|${l}|${cur}`] || {};
+          return `<input class="sm" type="text" data-fb-yt="${l}" data-fb-yt-uuid="${esc(cur)}" style="width:230px" placeholder="канал YouTube: ссылка или UC…" title="Если в аккаунте Google несколько каналов — вставьте ссылку на нужный. Пусто: программа берёт канал, выбранный в профиле, и запоминает его после выкладки." value="${esc(yt.ref || yt.id || "")}">${yt.name ? `<span class="muted small">→ «${esc(yt.name)}»</span>` : ""}`; })() : ""}</label>`;
     }).join("") + (list.length ? "" : `<span class="muted small">— список профилей появится, когда в блоке «Автовыкладка» сохраните токен Octo или нажмёте «Найти открытые профили» (без токена).</span>`);
+    box.querySelectorAll("[data-fb-yt]").forEach(inp => inp.onchange = async () => {
+      try { const r = await api("/api/folder-builder/octo/yt-channel", { json: { channel: FB_CHANNEL, lang: inp.dataset.fbYt, uuid: inp.dataset.fbYtUuid, ref: inp.value } }); OCTO.yt = r.yt_channels; toast(inp.value.trim() ? "Канал YouTube запомнен: выкладка пойдёт только на него" : "Канал YouTube сброшен: возьму выбранный в профиле"); drawChannelOcto(); }
+      catch (e) { toast(e.message, true); }
+    });
     box.querySelectorAll("[data-fb-channel-profile]").forEach(sel => sel.onchange = async () => {
       try { const r = await api("/api/folder-builder/octo/rule", { json: { channel: FB_CHANNEL, lang: sel.dataset.fbChannelProfile, uuid: sel.value } }); OCTO.rules = r.rules; toast("Профиль запомнен"); refreshFolderBuilder(); }
       catch (e) { toast(e.message, true); }
@@ -3958,7 +3964,7 @@ async function viewFolderBuilder() {
   };
   drawOctoKeep();
   const octoLocalDone = (o, msg) => {
-    OCTO.profiles = o.profiles; OCTO.rules = o.rules; OCTO.keep = o.keep_open || OCTO.keep; OCTO.error = ""; if (msg) toast(msg); drawOctoKeep();
+    OCTO.profiles = o.profiles; OCTO.rules = o.rules; OCTO.keep = o.keep_open || OCTO.keep; OCTO.yt = o.yt_channels || OCTO.yt; OCTO.error = ""; if (msg) toast(msg); drawOctoKeep();
     const r = $("#fb-octo-r"); if (r) r.textContent = `Профилей: ${o.profiles.length}`;
     drawOctoLocal(); if (FB_CHANNEL) drawChannelOcto(); refreshFolderBuilder();
   };
