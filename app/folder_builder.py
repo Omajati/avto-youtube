@@ -56,7 +56,7 @@ FOLDER_OPTION_KEYS = (
     "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
     "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
     "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
-    "folder_effect_level", "folder_render_speed", "folder_fast", "folder_jobs_parallel", "image_parallel", "render_parallel",
+    "folder_effect_level", "folder_render_speed", "folder_fast", "folder_jobs_parallel", "image_parallel", "folder_image_parallel", "render_parallel",
     "folder_inbox_dir", "folder_work_dir", "folder_inbox_autostart", "folder_github_repo", "folder_github_branch",
 )
 INBOX_STATE_FILE = ROOT / "inbox_state.json"
@@ -1212,6 +1212,56 @@ def _with_retries(job_id: str, attempts: list, label: str, set_step=None):
     raise last
 
 
+# Pictures drawn at once, for all projects together (two projects must not overrun the plan's threads).
+IMAGE_PARALLEL_MAX = 32
+AUTO_IMAGE_PARALLEL = {"fastgen": 10, "fal": 10, "runware": 16, "replicate": 16, "together": 12, "openai": 8, "royal": 10}
+
+
+def image_workers(settings: dict, options: dict | None = None) -> tuple[int, str]:
+    """(how many pictures at once, how it was chosen) for «Сборка из папок»."""
+    options = options or {}
+    raw = str(options.get("folder_image_parallel") or settings.get("folder_image_parallel") or "auto").strip().lower()
+    if raw not in ("", "auto", "0"):
+        try:
+            return max(1, min(int(float(raw)), IMAGE_PARALLEL_MAX)), "вручную"
+        except ValueError:
+            pass
+    provider = settings.get("image_provider") or "fal"
+    if provider == "fastgen" or images.fastgen_refs(settings):
+        from . import fastgen
+        threads = fastgen.plan_threads(settings)
+        if threads:
+            return max(1, min(threads, IMAGE_PARALLEL_MAX)), "по тарифу Fast Gen"
+        return AUTO_IMAGE_PARALLEL["fastgen"], "Fast Gen: 10 потоков"
+    return AUTO_IMAGE_PARALLEL.get(provider, 8), "авто"
+
+
+class _Gate:
+    """A semaphore whose size can change between pictures."""
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._busy = 0
+        self.limit = 4
+
+    def run(self, call, limit: int):
+        with self._cond:
+            self.limit = limit
+            self._cond.notify_all()
+            while self._busy >= self.limit:
+                self._cond.wait(1)
+            self._busy += 1
+        try:
+            return call()
+        finally:
+            with self._cond:
+                self._busy -= 1
+                self._cond.notify_all()
+
+
+_image_gate = _Gate()
+
+
 def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dict], settings: dict, options: dict) -> dict[str, Path]:
     _check_control(job_id)
     root = Path(analysis["path"])
@@ -1258,37 +1308,63 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
     if not missing:
         return media_map
     notes: list[str] = []
+    workers, how = image_workers(settings, options)
     _update(job_id, image_notes=[])
     required_refs = {rid for scene in missing for rid in (_scene_reference_ids(scene, refs) if use_refs else [])}
     if required_refs and images.can_reference(settings):
         ref_dir = frame_dir / "референсы"
         ref_dir.mkdir(parents=True, exist_ok=True)
         selected_refs = [ref for ref in refs if ref["id"] in required_refs]
-        for index, ref in enumerate(selected_refs):
-            _check_control(job_id)
+        provider = images.PROVIDERS.get(settings.get("image_provider"), images.PROVIDERS["fal"])
+        to_draw = []
+        for ref in selected_refs:
             out = ref_dir / f"{ref['id']}.png"
-            provider = images.PROVIDERS.get(settings.get("image_provider"), images.PROVIDERS["fal"])
             ref_sig = hashlib.sha256(json.dumps([ref.get("prompt"), settings.get("image_provider"),
                 settings.get(provider["model_field"])], ensure_ascii=False).encode()).hexdigest()
             if not out.exists() or ref_manifest.get(ref["id"]) != ref_sig:
-                _update(job_id, progress=.06 + .04 * (index / max(len(selected_refs), 1)), step=f"Создаю референс {ref['id']}…")
-                ref_prompt = ref.get("prompt") or ref.get("name")
-                try:
-                    raw, _ = _with_retries(job_id, [lambda p=ref_prompt: images.generate(settings, p, False)] * 4,
-                                           f"Референс {ref['id']}", lambda s: _update(job_id, step=s))
-                except (_PauseRequested, _StopRequested):
-                    raise
-                except Exception as exc:  # noqa: BLE001 - scenes are drawn without this reference instead
-                    if _fatal(exc):
-                        raise
-                    notes.append(f"Референс {ref['id']} не нарисовался ({str(exc)[:120]}): его сцены нарисованы без него.")
-                    _update(job_id, image_notes=list(notes))
-                    continue
-                media.to_png(raw, out)
+                to_draw.append((ref, out, ref_sig))
+            else:
+                ref_paths[ref["id"]] = out
+        ref_done = [0]
+
+        def draw_ref(item):
+            ref, out, ref_sig = item
+            _check_control(job_id)
+            ref_prompt = ref.get("prompt") or ref.get("name")
+            call = lambda p=ref_prompt: _image_gate.run(lambda: images.generate(settings, p, False), workers)  # noqa: E731
+            raw, _ = _with_retries(job_id, [call] * 4, f"Референс {ref['id']}")
+            media.to_png(raw, out)
+            with _lock:
                 ref_manifest[ref["id"]] = ref_sig
                 _write_json(manifest_path, manifest)
-                _check_control(job_id)
-            ref_paths[ref["id"]] = out
+            return ref, out
+
+        if to_draw:
+            _update(job_id, progress=.06, step=f"Создаю референсы: 0 из {len(to_draw)} (одновременно до {workers})…")
+            with ThreadPoolExecutor(max_workers=min(workers, len(to_draw)), thread_name_prefix=f"folder-refs-{job_id}") as pool:
+                futures = {pool.submit(draw_ref, item): item[0] for item in to_draw}
+                try:
+                    for future in as_completed(futures):
+                        ref = futures[future]
+                        try:
+                            _ref, out = future.result()
+                        except (_PauseRequested, _StopRequested):
+                            raise
+                        except Exception as exc:  # noqa: BLE001 - scenes are drawn without this reference instead
+                            if _fatal(exc):
+                                raise
+                            notes.append(f"Референс {ref['id']} не нарисовался ({str(exc)[:120]}): его сцены нарисованы без него.")
+                            _update(job_id, image_notes=list(notes))
+                            continue
+                        ref_paths[ref["id"]] = out
+                        ref_done[0] += 1
+                        _update(job_id, progress=.06 + .04 * ref_done[0] / len(to_draw),
+                                step=f"Создаю референсы: {ref_done[0]} из {len(to_draw)} (одновременно до {workers})…")
+                except BaseException:
+                    for future in futures:
+                        future.cancel()
+                    raise
+            _check_control(job_id)
     done = [0]
 
     def work(scene: dict, rounds: int = 4):
@@ -1297,10 +1373,11 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
         prompt = _image_prompt(scene, settings)
         ref_ids = _scene_reference_ids(scene, refs) if use_refs else []
         selected = [ref_paths[rid] for rid in ref_ids if rid in ref_paths] if images.can_reference(settings) else []
-        text_only = lambda: images.generate(settings, prompt, False)  # noqa: E731
+        text_only = lambda: _image_gate.run(lambda: images.generate(settings, prompt, False), workers)  # noqa: E731
         if selected:
             # Two tries with the references, then text only: a reference edit can reject an otherwise valid scene.
-            with_refs = lambda: images.generate_with_reference(settings, prompt, selected, False)  # noqa: E731
+            with_refs = lambda: _image_gate.run(  # noqa: E731
+                lambda: images.generate_with_reference(settings, prompt, selected, False), workers)
             attempts = [with_refs] * (rounds // 2) + [text_only] * (rounds - rounds // 2)
         else:
             attempts = [text_only] * rounds
@@ -1315,7 +1392,7 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
         _check_control(job_id)
         return scene["id"], out
 
-    workers = max(1, min(int(options.get("image_parallel") or settings.get("image_parallel") or 4), 8))
+    _update(job_id, step=f"Создаю недостающие изображения: 0 из {len(missing)} (одновременно до {workers}, {how})…")
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"folder-images-{job_id}") as pool:
         futures = {pool.submit(work, scene): scene for scene in missing}
         failures = []
@@ -1332,7 +1409,7 @@ def _make_images(job_id: str, analysis: dict, scenes: list[dict], refs: list[dic
                 media_map[sid] = out
                 done[0] += 1
                 _update(job_id, progress=.10 + .38 * done[0] / len(missing),
-                        step=f"Создаю недостающие изображения: {done[0]} из {len(missing)}…")
+                        step=f"Создаю недостающие изображения: {done[0]} из {len(missing)} (одновременно до {workers})…")
                 _check_control(job_id)
         except (_PauseRequested, _StopRequested):
             for future in futures:

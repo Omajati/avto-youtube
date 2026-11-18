@@ -74,6 +74,48 @@ def usage(settings) -> dict:
     return _send(settings, "GET", "/api/v6/usage", wait_limit=30)
 
 
+_threads_cache: dict = {"key": "", "at": 0.0, "value": None}
+
+
+def _find_threads(data, path: str = ""):
+    """Numbers whose key speaks of threads / concurrency, with how sure we are that it is the plan's limit."""
+    out = []
+    if isinstance(data, dict):
+        for k, v in data.items():
+            name = f"{path}.{k}".lower()
+            if isinstance(v, (dict, list)):
+                out += _find_threads(v, name)
+            elif isinstance(v, (int, float)) and not isinstance(v, bool) and 1 <= v <= 500 and \
+                    any(w in name for w in ("thread", "concurren", "parallel", "simultan")):
+                used = any(w in name for w in ("used", "active", "running", "current", "busy", "in_use"))
+                limit = any(w in name for w in ("limit", "max", "total", "allowed", "plan"))
+                out.append((0 if used else 2 if limit else 1, int(v)))
+    elif isinstance(data, list):
+        for item in data:
+            out += _find_threads(item, path)
+    return out
+
+
+def plan_threads(settings) -> int | None:
+    """How many pictures the plan draws at once (from /usage), cached for 10 minutes; None if unknown."""
+    key = (settings.get("fastgen_key") or "").strip()
+    if not key:
+        return None
+    cache = _threads_cache
+    if cache["key"] == key and time.time() - cache["at"] < 600:
+        return cache["value"]
+    value = None
+    try:
+        found = [x for x in _find_threads(usage(settings)) if x[0] > 0]
+        if found:
+            best = max(rank for rank, _ in found)
+            value = max(n for rank, n in found if rank == best)
+    except Exception:  # noqa: BLE001 - unknown limits fall back to the default
+        value = None
+    cache.update(key=key, at=time.time(), value=value)
+    return value
+
+
 def generate(settings, prompt: str, aspect: str = "16:9", refs: list | None = None) -> bytes:
     """Image bytes. refs: data URIs of reference pictures (characters, places, items)."""
     op = settings.get("fastgen_model") or "gemini_nano_banana_2_image_generate"
@@ -90,7 +132,7 @@ def generate(settings, prompt: str, aspect: str = "16:9", refs: list | None = No
     delay = 2.0
     while True:
         time.sleep(delay)
-        delay = min(delay * 1.3, 8)
+        delay = min(delay * 1.3, 4)
         st = _send(settings, "GET", f"/api/v6/generations/{gid}")
         status = st.get("status")
         if status == "succeeded":
