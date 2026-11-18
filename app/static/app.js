@@ -3652,7 +3652,7 @@ function drawInboxStatus(inbox) {
   if ((main.querySelector('[data-fbo="folder_github_repo"]') || {}).value) {
     const gh = inbox.github_last ? new Date(inbox.github_last * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) : "ещё не было";
     text += ` · GitHub: проверка ${gh}, скачано ${inbox.github_downloaded || 0}`;
-    if (inbox.github_status) text += ` — ⚠️ ${inbox.github_status}`;
+    if (inbox.github_status) text += /пустой — доступ есть/.test(inbox.github_status) ? ` — ✅ ${inbox.github_status}` : ` — ⚠️ ${inbox.github_status}`;
   }
   el.textContent = text;
 }

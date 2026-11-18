@@ -2477,8 +2477,14 @@ def _github_fetch(settings: dict, inbox: Path, state: dict, force: bool = False)
         tree = net.request("GitHub", "GET", f"{api}/git/trees/{quote(branch, safe='')}", tries=2, timeout=30,
                            headers=headers, params={"recursive": "1"}).json().get("tree") or []
     except UserError as exc:
-        hint = "" if token else " Если репозиторий закрытый — вставьте токен GitHub."
-        state["github_status"] = f"{exc}{hint}"
+        text = str(exc)
+        if "repository is empty" in text.lower():
+            state["github_status"] = "репозиторий пока пустой — доступ есть, ждём первый сценарий."
+        elif "409" in text or "not found" in text.lower() and token:
+            state["github_status"] = f"нет ветки «{branch}» или репозиторий пустой. ({text[:160]})"
+        else:
+            hint = "" if token else " Если репозиторий закрытый — вставьте токен GitHub."
+            state["github_status"] = f"{text}{hint}"
         return
 
     def download(path: str) -> bytes:
