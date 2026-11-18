@@ -59,9 +59,83 @@ FOLDER_OPTION_KEYS = (
     "folder_effect_level", "folder_render_speed", "folder_fast", "folder_jobs_parallel", "image_parallel", "folder_image_parallel", "render_parallel",
     "folder_inbox_dir", "folder_work_dir", "folder_inbox_autostart", "folder_github_repo", "folder_github_branch",
 )
+# What may differ from channel to channel (niche): the look and sound of the video and where it goes.
+# Folders, threads and speed stay common for the whole Mac.
+CHANNEL_OPTION_KEYS = (
+    "folder_languages", "folder_fast", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_upload",
+    "folder_upload_privacy", "folder_thumb_review",
+    "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
+    "folder_voice_es_id", "folder_voice_es_name", "folder_voice_en_id", "folder_voice_en_name",
+    "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
+    "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
+    "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo", "folder_effect_level",
+)
 INBOX_STATE_FILE = ROOT / "inbox_state.json"
 INBOX_INTERVAL = 60
 GITHUB_INTERVAL = 120
+
+
+def channel_of(path) -> str:
+    """The channel (niche) of a project is the name of the folder it lies in."""
+    return folder_inbox._nfc(Path(str(path)).parent.name) if str(path or "") else ""
+
+
+def channel_lang(channel: str) -> str:
+    """«Животные EN» → en: the language at the end of the channel name, if any."""
+    match = re.search(r"(?:^|[\s_-])(EN|RU|DE|ES)\s*$", channel or "", re.I)
+    return match.group(1).lower() if match else ""
+
+
+def channel_custom(settings: dict, channel: str) -> dict:
+    stored = (settings.get("folder_channel_settings") or {}).get(folder_inbox._nfc(channel or "")) or {}
+    return {k: v for k, v in stored.items() if k in CHANNEL_OPTION_KEYS}
+
+
+def channel_settings(settings: dict, channel: str) -> dict:
+    """Common settings with the channel's own on top. Without its own languages a channel named «… EN» builds English."""
+    out = dict(settings)
+    if not channel:
+        return out
+    custom = channel_custom(settings, channel)
+    if "folder_languages" not in custom and channel_lang(channel):
+        out["folder_languages"] = channel_lang(channel)
+    out.update(custom)
+    return out
+
+
+def known_channels(settings: dict) -> list[dict]:
+    names = set(settings.get("folder_channel_settings") or {}) | set(settings.get("folder_channels_extra") or [])
+    names |= {key.split("|", 1)[0] for key in (settings.get("octo_rules") or {}) if "|" in key}
+    with _lock:
+        names |= {channel_of(job.get("path")) for job in _jobs.values() if job.get("path")}
+    for key in ("folder_inbox_dir", "folder_work_dir"):
+        raw = str(settings.get(key) or "").strip()
+        try:
+            base = Path(raw).expanduser() if raw else None
+            if base and base.is_dir():
+                names |= {child.name for child in base.iterdir() if child.is_dir() and not child.name.startswith(("_", "."))
+                          and not folder_inbox.is_temp_name(child.name)}
+        except OSError:
+            pass
+    names = {folder_inbox._nfc(n).strip() for n in names if n and n.strip()}
+    return [{"name": n, "custom": bool(channel_custom(settings, n)),
+             "langs": selected_langs(channel_settings(settings, n))} for n in sorted(names, key=str.lower)]
+
+
+def _save_options(options: dict, channel: str = "", changed: bool = True):
+    """Saves the page controls. With a channel chosen its look and sound go to that channel only, and only once the
+    owner changed something there (just looking at a channel must not give it its own settings)."""
+    options = {k: v for k, v in (options or {}).items() if k in FOLDER_OPTION_KEYS}
+    channel = folder_inbox._nfc(str(channel or "")).strip()
+    if not channel:
+        save_settings(options)
+        return
+    own = {k: v for k, v in options.items() if k in CHANNEL_OPTION_KEYS}
+    common = {k: v for k, v in options.items() if k not in CHANNEL_OPTION_KEYS}
+    stored = dict(load_settings().get("folder_channel_settings") or {})
+    if own and (changed or stored.get(channel)):
+        stored[channel] = {**(stored.get(channel) or {}), **own}
+    save_settings({**common, "folder_channel_settings": stored})
 
 
 class _PauseRequested(Exception):
@@ -536,13 +610,15 @@ def _public_job(job: dict) -> dict:
 
 
 @router.get("")
-def list_queue():
+def list_queue(channel: str = ""):
     settings = load_settings()
+    channel = folder_inbox._nfc(channel).strip()
     with _lock:
         jobs = [_public_job(job) for job in sorted(_jobs.values(), key=lambda x: x.get("added", 0))]
     for job in jobs:
         if job.get("analysis"):
-            chosen = {**settings, **(job.get("options") or {})}
+            job["channel"] = channel_of(job.get("path"))
+            chosen = {**channel_settings(settings, job["channel"]), **(job.get("options") or {})}
             try:
                 job["problems"], job["warnings"] = _problems(chosen, job["analysis"])
             except Exception as exc:  # one broken project must not take the whole queue page down
@@ -551,17 +627,43 @@ def list_queue():
                 job["estimate"] = _generation_estimate(chosen, job["analysis"])
             except Exception:
                 job["estimate"] = {}
-    return {"jobs": jobs, "settings": {k: settings.get(k) for k in FOLDER_OPTION_KEYS}, "inbox": _inbox_public(),
-        "summary": _setting_summary(settings), "octo_token_set": bool(settings.get("octo_token"))}
+    shown = channel_settings(settings, channel)
+    return {"jobs": jobs, "settings": {k: shown.get(k) for k in FOLDER_OPTION_KEYS}, "inbox": _inbox_public(),
+        "summary": _setting_summary(settings), "octo_token_set": bool(settings.get("octo_token")),
+        "channel": channel, "channel_custom": bool(channel and channel_custom(settings, channel)),
+        "channels": known_channels(settings)}
 
 
 @router.post("/settings")
 def update_folder_settings(data: dict = Body(...)):
     """Persist controls before the queue UI is redrawn or the app is closed."""
-    options = data.get("options") or {}
-    save_settings({k: v for k, v in options.items() if k in FOLDER_OPTION_KEYS})
-    settings = load_settings()
+    channel = folder_inbox._nfc(str(data.get("channel") or "")).strip()
+    _save_options(data.get("options") or {}, channel, bool(data.get("own", True)))
+    settings = channel_settings(load_settings(), channel)
     return {"ok": True, "settings": {k: settings.get(k) for k in FOLDER_OPTION_KEYS}}
+
+
+@router.post("/channel/add")
+def add_channel(data: dict = Body(...)):
+    name = folder_inbox._nfc(str(data.get("name") or "")).strip()
+    if not name or name.startswith(("_", ".")) or any(ch in name for ch in '/\\:'):
+        raise UserError("Название канала — как имя папки: без «/», «\\», «:» и не с «_» или точки в начале.")
+    settings = load_settings()
+    extra = list(settings.get("folder_channels_extra") or [])
+    if name not in extra:
+        extra.append(name)
+    save_settings({"folder_channels_extra": extra})
+    return {"ok": True, "channels": known_channels(load_settings())}
+
+
+@router.post("/channel/reset")
+def reset_channel(data: dict = Body(...)):
+    """The channel goes back to the common settings (its Octo profiles stay)."""
+    name = folder_inbox._nfc(str(data.get("channel") or "")).strip()
+    stored = dict(load_settings().get("folder_channel_settings") or {})
+    stored.pop(name, None)
+    save_settings({"folder_channel_settings": stored})
+    return {"ok": True}
 
 
 @router.post("/pick")
@@ -660,9 +762,7 @@ def remove_job(job_id: str):
 
 @router.post("/start")
 def start_queue(data: dict = Body(...)):
-    options = data.get("options") or {}
-    allowed = set(FOLDER_OPTION_KEYS)
-    save_settings({k: v for k, v in options.items() if k in allowed})
+    _save_options(data.get("options") or {}, str(data.get("channel") or ""), bool(data.get("own", True)))
     settings = load_settings()
     explicit_ids = data.get("ids") is not None
     queued = _queue_jobs(set(data.get("ids") or _jobs), settings, explicit_ids)
@@ -681,14 +781,15 @@ def _queue_jobs(ids: set, settings: dict, explicit_ids: bool) -> list[str]:
             if not explicit_ids and job.get("status") == "done":
                 continue
             analysis = _analyze(Path(job["path"]))
-            problems, warnings = _problems(settings, analysis)
+            chosen = channel_settings(settings, channel_of(job["path"]))
+            problems, warnings = _problems(chosen, analysis)
             job["analysis"], job["warnings"] = analysis, warnings
             if problems:
                 job.update(status="error", error=" ".join(problems), step="", progress=0)
                 continue
             if job.get("status") == "done":
                 job["langs_done"] = {}
-            job.update(status="queued", error="", step="Ждёт своей очереди…", progress=0, options={k: settings.get(k) for k in allowed},
+            job.update(status="queued", error="", step="Ждёт своей очереди…", progress=0, options={k: chosen.get(k) for k in allowed},
                        auto_retries=0, retry_at=0, last_error="")
             queued.append(jid)
         _save_queue()

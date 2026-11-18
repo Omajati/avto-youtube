@@ -3558,7 +3558,8 @@ function folderJobHtml(job) {
   ].join("");
   return `<div class="card fb-job" data-fb-id="${esc(job.id)}">
     <div class="row"><div class="grow"><h2 style="margin:0">📁 ${esc(job.title || a.title || "Проект")}</h2>
-      <div class="muted small fb-path" title="${esc(job.path)}">${esc(job.path)}</div></div>
+      <div class="muted small fb-path" title="${esc(job.path)}">${esc(job.path)}</div>
+      <div class="muted small">Канал: <b>${esc(channel || "—")}</b></div></div>
       <span class="badge ${cls}">${esc(FB_STATUS[status] || status)}</span></div>
     <div class="fb-stats">${esc(details)}</div>
     <div class="muted small" style="margin-top:2px">Тексты озвучки: ${Object.entries(a.languages || {}).map(([l, x]) => `${LANG_FLAG[l] || ""} ${l.toUpperCase()} — ${Number(x.words || 0).toLocaleString("ru")} слов`).join(" · ") || "не найдены"}</div>
@@ -3608,6 +3609,10 @@ function drawFolderJobs(data) {
 }
 
 let FB_UPLOAD_ON = false;
+let FB_CHANNEL = lsGetRaw("ay_fb_channel") || "";
+let FB_DIRTY = false;  // the owner changed the look or sound while a channel is chosen → it gets its own settings
+const FB_COMMON_KEYS = new Set(["folder_image_parallel", "folder_jobs_parallel", "render_parallel", "folder_render_speed", "folder_clean_frames", "folder_inbox_dir", "folder_work_dir", "folder_inbox_autostart", "folder_github_repo", "folder_github_branch"]);
+const fbQuery = () => FB_CHANNEL ? `?channel=${encodeURIComponent(FB_CHANNEL)}` : "";
 const FB_LANGS = { en: "Английский", ru: "Русский", de: "Немецкий", es: "Испанский" };
 function folderOptions() {
   const out = {};
@@ -3623,17 +3628,18 @@ function folderOptions() {
 }
 
 async function saveFolderOptions() {
-  return api("/api/folder-builder/settings", { json: { options: folderOptions() } });
+  return api("/api/folder-builder/settings", { json: { options: folderOptions(), channel: FB_CHANNEL, own: FB_DIRTY } });
 }
 
-function scheduleFolderOptionsSave() {
+function scheduleFolderOptionsSave(e) {
+  if (!FB_COMMON_KEYS.has(e?.target?.dataset?.fbo)) FB_DIRTY = true;
   saveFolderOptions().catch(e => toast(`Не удалось сохранить настройки: ${e.message}`, true));
 }
 
 async function startFolderQueue(ids = null) {
   const btn = $("#fb-start"); if (btn) btn.disabled = true;
   try {
-    const r = await api("/api/folder-builder/start", { json: { ids, options: folderOptions() } });
+    const r = await api("/api/folder-builder/start", { json: { ids, options: folderOptions(), channel: FB_CHANNEL, own: FB_DIRTY } });
     if (!r.queued.length) toast("Нечего запускать: проверьте предупреждения у проектов", true); else toast(`Поставлено в очередь: ${r.queued.length}`);
     await refreshFolderBuilder();
   } catch (e) { toast(e.message, true); }
@@ -3658,7 +3664,7 @@ function drawInboxStatus(inbox) {
 }
 
 async function refreshFolderBuilder() {
-  const data = await api("/api/folder-builder");
+  const data = await api("/api/folder-builder" + fbQuery());
   drawFolderJobs(data);
   drawInboxStatus(data.inbox);
   const active = data.jobs.some(x => ["running", "queued", "pausing", "stopping"].includes(x.status));
@@ -3669,7 +3675,11 @@ async function refreshFolderBuilder() {
 
 async function viewFolderBuilder() {
   clearInterval(timer); timer = null;
-  const data = await api("/api/folder-builder");
+  FB_DIRTY = false;
+  let data = await api("/api/folder-builder" + fbQuery());
+  if (FB_CHANNEL && !(data.channels || []).some(c => c.name === FB_CHANNEL)) {
+    FB_CHANNEL = ""; lsSetRaw("ay_fb_channel", null); data = await api("/api/folder-builder");
+  }
   const s = data.settings, q = (k, fallback = "") => s[k] ?? fallback;
   const checks = [
     ["folder_references", "Референсы персонажей и объектов", "Сначала создаются R1, R2… и используются в подходящих сценах. Если выключить — каждая картинка рисуется только по своему описанию."],
@@ -3692,7 +3702,18 @@ async function viewFolderBuilder() {
   main.innerHTML = `<h1>📂 Сборка роликов из папок</h1>
   <p class="muted">Выберите готовые папки проектов и нажмите одну кнопку. Программа возьмёт тексты озвучки из папок <code>EN</code>, <code>RU</code>, <code>DE</code>, <code>ES</code>, готовые файлы <code>S001…</code>, создаст недостающие изображения и положит готовый MP4 в папку каждого языка.</p>
   <div class="card fb-fast"><label class="check" style="margin:0"><input type="checkbox" data-fbo="folder_fast" id="fb-fast" ${q("folder_fast", false) ? "checked" : ""}><span><b>⚡ Быстрая сборка</b><span class="muted small">Самый простой ролик: картинки по порядку, озвучка как есть, обычные субтитры строками. Без музыки, караоке, эффектов, переходов и движения камеры; сцены привязываются без ИИ. Часовой ролик — около полутора минут. Выключите — соберётся со всем монтажом, как раньше.</span></span></label></div>
-  <div class="card fb-settings"><div class="row"><h2 class="grow" style="margin:0">Перед запуском — все настройки</h2><a class="btn sm" href="#/settings">⚙️ Открыть полные настройки и ключи</a></div>
+  <div class="card fb-channels"><h2 style="margin-top:0">🗂 Каналы (ниши)</h2>
+    <p class="muted small">Канал — это папка, в которой лежит проект: <code>Семейные драмы ES</code>, <code>Животные EN</code>, <code>Истории RU</code>. Готовые MP4 ложатся в папку своего канала, выкладка идёт в его профиль Octo. У каждого канала могут быть свои голоса, языки, музыка, монтаж и субтитры. Канал без своих настроек собирается с общими; язык он берёт из конца названия (EN, RU, DE, ES).</p>
+    <div class="row" style="gap:6px;flex-wrap:wrap">
+      <button class="sm ${FB_CHANNEL ? "" : "primary"}" data-fb-channel="">Общие</button>
+      ${(data.channels || []).map(c => `<button class="sm ${FB_CHANNEL === c.name ? "primary" : ""}" data-fb-channel="${esc(c.name)}" title="${c.custom ? "Свои настройки" : "Пока с общими настройками"}">${esc(c.name)}${c.custom ? " ✱" : ""}</button>`).join("")}
+      <button class="sm" id="fb-channel-add">＋ Канал</button>
+    </div>
+    ${FB_CHANNEL ? `<div class="banner ${data.channel_custom ? "" : "warn"} small" style="margin-top:10px">Ниже — настройки канала <b>${esc(FB_CHANNEL)}</b>. ${data.channel_custom ? "У него свои настройки: изменения здесь касаются только его." : "Своих настроек пока нет, показаны общие. Измените что-нибудь — и у канала появятся свои."} Папки, потоки и скорость сборки — общие для всех каналов.
+      ${data.channel_custom ? `<button class="sm" id="fb-channel-reset" style="margin-left:8px">Вернуть общие настройки</button>` : ""}</div>
+      <div id="fb-channel-octo" style="margin-top:8px"></div>` : `<div class="muted small" style="margin-top:8px">Ниже — общие настройки: ими собираются каналы без своих настроек (✱ — у канала свои).</div>`}
+  </div>
+  <div class="card fb-settings"><div class="row"><h2 class="grow" style="margin:0">${FB_CHANNEL ? `Настройки канала «${esc(FB_CHANNEL)}»` : "Перед запуском — общие настройки"}</h2><a class="btn sm" href="#/settings">⚙️ Открыть полные настройки и ключи</a></div>
     <div class="grid2"><div>
       <label class="f">Сервис и модель изображений</label><div class="fb-readonly"><b>${esc(data.summary.image_provider)}</b><br><span>${esc(data.summary.image_model)}</span><br><span>С референсом: ${esc(data.summary.reference_model || "недоступна")}</span></div>
       <label class="f">Языковая модель для распределения текста</label><div class="fb-readonly"><b>${esc(data.summary.llm_provider)}</b><br><span>${esc(data.summary.llm_model || "не выбрана")}</span></div>
@@ -3755,6 +3776,41 @@ async function viewFolderBuilder() {
   <div class="row fb-actions"><button class="primary big" id="fb-add">＋ Добавить папки</button><button class="blue big" id="fb-start" ${data.jobs.length ? "" : "disabled"}>▶ Собрать всю очередь</button><span class="muted small">Можно выбрать несколько папок сразу. Все готовые этапы кэшируются.</span></div>
   <div id="fb-jobs" style="margin-top:16px"></div>`;
   drawFolderJobs(data);
+  main.querySelectorAll("[data-fb-channel]").forEach(b => b.onclick = async () => {
+    try { await saveFolderOptions(); } catch (e) { }
+    FB_CHANNEL = b.dataset.fbChannel; lsSetRaw("ay_fb_channel", FB_CHANNEL || null); viewFolderBuilder();
+  });
+  $("#fb-channel-add").onclick = async () => {
+    const name = (prompt("Название канала — точно как папка в репозитории сценариев, например «Животные EN»:") || "").trim();
+    if (!name) return;
+    try { await saveFolderOptions(); await api("/api/folder-builder/channel/add", { json: { name } }); FB_CHANNEL = name; lsSetRaw("ay_fb_channel", name); viewFolderBuilder(); }
+    catch (e) { toast(e.message, true); }
+  };
+  $("#fb-channel-reset")?.addEventListener("click", async () => {
+    if (!confirm(`Канал «${FB_CHANNEL}» будет собираться с общими настройками. Профили Octo останутся. Продолжить?`)) return;
+    try { await api("/api/folder-builder/channel/reset", { json: { channel: FB_CHANNEL } }); toast("Канал вернулся к общим настройкам"); viewFolderBuilder(); }
+    catch (e) { toast(e.message, true); }
+  });
+  const drawChannelOcto = () => {
+    const box = $("#fb-channel-octo"); if (!box) return;
+    const langs = [...main.querySelectorAll("[data-fb-lang]")].filter(x => x.checked).map(x => x.dataset.fbLang);
+    const list = OCTO.profiles || [];
+    box.innerHTML = `<span class="muted small">Профиль Octo (куда выкладывать): </span>` + langs.map(l => {
+      const cur = OCTO.rules[`${FB_CHANNEL}|${l}`] || "", known = list.find(p => p.uuid === cur);
+      return `<label class="small" style="display:inline-flex;gap:6px;align-items:center;margin-right:12px">${LANG_FLAG[l] || ""} ${l.toUpperCase()} → <select class="sm" data-fb-channel-profile="${l}" style="width:auto;max-width:240px">
+        <option value="">— не выбран —</option>${list.map(p => `<option value="${esc(p.uuid)}" ${p.uuid === cur ? "selected" : ""}>${esc(p.title)}</option>`).join("")}
+        ${cur && !known ? `<option value="${esc(cur)}" selected>${list.length ? "профиль удалён?" : "выбран (список не загружен)"}</option>` : ""}</select></label>`;
+    }).join("") + (list.length ? "" : `<span class="muted small">— список профилей появится, когда сохраните токен Octo в блоке «Автовыкладка».</span>`);
+    box.querySelectorAll("[data-fb-channel-profile]").forEach(sel => sel.onchange = async () => {
+      try { const r = await api("/api/folder-builder/octo/rule", { json: { channel: FB_CHANNEL, lang: sel.dataset.fbChannelProfile, uuid: sel.value } }); OCTO.rules = r.rules; toast("Профиль запомнен"); refreshFolderBuilder(); }
+      catch (e) { toast(e.message, true); }
+    });
+  };
+  if (FB_CHANNEL) {
+    if (!OCTO.profiles && data.octo_token_set) await loadOcto(false);
+    drawChannelOcto();
+    main.querySelectorAll("[data-fb-lang]").forEach(x => x.addEventListener("change", drawChannelOcto));
+  }
   const fastOff = ["folder_subtitle_preset", "folder_music", "folder_music_source", "folder_music_volume", "folder_edit_style", "folder_edit_tempo", "folder_effect_level", "folder_chapters", "folder_auto_graphics", "folder_motion_inserts", "folder_render_speed", "render_parallel"];
   const markFast = () => {
     const on = $("#fb-fast").checked;
@@ -3785,11 +3841,11 @@ async function viewFolderBuilder() {
   main.querySelectorAll("[data-fb-voice]").forEach(x => x.addEventListener("change", scheduleFolderOptionsSave));
   main.querySelectorAll("[data-fb-lang]").forEach(x => x.addEventListener("change", () => {
     main.querySelector(`[data-fb-voice-row="${x.dataset.fbLang}"]`).style.display = x.checked ? "" : "none";
-    scheduleFolderOptionsSave();
+    FB_DIRTY = true; scheduleFolderOptionsSave();
   }));
   main.querySelectorAll("[data-fb-voice-pick]").forEach(b => b.onclick = () => {
     const l = b.dataset.fbVoicePick, sel = main.querySelector(`[data-fb-voice="${l}"]`);
-    const pick = (id, name) => { pickIntoSelect(sel, id, name); scheduleFolderOptionsSave(); };
+    const pick = (id, name) => { pickIntoSelect(sel, id, name); FB_DIRTY = true; scheduleFolderOptionsSave(); };
     if (data.summary.voice_service === "Lumean") openLumeanVoices(pick, l); else openVoiceLibrary(pick, l);
   });
   $("#fb-add").onclick = async () => {
