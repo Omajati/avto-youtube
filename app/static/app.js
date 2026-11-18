@@ -3781,7 +3781,17 @@ async function viewFolderBuilder() {
       <label class="f">API-токен Octo Browser <span class="hint">Octo → настройки мастер-аккаунта → вкладка «Дополнительно».</span></label>
       <div class="row" style="gap:6px;flex-wrap:nowrap"><input type="password" id="fb-octo-token" placeholder="${data.octo_token_set ? "•••• токен сохранён" : "вставьте токен"}" autocomplete="off"><button class="sm" id="fb-octo-save">Сохранить и загрузить профили</button></div>
       <div class="muted small" id="fb-octo-r">${OCTO.profiles ? `Профилей в Octo: ${OCTO.profiles.length}` : OCTO.error ? "⚠️ " + esc(OCTO.error) : ""}</div>
-    </div></div></div>
+    </div></div>
+    <details class="fb-octo-local" ${data.octo_token_set ? "" : "open"} style="margin-top:10px"><summary><b>Без API-токена</b> <span class="muted small">— программа сама найдёт профили, открытые в Octo</span></summary>
+      <ol class="muted small" style="margin:6px 0 6px 18px;padding:0">
+        <li>Откройте Octo Browser и запустите профили каналов, в которые выкладывать (в каждом уже должен быть выполнен вход в YouTube).</li>
+        <li>Нажмите «Найти открытые профили» — программа запомнит их. Дайте каждому понятное имя (например, «Семейные драмы ES»).</li>
+        <li>Выберите профиль у канала (настройки канала выше или в карточке проекта). Больше открывать руками не нужно: при выкладке программа сама перезапустит профиль и загрузит ролик — с названием, описанием, тегами, превью, категорией и отметкой «не для детей».</li>
+      </ol>
+      <div class="row" style="gap:6px"><button class="sm" id="fb-octo-scan">🔍 Найти открытые профили</button><span class="muted small" id="fb-octo-scan-r"></span></div>
+      <div id="fb-octo-local-list" style="margin-top:6px">${(OCTO.profiles || []).filter(x => x.local).map(x => `<div class="row" style="gap:6px;flex-wrap:nowrap;margin-top:4px"><input type="text" class="grow" data-octo-name="${esc(x.uuid)}" value="${esc(x.title)}" title="${esc(x.uuid)}"><span class="muted small" style="white-space:nowrap">${esc(x.uuid.slice(0, 8))}…</span><button class="sm" data-octo-del="${esc(x.uuid)}" title="Забыть профиль">✕</button></div>`).join("")}</div>
+      <div class="row" style="gap:6px;flex-wrap:nowrap;margin-top:6px"><input type="text" class="grow" id="fb-octo-uuid" placeholder="или вставьте UUID профиля из Octo (карточка профиля)"><button class="sm" id="fb-octo-add">Добавить</button></div>
+    </details></div>
   <div class="card fb-inbox"><h2 style="margin-top:0">📥 Автоподхват из папки</h2>
     <p class="muted small">Положите <code>.zip</code> сценария (или готовую папку проекта) в подпапку канала внутри «Папки входящих» — программа раз в минуту проверит её, распакует проект в «Рабочую папку» (в подпапку с тем же именем канала) и поставит в очередь. Готовые архивы переезжают в <code>_обработано</code>, неудачные — в <code>_ошибки</code> с файлом-объяснением.</p>
     <label class="f">Папка входящих (любая папка на этом Mac, внутри — папки каналов; если сценарии приходят из GitHub, Google Drive не нужен)</label>
@@ -3825,7 +3835,7 @@ async function viewFolderBuilder() {
       return `<label class="small" style="display:inline-flex;gap:6px;align-items:center;margin-right:12px">${LANG_FLAG[l] || ""} ${l.toUpperCase()} → <select class="sm" data-fb-channel-profile="${l}" style="width:auto;max-width:240px">
         <option value="">— не выбран —</option>${list.map(p => `<option value="${esc(p.uuid)}" ${p.uuid === cur ? "selected" : ""}>${esc(p.title)}</option>`).join("")}
         ${cur && !known ? `<option value="${esc(cur)}" selected>${list.length ? "профиль удалён?" : "выбран (список не загружен)"}</option>` : ""}</select></label>`;
-    }).join("") + (list.length ? "" : `<span class="muted small">— список профилей появится, когда сохраните токен Octo в блоке «Автовыкладка».</span>`);
+    }).join("") + (list.length ? "" : `<span class="muted small">— список профилей появится, когда в блоке «Автовыкладка» сохраните токен Octo или нажмёте «Найти открытые профили» (без токена).</span>`);
     box.querySelectorAll("[data-fb-channel-profile]").forEach(sel => sel.onchange = async () => {
       try { const r = await api("/api/folder-builder/octo/rule", { json: { channel: FB_CHANNEL, lang: sel.dataset.fbChannelProfile, uuid: sel.value } }); OCTO.rules = r.rules; toast("Профиль запомнен"); refreshFolderBuilder(); }
       catch (e) { toast(e.message, true); }
@@ -3917,6 +3927,26 @@ async function viewFolderBuilder() {
       $("#fb-octo-token").value = ""; refreshFolderBuilder();
     } catch (e) { r.textContent = "❌ " + e.message; }
   };
+  const octoLocalDone = (o, msg) => { OCTO.profiles = o.profiles; OCTO.rules = o.rules; OCTO.error = ""; if (msg) toast(msg); refreshFolderBuilder(); };
+  $("#fb-octo-scan") && ($("#fb-octo-scan").onclick = async () => {
+    const r = $("#fb-octo-scan-r"); r.textContent = "Ищу…";
+    try { const o = await api("/api/folder-builder/octo/scan", { method: "POST" }); octoLocalDone(o, `Открыто профилей: ${o.open}, новых: ${o.added}`); }
+    catch (e) { r.textContent = "❌ " + e.message; }
+  });
+  $("#fb-octo-add") && ($("#fb-octo-add").onclick = async () => {
+    const v = $("#fb-octo-uuid").value.trim(); if (!v) return;
+    try { octoLocalDone(await api("/api/folder-builder/octo/local-profile", { json: { uuid: v } }), "Профиль добавлен"); }
+    catch (e) { toast(e.message, true); }
+  });
+  main.querySelectorAll("[data-octo-name]").forEach(inp => inp.onchange = async () => {
+    try { octoLocalDone(await api("/api/folder-builder/octo/local-profile", { json: { uuid: inp.dataset.octoName, title: inp.value } }), "Имя сохранено"); }
+    catch (e) { toast(e.message, true); }
+  });
+  main.querySelectorAll("[data-octo-del]").forEach(b => b.onclick = async () => {
+    if (!confirm("Забыть этот профиль? Каналы, где он выбран, перестанут выкладываться.")) return;
+    try { octoLocalDone(await api("/api/folder-builder/octo/local-profile", { json: { uuid: b.dataset.octoDel, remove: true } }), "Профиль забыт"); }
+    catch (e) { toast(e.message, true); }
+  });
   main.querySelector('[data-fbo="folder_upload"]').addEventListener("change", async e => { FB_UPLOAD_ON = e.target.checked; if (FB_UPLOAD_ON && !OCTO.profiles) await loadOcto(false); refreshFolderBuilder(); });
 
   if (data.jobs.some(x => ["running", "queued", "pausing", "stopping"].includes(x.status))) timer = setInterval(() => refreshFolderBuilder().catch(() => null), 2000);

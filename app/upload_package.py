@@ -172,6 +172,10 @@ def parse(path: Path) -> dict:
     tags = [t.strip(" .#") for t in tags_raw.split(",") if t.strip(" .#")]
     category = _plain(_section(secs, "категор", "category").split("\n")[0]) if _section(secs, "категор", "category") else ""
     kids = bool(re.search(r"(?i)для детей|made for kids", category)) and not re.search(r"(?i)не для детей|not made for kids", category)
+    cat_all = _section(secs, "категор", "category")
+    # «Изменённый или синтетический контент»: да/нет (the AI voice); None = the file says nothing, Studio is left as is.
+    m = re.search(r"(?i)(?:синтетическ|altered|synthetic)[^\n:]*[»\"]?\s*[:—-]\s*\**\s*(да|нет|yes|no)", cat_all)
+    altered = None if not m else m.group(1).lower() in ("да", "yes")
     thumb = _section(secs, "превью", "thumbnail")
     main = re.split(r"(?i)\*\*\s*запасн|\*\*\s*alternative", thumb)[0]
     prompt = ""
@@ -188,7 +192,7 @@ def parse(path: Path) -> dict:
                 lines.append((word, "плашк" in how or how.startswith("красн")))
     wpm = re.search(r"(\d{2,3})\s+(?:словах|слов)\s+в\s+минуту", text)
     return {"title": title[:100], "description": description[:5000], "tags": tags, "category": category, "kids": kids,
-            "thumb_prompt": prompt, "thumb_lines": lines, "file": str(path),
+            "altered": altered, "thumb_prompt": prompt, "thumb_lines": lines, "file": str(path),
             "chapters": chapters(description), "wpm": int(wpm.group(1)) if wpm else 150}
 
 

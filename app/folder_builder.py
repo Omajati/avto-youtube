@@ -597,8 +597,9 @@ def _problems(settings: dict, analysis: dict) -> tuple[list[str], list[str]]:
         warnings.append("Нет английского текста: сцены других языков будут привязаны по подсказкам «Голос:» "
                         "и пропорционально. Для точной привязки выберите «ИИ уточняет» в «Привязке сцен».")
     if settings.get("folder_upload"):
-        if not settings.get("octo_token"):
-            problems.append("Автовыкладка включена, но не указан API-токен Octo Browser.")
+        if not settings.get("octo_token") and not settings.get("octo_local_profiles"):
+            problems.append("Автовыкладка включена, но профили Octo не заданы: вставьте API-токен или найдите "
+                            "открытые профили кнопкой «Найти открытые профили» (без токена).")
         rules = settings.get("octo_rules") or {}
         channel = Path(analysis["path"]).parent.name
         for lang in present:
@@ -934,6 +935,53 @@ def octo_profiles(refresh: bool = False):
     if refresh or time.time() - _profiles_cache["at"] > 300 or not _profiles_cache["items"]:
         _profiles_cache.update(at=time.time(), items=octo.profiles(settings))
     return {"profiles": _profiles_cache["items"], "rules": settings.get("octo_rules") or {}}
+
+
+def _local_list() -> list[dict]:
+    return [dict(p) for p in load_settings().get("octo_local_profiles") or [] if isinstance(p, dict) and p.get("uuid")]
+
+
+def _save_local(items: list[dict]) -> dict:
+    save_settings({"octo_local_profiles": items})
+    _profiles_cache.update(at=0, items=[])
+    settings = load_settings()
+    return {"profiles": octo.profiles(settings), "rules": settings.get("octo_rules") or {}}
+
+
+@router.post("/octo/scan")
+def octo_scan():
+    """Without the token: remembers the profiles the owner has open in Octo right now."""
+    found = octo.scan_open()
+    if not found:
+        raise UserError("В Octo Browser сейчас нет открытых профилей. Откройте в Octo профиль канала (кнопкой "
+                        "запуска) и нажмите «Найти открытые профили» ещё раз.")
+    items = _local_list()
+    known = {p["uuid"] for p in items}
+    added = 0
+    for p in found:
+        if p["uuid"] not in known:
+            items.append({"uuid": p["uuid"], "title": p["title"] or f"Профиль {p['uuid'][:8]}"})
+            added += 1
+    out = _save_local(items)
+    out["added"], out["open"] = added, len(found)
+    return out
+
+
+@router.post("/octo/local-profile")
+def octo_local_profile(data: dict = Body(...)):
+    """Add (UUID pasted by hand), rename or remove a profile remembered without the token."""
+    uuid = re.sub(r"[^0-9a-fA-F-]", "", str(data.get("uuid") or ""))
+    if len(uuid.replace("-", "")) < 16:
+        raise UserError("Это не похоже на UUID профиля Octo (в карточке профиля: 32 буквы и цифры).")
+    items = [p for p in _local_list() if p["uuid"] != uuid] if data.get("remove") else _local_list()
+    if not data.get("remove"):
+        title = str(data.get("title") or "").strip()[:80]
+        cur = next((p for p in items if p["uuid"] == uuid), None)
+        if cur:
+            cur["title"] = title or cur["title"]
+        else:
+            items.append({"uuid": uuid, "title": title or f"Профиль {uuid[:8]}"})
+    return _save_local(items)
 
 
 @router.post("/octo/rule")

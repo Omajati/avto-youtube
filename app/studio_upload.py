@@ -22,6 +22,93 @@ class _Stop(Exception):
     pass
 
 
+# YouTube category id -> the words that name it in the upload file and in Studio (EN, RU, ES, DE).
+CATEGORIES = {
+    "27": ["education", "образование", "educación", "bildung"],
+    "22": ["people & blogs", "people and blogs", "люди и блоги", "gente y blogs", "personen & blogs", "personen und blogs"],
+    "24": ["entertainment", "развлечения", "entretenimiento", "unterhaltung"],
+    "15": ["pets & animals", "pets and animals", "животные", "mascotas y animales", "tiere"],
+    "28": ["science & technology", "science and technology", "наука и техника", "ciencia y tecnología", "wissenschaft & technik"],
+    "1": ["film & animation", "film and animation", "фильмы и анимация", "cine y animación", "film & animation"],
+    "19": ["travel & events", "travel and events", "путешествия и события", "viajes y eventos", "reisen & events"],
+    "25": ["news & politics", "новости и политика", "noticias y política", "nachrichten & politik"],
+    "26": ["howto & style", "хобби и стиль", "consejos y estilo", "praktische tipps & styling"],
+    "10": ["music", "музыка", "música", "musik"],
+    "17": ["sports", "спорт", "deportes", "sport"],
+    "20": ["gaming", "видеоигры", "videojuegos", "gaming"],
+    "23": ["comedy", "юмор", "comedia", "comedy"],
+    "29": ["nonprofits & activism", "некоммерческие организации", "ong y activismo"],
+    "2": ["autos & vehicles", "транспорт", "motor", "autos & fahrzeuge"],
+}
+
+
+def category_id(text: str) -> str:
+    """'People & Blogs (Gente y blogs). Язык видео…' -> '22'; '' when the line names no category."""
+    low = (text or "").lower()
+    m = re.search(r"\b(?:id\s*)?(\d{1,2})\b", low)
+    if m and m.group(1) in CATEGORIES and re.match(r"\s*(?:id\s*)?\d", low):
+        return m.group(1)
+    best = ("", 10 ** 6)
+    for cid, names in CATEGORIES.items():
+        for n in names:
+            i = low.find(n)
+            if i >= 0 and i < best[1]:
+                best = (cid, i)
+    return best[0]
+
+
+def _expand(page, state: dict):
+    """Opens «Show more» once (tags, category and the AI label live there)."""
+    if state.get("open"):
+        return
+    page.locator("ytcp-button#toggle-button, #toggle-button").first.click()
+    time.sleep(1)
+    state["open"] = True
+
+
+def _set_category(page, cid: str, log):
+    names = CATEGORIES.get(cid) or []
+    try:
+        trigger = page.locator("ytcp-form-select#category ytcp-dropdown-trigger, #category ytcp-dropdown-trigger, "
+                               "#category-container ytcp-dropdown-trigger").first
+        trigger.scroll_into_view_if_needed(timeout=15_000)
+        trigger.click(timeout=15_000)
+        time.sleep(1)
+        items = page.locator("tp-yt-paper-listbox tp-yt-paper-item:visible, ytcp-text-menu tp-yt-paper-item:visible")
+        for sel in (f'tp-yt-paper-item[test-id="{cid}"]:visible', f'tp-yt-paper-item[test-id$="_{cid}"]:visible',
+                    f'tp-yt-paper-item[value="{cid}"]:visible'):
+            hit = page.locator(sel)
+            if hit.count():
+                hit.first.click()
+                return True
+        for i in range(items.count()):
+            item = items.nth(i)
+            text = (item.inner_text(timeout=3000) or "").strip().lower()
+            if text and any(text == n or text.startswith(n) for n in names):
+                item.click()
+                return True
+        page.keyboard.press("Escape")
+    except Exception as e:  # noqa: BLE001
+        log(f"Категорию поставить не получилось ({str(e).splitlines()[0][:120]}) — оставляю как есть")
+        return False
+    log("Категорию в списке Studio не нашёл — оставляю как есть")
+    return False
+
+
+def _set_altered(page, yes: bool):
+    """«Altered or synthetic content» (the AI voice): a best effort, Studio may not show it for every channel."""
+    name = "VIDEO_HAS_ALTERED_CONTENT_YES" if yes else "VIDEO_HAS_ALTERED_CONTENT_NO"
+    try:
+        radio = page.locator(f"tp-yt-paper-radio-button[name={name}]")
+        if radio.count():
+            radio.first.scroll_into_view_if_needed(timeout=10_000)
+            radio.first.click(timeout=10_000)
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
 def _type_into(page, selector: str, text: str):
     box = page.locator(selector).first
     box.wait_for(state="visible", timeout=60_000)
@@ -55,7 +142,7 @@ def _uploading(page) -> bool:
 
 def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privacy: str = "public",
            log=lambda s: None, cancelled=lambda: False) -> str:
-    """Uploads and publishes; returns the video link. meta: {title, description, tags, kids}."""
+    """Uploads and publishes; returns the video link. meta: {title, description, tags, kids, category, altered}."""
     from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 
     if not video.is_file():
@@ -99,14 +186,23 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
                                     "без этого свои превью ставить нельзя.")
             kids = "VIDEO_MADE_FOR_KIDS_MFK" if meta.get("kids") else "VIDEO_MADE_FOR_KIDS_NOT_MFK"
             page.locator(f"tp-yt-paper-radio-button[name={kids}]").first.click()
+            more: dict = {}
             if tags:
                 log("Вписываю теги…")
-                page.locator("ytcp-button#toggle-button, #toggle-button").first.click()
+                _expand(page, more)
                 tag_box = page.locator("#tags-container input#text-input, ytcp-form-input-container#tags-container input").first
                 tag_box.wait_for(state="visible", timeout=30_000)
                 tag_box.click()
                 tag_box.fill(tags + ",")
                 time.sleep(1)
+            cid = category_id(meta.get("category") or "")
+            if cid:
+                log("Ставлю категорию…")
+                _expand(page, more)
+                _set_category(page, cid, log)
+            if meta.get("altered") is not None:
+                _expand(page, more)
+                _set_altered(page, bool(meta.get("altered")))
             for _ in range(3):
                 if cancelled():
                     raise _Stop()
