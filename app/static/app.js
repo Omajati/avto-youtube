@@ -3697,6 +3697,26 @@ async function refreshFolderBuilder() {
   return data;
 }
 
+function makeFoldable(card, key, openByDefault = false) {
+  const h2 = card.querySelector(":scope > h2, :scope > .row > h2");
+  if (!h2 || card.querySelector(":scope > .fold-body")) return;
+  const head = h2.parentElement === card ? h2 : h2.parentElement;
+  const body = document.createElement("div");
+  body.className = "fold-body";
+  while (head.nextSibling) body.appendChild(head.nextSibling);
+  card.appendChild(body);
+  head.classList.add("fold-head");
+  h2.insertAdjacentHTML("afterbegin", `<span class="fold-arrow" aria-hidden="true">▸</span>`);
+  const stored = lsGet(`ay_fold_${key}`, "");
+  const set = open => { card.classList.toggle("folded", !open); head.setAttribute("aria-expanded", open ? "true" : "false"); };
+  set(stored ? stored === "open" : openByDefault);
+  head.addEventListener("click", e => {
+    if (e.target.closest("a, button, input, select, label")) return;  // the buttons in the heading keep working
+    const open = card.classList.contains("folded");
+    set(open); lsSetRaw(`ay_fold_${key}`, open ? "open" : "closed");
+  });
+}
+
 async function viewFolderBuilder() {
   clearInterval(timer); timer = null;
   FB_DIRTY = false;
@@ -3774,7 +3794,7 @@ async function viewFolderBuilder() {
       <div class="muted small" style="margin-top:10px">Музыкальных треков в библиотеке: ${data.summary.music_tracks}. Ваши изображения не перерисовываются; кадры программы обновляются, если изменился промпт, модель или режим референсов. Видео всегда важнее фотографии с тем же номером сцены.</div>
     </div></div>
   </div>
-  <div class="card"><h2 style="margin-top:0">🚀 Автовыкладка на YouTube через Octo Browser</h2>
+  <div class="card fb-upload-card"><h2 style="margin-top:0">🚀 Автовыкладка на YouTube через Octo Browser</h2>
     <label class="check"><input type="checkbox" data-fbo="folder_upload" ${q("folder_upload", false) ? "checked" : ""}><span><b>Выкладывать готовые ролики</b><span class="muted small">Каждый язык уходит в профиль Octo, выбранный для его канала. Название, описание и теги берутся из файла <code>загрузка_YouTube_EN.md</code> (и т. п.) в папке языка, превью — из раздела «2. Превью». Octo Browser должен быть открыт.</span></span></label>
     <div class="grid2"><div>
       <label class="f">Доступ после загрузки</label><select data-fbo="folder_upload_privacy">${[["public", "Открытый доступ"], ["unlisted", "Доступ по ссылке"], ["private", "Ограниченный доступ"]].map(([v, n]) => `<option value="${v}" ${q("folder_upload_privacy", "public") === v ? "selected" : ""}>${n}</option>`).join("")}</select>
@@ -3820,6 +3840,10 @@ async function viewFolderBuilder() {
   <div class="row fb-actions"><button class="primary big" id="fb-add">＋ Добавить папки</button><button class="blue big" id="fb-start" ${fbShownJobs(data.jobs).length ? "" : "disabled"}>${FB_CHANNEL ? "▶ Собрать очередь канала" : "▶ Собрать всю очередь"}</button><span class="muted small">Можно выбрать несколько папок сразу. Все готовые этапы кэшируются.</span></div>
   <div id="fb-jobs" style="margin-top:16px"></div>`;
   drawFolderJobs(data);
+  // Big setting blocks fold under their heading (an arrow); the state is remembered per block.
+  [["fb-channels", true], ["fb-settings", false], ["fb-upload-card", false], ["fb-inbox", false]].forEach(([cls, openByDefault]) => {
+    const card = main.querySelector(`.card.${cls}`); if (card) makeFoldable(card, cls, openByDefault);
+  });
   main.querySelectorAll("[data-fb-channel]").forEach(b => b.onclick = async () => {
     try { await saveFolderOptions(); } catch (e) { }
     FB_CHANNEL = b.dataset.fbChannel; lsSetRaw("ay_fb_channel", FB_CHANNEL || null); viewFolderBuilder();
