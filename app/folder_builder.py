@@ -468,7 +468,10 @@ def list_queue():
     for job in jobs:
         if job.get("analysis"):
             chosen = {**settings, **(job.get("options") or {})}
-            job["problems"], job["warnings"] = _problems(chosen, job["analysis"])
+            try:
+                job["problems"], job["warnings"] = _problems(chosen, job["analysis"])
+            except Exception as exc:  # one broken project must not take the whole queue page down
+                job["problems"], job["warnings"] = [f"Не получилось проверить папку проекта: {exc}"], []
             try:
                 job["estimate"] = _generation_estimate(chosen, job["analysis"])
             except Exception:
@@ -620,6 +623,8 @@ def control_job(job_id: str, data: dict = Body(...)):
             if status not in ("review", "error", "done"):
                 raise UserError("Перерисовать превью можно, когда проект не собирается.")
             root = Path(job["path"])
+            if not root.is_dir():
+                raise UserError(f"Папка проекта не найдена: {root}. Верните её на место или удалите проект из очереди.")
             for path in (job.get("thumbs_generated") or {}).values():
                 Path(path).unlink(missing_ok=True)
             source = next((p for p in root.iterdir() if p.is_dir() and p.name.lower() == "исходники"), root)
@@ -1577,6 +1582,9 @@ def _music_brief(root) -> dict | None:
     Lines «Стиль: …» (2–4 Russian words for the library) and «Prompt: …» (English, for the generator);
     without those labels the whole text is the prompt. Lines starting with # are notes."""
     root = Path(root)
+    if not root.is_dir():
+        # The project folder was moved, renamed or deleted: no brief, and the queue page must still open.
+        return None
     folders = [p for p in root.iterdir() if p.is_dir() and p.name.lower() == "исходники"] + [root]
     for folder in folders:
         for name in MUSIC_BRIEF_NAMES:
