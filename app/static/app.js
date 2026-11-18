@@ -3525,7 +3525,8 @@ function folderJobHtml(job) {
   const settingsLabel = Object.keys(o).length ? "Последний запуск" : "Текущие настройки";
   const cls = status === "ready" ? "queued" : status === "stopped" ? "paused" : status === "review" ? "paused" : ["pausing", "stopping"].includes(status) ? "running" : status;
   const channel = fbChannel(job.path), langs = Object.keys(a.languages || {});
-  const uploadOn = !!(o.folder_upload ?? FB_UPLOAD_ON);
+  // The «куда выложить» choice is also shown on built videos: they can be published by hand with «🚀 Выложить».
+  const uploadOn = !!(o.folder_upload ?? FB_UPLOAD_ON) || ["done", "error", "stopped", "review"].includes(status);
   const profileSel = l => {
     const rule = OCTO.rules[`${channel}|${l}`] || "", pick = (job.octo_pick || {})[l] || "";
     const list = OCTO.profiles || [];
@@ -3571,6 +3572,7 @@ function folderJobHtml(job) {
     <div class="row" style="margin-top:10px">
       ${status === "review" ? `<button class="primary sm" data-fb-action="publish">✅ Выложить</button><button class="sm" data-fb-action="redraw">🔄 Перерисовать превью</button>` : ""}
       ${Object.keys(job.outputs || {}).length ? Object.keys(job.outputs).map(l => `<button class="${status === "done" ? "primary " : ""}sm" data-fb-reveal="${l}">📂 Видео ${l.toUpperCase()}</button>`).join("") : status === "done" ? `<button class="primary sm" data-fb-reveal>📂 Показать готовое видео</button><span class="muted small">${esc(job.output || a.output || "")}</span>` : ""}
+      ${["done", "error", "stopped"].includes(status) && Object.keys(job.langs_done || job.outputs || {}).some(l => !(job.uploaded || {})[l] && !(job.trashed || {})[l]) ? `<button class="primary sm" data-fb-action="upload" title="Запустить профиль Octo и выложить этот ролик сейчас (даже если автовыкладка выключена)">🚀 Выложить</button>` : ""}
       ${status === "done" && (job.image_notes || []).length ? `<button class="primary sm" data-fb-one>🖼 Дорисовать сцены и пересобрать</button>` : ""}
       ${status === "error" || status === "ready" ? `<button class="sm ${status === "error" ? "primary" : ""}" data-fb-one ${job.problems?.length || job.scan_error ? "disabled" : ""}>${status === "error" ? "▶ Повторить" : "▶ Собрать этот проект"}</button>` : ""}
       ${["running", "queued"].includes(status) ? `<button class="sm" data-fb-action="pause">⏸ Пауза</button><button class="sm danger" data-fb-action="stop">⏹ Остановить</button>` : ""}

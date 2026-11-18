@@ -939,6 +939,22 @@ def control_job(job_id: str, data: dict = Body(...)):
                                 + " (список «Куда выложить этот ролик» в карточке проекта).")
             job["approved"] = {lang: True for lang in (job.get("thumbs") or {})}
             job.update(status="queued", step="Ждёт своей очереди на выкладку…", error="")
+        elif action == "upload":
+            # The owner's own «Выложить» on a built video: the same upload as the automatic one, also when the
+            # «Выкладывать готовые ролики» box is off (a pool of videos made first, published by hand later).
+            if status not in ("done", "error", "stopped"):
+                raise UserError("Выложить можно собранный ролик, который сейчас не в работе.")
+            built = {lang: path for lang, path in (job.get("langs_done") or job.get("outputs") or {}).items()
+                     if lang not in (job.get("uploaded") or {}) and Path(str(path)).is_file()}
+            if not built:
+                raise UserError("Нечего выкладывать: готовых MP4 нет или все языки уже выложены.")
+            missing = [lang for lang in _missing_picks(job) if lang in built]
+            if missing:
+                raise UserError("Выберите, на какой канал выкладывать: " + ", ".join(x.upper() for x in missing)
+                                + " (список «Куда выложить этот ролик» в карточке проекта).")
+            job["approved"] = {**(job.get("approved") or {}), **{lang: True for lang in built}}
+            job.update(force_upload=True, status="queued", step="Ждёт своей очереди на выкладку…", error="",
+                       auto_retries=0, retry_at=0, last_error="")
         elif action == "redraw":
             if status not in ("review", "error", "done"):
                 raise UserError("Перерисовать превью можно, когда проект не собирается.")
@@ -960,7 +976,7 @@ def control_job(job_id: str, data: dict = Body(...)):
             raise UserError("Неизвестная команда управления проектом.")
         job["updated"] = _now()
         _save_queue()
-    if action in ("stop", "resume", "publish", "redraw"):
+    if action in ("stop", "resume", "publish", "redraw", "upload"):
         _kick_scheduler()
     return {"ok": True, "status": job.get("status")}
 
@@ -2564,12 +2580,13 @@ def _build(job_id: str):
         if failures:
             raise UserError("Не собрались: " + "; ".join(failures)
                             + (f". Готовы: {', '.join(x.upper() for x in outputs)}" if outputs else ""))
-        if options.get("folder_thumbs", True) or options.get("folder_upload"):
+        upload_now = bool(options.get("folder_upload") or (_jobs.get(job_id) or {}).get("force_upload"))
+        if options.get("folder_thumbs", True) or upload_now:
             _make_thumbs(job_id, analysis, outputs, settings)
-        if options.get("folder_upload"):
+        if upload_now:
             _publish(job_id, analysis, outputs, settings, options)
         first = outputs.get("en") or next(iter(outputs.values()))
-        _update(job_id, status="done", progress=1, step="Готово", error="", output=first, outputs=outputs,
+        _update(job_id, status="done", progress=1, step="Готово", error="", output=first, outputs=outputs, force_upload=False,
                 finished=_now(), analysis=_analyze(Path(job["path"])))
         # The source folder keeps its generated scene PNGs and final MP4s; internal audio, clips and duplicate finals do not.
         shutil.rmtree(cache, ignore_errors=True)
