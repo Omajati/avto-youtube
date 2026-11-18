@@ -1,6 +1,6 @@
 {
- "version": 209,
- "label": "автоподхват архивов из папки Google Drive",
- "notes": "Автоподхват: положите .zip сценария в папку Google Drive — программа сама распакует его и поставит в очередь",
+ "version": 210,
+ "label": "сценарии из GitHub сами встают в очередь",
+ "notes": "Сценарии из GitHub: сценарист кладёт .zip в закрытый репозиторий, программа сама скачивает их и ставит в очередь на монтаж",
  "app_zip": "https://raw.githubusercontent.com/Omajati/avto-youtube/main/release/Avto-YouTube.zip"
 }

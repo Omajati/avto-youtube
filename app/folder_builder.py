@@ -23,7 +23,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body
 
 from . import folder_inbox
-from . import captions, editing_styles, fast_render, graphics, images, llm, local_editor, media, motion, music, octo, tts, upload_package
+from . import captions, editing_styles, fast_render, net, graphics, images, llm, local_editor, media, motion, music, octo, tts, upload_package
 from .config import DATA_DIR, load_settings, save_settings
 from .net import UserError
 
@@ -57,10 +57,11 @@ FOLDER_OPTION_KEYS = (
     "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
     "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
     "folder_effect_level", "folder_render_speed", "folder_fast", "folder_jobs_parallel", "image_parallel", "render_parallel",
-    "folder_inbox_dir", "folder_work_dir", "folder_inbox_autostart",
+    "folder_inbox_dir", "folder_work_dir", "folder_inbox_autostart", "folder_github_repo", "folder_github_branch",
 )
 INBOX_STATE_FILE = ROOT / "inbox_state.json"
 INBOX_INTERVAL = 60
+GITHUB_INTERVAL = 120
 
 
 class _PauseRequested(Exception):
@@ -2368,7 +2369,47 @@ _inbox_wake = threading.Event()
 
 def _inbox_public() -> dict:
     state = folder_inbox.load_state(INBOX_STATE_FILE)
-    return {k: state.get(k) for k in ("last_check", "picked", "errors", "last_error", "last_picked", "status")}
+    out = {k: state.get(k) for k in ("last_check", "picked", "errors", "last_error", "last_picked", "status",
+                                      "github_last", "github_downloaded", "github_status")}
+    out["github_token_set"] = bool(load_settings().get("github_token"))
+    return out
+
+
+_github_next = 0.0
+
+
+def _github_fetch(settings: dict, inbox: Path, state: dict, force: bool = False):
+    """Новые архивы из закрытого репозитория сценариев → в папку входящих (дальше их берёт scan_once)."""
+    global _github_next
+    repo = folder_inbox.normalize_repo(str(settings.get("folder_github_repo") or ""))
+    if not repo:
+        state["github_status"] = "Неверно указан репозиторий: нужно «владелец/название»." if settings.get("folder_github_repo") else ""
+        return
+    if not force and time.time() < _github_next:
+        return
+    _github_next = time.time() + GITHUB_INTERVAL
+    from urllib.parse import quote
+    branch = str(settings.get("folder_github_branch") or "").strip() or "main"
+    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    token = str(settings.get("github_token") or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    api = f"https://api.github.com/repos/{repo}"
+    state["github_last"] = _now()
+    try:
+        tree = net.request("GitHub", "GET", f"{api}/git/trees/{quote(branch, safe='')}", tries=2, timeout=30,
+                           headers=headers, params={"recursive": "1"}).json().get("tree") or []
+    except UserError as exc:
+        hint = "" if token else " Если репозиторий закрытый — вставьте токен GitHub."
+        state["github_status"] = f"{exc}{hint}"
+        return
+
+    def download(path: str) -> bytes:
+        return net.request("GitHub", "GET", f"{api}/contents/{quote(path)}", tries=3, timeout=300,
+                           headers={**headers, "Accept": "application/vnd.github.raw"}, params={"ref": branch}).content
+
+    state["github_status"] = ""
+    folder_inbox.github_pull(tree, inbox, state, download, log=lambda m: print(m, flush=True))
 
 
 def _inbox_is_project(path: Path) -> bool:
@@ -2387,13 +2428,18 @@ def _inbox_enqueue(path: Path, channel: str):
         _kick_scheduler()
 
 
-def inbox_pass() -> dict:
+def inbox_pass(force_github: bool = False) -> dict:
     """One pass of the watcher with the saved settings (also used by «Проверить сейчас»)."""
     settings = load_settings()
     inbox, work = str(settings.get("folder_inbox_dir") or "").strip(), str(settings.get("folder_work_dir") or "").strip()
     if not inbox or not work:
         return _inbox_public()
     state = folder_inbox.load_state(INBOX_STATE_FILE)
+    try:
+        if Path(inbox).expanduser().is_dir():
+            _github_fetch(settings, Path(inbox).expanduser(), state, force_github)
+    except Exception as exc:
+        state["github_status"] = f"Ошибка: {exc}"
     try:
         folder_inbox.scan_once(Path(inbox), Path(work), state, is_project=_inbox_is_project, enqueue=_inbox_enqueue,
                                log=lambda m: print(m, flush=True))
@@ -2408,12 +2454,13 @@ def inbox_pass() -> dict:
 
 def _inbox_loop():
     time.sleep(5)
+    force = True
     while True:
         try:
-            inbox_pass()
+            inbox_pass(force)
         except Exception:
             pass
-        _inbox_wake.wait(INBOX_INTERVAL)
+        force = _inbox_wake.wait(INBOX_INTERVAL)  # «Проверить сейчас» also asks GitHub right away
         _inbox_wake.clear()
 
 

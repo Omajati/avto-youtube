@@ -3649,6 +3649,11 @@ function drawInboxStatus(inbox) {
   let text = `Последняя проверка: ${when} · подхвачено: ${inbox.picked || 0} · ошибок: ${inbox.errors || 0}`;
   if (inbox.status) text += ` — ⚠️ ${inbox.status}`;
   else if (inbox.last_error) text += ` — последняя ошибка: ${inbox.last_error}`;
+  if ((main.querySelector('[data-fbo="folder_github_repo"]') || {}).value) {
+    const gh = inbox.github_last ? new Date(inbox.github_last * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) : "ещё не было";
+    text += ` · GitHub: проверка ${gh}, скачано ${inbox.github_downloaded || 0}`;
+    if (inbox.github_status) text += ` — ⚠️ ${inbox.github_status}`;
+  }
   el.textContent = text;
 }
 
@@ -3737,6 +3742,13 @@ async function viewFolderBuilder() {
     <div class="row"><input class="grow" type="text" data-fbo="folder_inbox_dir" id="fb-inbox-dir" placeholder="/Users/…/Google Drive/Мой диск/Авто ютуб входящие" value="${esc(q("folder_inbox_dir", ""))}"><button class="btn" data-fb-pick-dir="fb-inbox-dir" data-prompt="Выберите папку входящих (в Google Drive)">📁 Выбрать</button></div>
     <label class="f">Рабочая папка (на этом Mac, не в Google Drive: тут будут кадры, озвучка и MP4)</label>
     <div class="row"><input class="grow" type="text" data-fbo="folder_work_dir" id="fb-work-dir" placeholder="/Users/…/Авто ютуб проекты" value="${esc(q("folder_work_dir", ""))}"><button class="btn" data-fb-pick-dir="fb-work-dir" data-prompt="Выберите рабочую папку (не в Google Drive)">📁 Выбрать</button></div>
+    <details class="fb-github" ${q("folder_github_repo", "") ? "open" : ""}><summary><b>Сценарии из GitHub</b> <span class="muted small">— сценарист кладёт .zip в закрытый репозиторий, программа сама скачивает их в папку входящих</span></summary>
+      <p class="muted small">В репозитории: папка канала → архив, например <code>Семейные драмы ES/10_РЕЦЕПТЫ.zip</code>. Программа проверяет его раз в 2 минуты и скачивает новые архивы в «Папку входящих» (в папку с тем же именем канала). Каждая версия архива скачивается один раз.</p>
+      <label class="f">Репозиторий (владелец/название или ссылка)</label>
+      <input type="text" data-fbo="folder_github_repo" placeholder="Omajati/avto-scenarii" value="${esc(q("folder_github_repo", ""))}">
+      <label class="f">Токен GitHub (только чтение этого репозитория)</label>
+      <div class="row"><input class="grow" type="password" id="fb-gh-token" placeholder="${data.inbox?.github_token_set ? "токен сохранён — вставьте новый, чтобы заменить" : "github_pat_…"}"><button class="btn" id="fb-gh-save">Сохранить токен</button></div>
+    </details>
     <label class="check"><input type="checkbox" data-fbo="folder_inbox_autostart" ${q("folder_inbox_autostart", false) ? "checked" : ""}><span><b>Запускать сразу</b><span class="muted small">Подхваченный проект сразу начинает собираться с настройками ниже. Выключено — он просто появится в очереди, а запускаете вы.</span></span></label>
     <div class="row"><span class="muted small grow" id="fb-inbox-status"></span><button class="btn sm" id="fb-inbox-check">🔄 Проверить сейчас</button></div>
   </div>
@@ -3793,6 +3805,11 @@ async function viewFolderBuilder() {
       if (r.path) { $("#" + b.dataset.fbPickDir).value = r.path; await saveFolderOptions(); await api("/api/folder-builder/inbox/check", { json: {} }); toast("Папка сохранена"); }
     } catch (e) { toast(e.message, true); }
   });
+  $("#fb-gh-save").onclick = async () => {
+    const v = $("#fb-gh-token").value.trim(); if (!v) return toast("Вставьте токен", true);
+    try { await api("/api/settings", { json: { github_token: v } }); await saveFolderOptions(); await api("/api/folder-builder/inbox/check", { json: {} }); $("#fb-gh-token").value = ""; $("#fb-gh-token").placeholder = "токен сохранён — вставьте новый, чтобы заменить"; toast("Токен сохранён, проверяю репозиторий…"); setTimeout(() => refreshFolderBuilder().catch(() => null), 6000); }
+    catch (e) { toast(e.message, true); }
+  };
   $("#fb-inbox-check").onclick = async () => {
     try { await saveFolderOptions(); await api("/api/folder-builder/inbox/check", { json: {} }); toast("Проверяю папку входящих…"); setTimeout(() => refreshFolderBuilder().catch(() => null), 4000); }
     catch (e) { toast(e.message, true); }

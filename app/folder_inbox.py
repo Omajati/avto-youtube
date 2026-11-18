@@ -335,3 +335,56 @@ def _take(item: Path, is_zip: bool, channel: str, work: Path, state: dict, done_
         state["errors"] = int(state.get("errors") or 0) + 1
         state["last_error"] = f"{channel} / {target.name}: распакован, но не поставлен в очередь: {exc}"
         log(state["last_error"])
+
+
+# ---------------------------------------------------------------- сценарии из репозитория GitHub
+
+def normalize_repo(raw: str) -> str:
+    """«owner/name», ссылка https://github.com/owner/name(.git) или git@github.com:owner/name → owner/name."""
+    text = (raw or "").strip().rstrip("/")
+    for prefix in ("https://github.com/", "http://github.com/", "github.com/", "git@github.com:"):
+        if text.lower().startswith(prefix):
+            text = text[len(prefix):]
+    if text.endswith(".git"):
+        text = text[:-4]
+    parts = [p for p in text.split("/") if p]
+    return "/".join(parts[:2]) if len(parts) >= 2 else ""
+
+
+def github_pull(tree: list[dict], inbox: Path, state: dict, download: Callable[[str], bytes],
+                log: Callable[[str], None] = lambda _m: None) -> int:
+    """Скачивает новые «<канал>/<проект>.zip» из дерева репозитория в inbox/<канал>/.
+
+    ``tree`` — записи из GitHub API (path, type, sha); ``download(path)`` возвращает содержимое файла.
+    Уже скачанные версии (по sha) повторно не берутся. Возвращает число скачанных архивов.
+    """
+    seen = state.setdefault("github", {})
+    got = 0
+    for entry in tree:
+        path = str(entry.get("path") or "")
+        parts = path.split("/")
+        if entry.get("type") != "blob" or len(parts) != 2 or not parts[1].lower().endswith(".zip"):
+            continue
+        channel, name = _nfc(parts[0]), _nfc(parts[1])
+        if is_temp_name(channel) or channel.startswith("_") or is_temp_name(name) or not _project_name_ok(channel):
+            continue
+        sha = str(entry.get("sha") or "")
+        if not sha or seen.get(path) == sha:
+            continue
+        target_dir = Path(inbox) / channel
+        target_dir.mkdir(parents=True, exist_ok=True)
+        tmp = target_dir / f".{name}.download"
+        try:
+            data = download(path)
+            tmp.write_bytes(data)
+            os.replace(tmp, target_dir / name)
+        except Exception as exc:
+            tmp.unlink(missing_ok=True)
+            state["github_status"] = f"Не скачался «{path}»: {exc}"
+            log(state["github_status"])
+            continue  # попробуем в следующий раз
+        seen[path] = sha
+        got += 1
+        state["github_downloaded"] = int(state.get("github_downloaded") or 0) + 1
+        log(f"GitHub: скачан {path}")
+    return got
