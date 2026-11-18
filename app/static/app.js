@@ -3722,7 +3722,7 @@ async function viewFolderBuilder() {
   };
   const langsOn = String(q("folder_languages", "en") || "en").split(/[,\s]+/).filter(Boolean);
   FB_UPLOAD_ON = !!q("folder_upload", false);
-  if (FB_UPLOAD_ON && !OCTO.profiles) await loadOcto(false);
+  if (!OCTO.profiles) await loadOcto(false);
   main.innerHTML = `<h1>📂 Сборка роликов из папок</h1>
   <p class="muted">Выберите готовые папки проектов и нажмите одну кнопку. Программа возьмёт тексты озвучки из папок <code>EN</code>, <code>RU</code>, <code>DE</code>, <code>ES</code>, готовые файлы <code>S001…</code>, создаст недостающие изображения и положит готовый MP4 в папку каждого языка.</p>
   <div class="card fb-fast"><label class="check" style="margin:0"><input type="checkbox" data-fbo="folder_fast" id="fb-fast" ${q("folder_fast", false) ? "checked" : ""}><span><b>⚡ Быстрая сборка</b><span class="muted small">Самый простой ролик: картинки по порядку, озвучка как есть, обычные субтитры строками. Без музыки, караоке, эффектов, переходов и движения камеры; сцены привязываются без ИИ. Часовой ролик — около полутора минут. Выключите — соберётся со всем монтажом, как раньше.</span></span></label></div>
@@ -3791,7 +3791,7 @@ async function viewFolderBuilder() {
         <li>Выберите профиль у канала (настройки канала выше или в карточке проекта). Больше открывать руками не нужно: при выкладке программа сама перезапустит профиль и загрузит ролик — с названием, описанием, тегами, превью, категорией и отметкой «не для детей».</li>
       </ol>
       <div class="row" style="gap:6px"><button class="sm" id="fb-octo-scan">🔍 Найти открытые профили</button><span class="muted small" id="fb-octo-scan-r"></span></div>
-      <div id="fb-octo-local-list" style="margin-top:6px">${(OCTO.profiles || []).filter(x => x.local).map(x => `<div class="row" style="gap:6px;flex-wrap:nowrap;margin-top:4px"><input type="text" class="grow" data-octo-name="${esc(x.uuid)}" value="${esc(x.title)}" title="${esc(x.uuid)}"><span class="muted small" style="white-space:nowrap">${esc(x.uuid.slice(0, 8))}…</span><button class="sm" data-octo-del="${esc(x.uuid)}" title="Забыть профиль">✕</button></div>`).join("")}</div>
+      <div id="fb-octo-local-list" style="margin-top:6px"></div>
       <div class="row" style="gap:6px;flex-wrap:nowrap;margin-top:6px"><input type="text" class="grow" id="fb-octo-uuid" placeholder="или вставьте UUID профиля из Octo (карточка профиля)"><button class="sm" id="fb-octo-add">Добавить</button></div>
     </details></div>
   <div class="card fb-inbox"><h2 style="margin-top:0">📥 Автоподхват из папки</h2>
@@ -3854,7 +3854,7 @@ async function viewFolderBuilder() {
   $("#fb-channel-work-save")?.addEventListener("click", () => saveChannelWork($("#fb-channel-work").value.trim()));
   $("#fb-channel-work-clear")?.addEventListener("click", () => saveChannelWork(""));
   if (FB_CHANNEL) {
-    if (!OCTO.profiles && data.octo_token_set) await loadOcto(false);
+    if (!OCTO.profiles) await loadOcto(false);
     drawChannelOcto();
     main.querySelectorAll("[data-fb-lang]").forEach(x => x.addEventListener("change", drawChannelOcto));
   }
@@ -3926,10 +3926,29 @@ async function viewFolderBuilder() {
       r.textContent = "Загружаю профили…";
       const o = await loadOcto(true);
       r.textContent = o.error ? "❌ " + o.error : `✅ Профилей в Octo: ${o.profiles.length}`;
-      $("#fb-octo-token").value = ""; refreshFolderBuilder();
+      $("#fb-octo-token").value = ""; drawOctoLocal(); if (FB_CHANNEL) drawChannelOcto(); refreshFolderBuilder();
     } catch (e) { r.textContent = "❌ " + e.message; }
   };
-  const octoLocalDone = (o, msg) => { OCTO.profiles = o.profiles; OCTO.rules = o.rules; OCTO.error = ""; if (msg) toast(msg); refreshFolderBuilder(); };
+  const drawOctoLocal = () => {
+    const box = $("#fb-octo-local-list"); if (!box) return;
+    const mine = (OCTO.profiles || []).filter(x => x.local);
+    box.innerHTML = mine.length ? `<div class="muted small">Запомненные профили (имя можно поменять):</div>` + mine.map(x => `<div class="row" style="gap:6px;flex-wrap:nowrap;margin-top:4px"><input type="text" class="grow" data-octo-name="${esc(x.uuid)}" value="${esc(x.title)}" title="${esc(x.uuid)}"><span class="muted small" style="white-space:nowrap">${esc(x.uuid.slice(0, 8))}…</span><button class="sm" data-octo-del="${esc(x.uuid)}" title="Забыть профиль">✕</button></div>`).join("") : "";
+    box.querySelectorAll("[data-octo-name]").forEach(inp => inp.onchange = async () => {
+      try { octoLocalDone(await api("/api/folder-builder/octo/local-profile", { json: { uuid: inp.dataset.octoName, title: inp.value } }), "Имя сохранено"); }
+      catch (e) { toast(e.message, true); }
+    });
+    box.querySelectorAll("[data-octo-del]").forEach(b => b.onclick = async () => {
+      if (!confirm("Забыть этот профиль? Каналы, где он выбран, перестанут выкладываться.")) return;
+      try { octoLocalDone(await api("/api/folder-builder/octo/local-profile", { json: { uuid: b.dataset.octoDel, remove: true } }), "Профиль забыт"); }
+      catch (e) { toast(e.message, true); }
+    });
+  };
+  const octoLocalDone = (o, msg) => {
+    OCTO.profiles = o.profiles; OCTO.rules = o.rules; OCTO.error = ""; if (msg) toast(msg);
+    const r = $("#fb-octo-r"); if (r) r.textContent = `Профилей: ${o.profiles.length}`;
+    drawOctoLocal(); if (FB_CHANNEL) drawChannelOcto(); refreshFolderBuilder();
+  };
+  drawOctoLocal();
   $("#fb-octo-scan") && ($("#fb-octo-scan").onclick = async () => {
     const r = $("#fb-octo-scan-r"); r.textContent = "Ищу…";
     try { const o = await api("/api/folder-builder/octo/scan", { method: "POST" }); octoLocalDone(o, `Открыто профилей: ${o.open}, новых: ${o.added}`); }
@@ -3938,15 +3957,6 @@ async function viewFolderBuilder() {
   $("#fb-octo-add") && ($("#fb-octo-add").onclick = async () => {
     const v = $("#fb-octo-uuid").value.trim(); if (!v) return;
     try { octoLocalDone(await api("/api/folder-builder/octo/local-profile", { json: { uuid: v } }), "Профиль добавлен"); }
-    catch (e) { toast(e.message, true); }
-  });
-  main.querySelectorAll("[data-octo-name]").forEach(inp => inp.onchange = async () => {
-    try { octoLocalDone(await api("/api/folder-builder/octo/local-profile", { json: { uuid: inp.dataset.octoName, title: inp.value } }), "Имя сохранено"); }
-    catch (e) { toast(e.message, true); }
-  });
-  main.querySelectorAll("[data-octo-del]").forEach(b => b.onclick = async () => {
-    if (!confirm("Забыть этот профиль? Каналы, где он выбран, перестанут выкладываться.")) return;
-    try { octoLocalDone(await api("/api/folder-builder/octo/local-profile", { json: { uuid: b.dataset.octoDel, remove: true } }), "Профиль забыт"); }
     catch (e) { toast(e.message, true); }
   });
   main.querySelector('[data-fbo="folder_upload"]').addEventListener("change", async e => { FB_UPLOAD_ON = e.target.checked; if (FB_UPLOAD_ON && !OCTO.profiles) await loadOcto(false); refreshFolderBuilder(); });
