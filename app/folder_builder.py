@@ -22,6 +22,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body
 
+from . import folder_inbox
 from . import captions, editing_styles, fast_render, graphics, images, llm, local_editor, media, motion, music, octo, tts, upload_package
 from .config import DATA_DIR, load_settings, save_settings
 from .net import UserError
@@ -56,7 +57,10 @@ FOLDER_OPTION_KEYS = (
     "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
     "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
     "folder_effect_level", "folder_render_speed", "folder_fast", "folder_jobs_parallel", "image_parallel", "render_parallel",
+    "folder_inbox_dir", "folder_work_dir", "folder_inbox_autostart",
 )
+INBOX_STATE_FILE = ROOT / "inbox_state.json"
+INBOX_INTERVAL = 60
 
 
 class _PauseRequested(Exception):
@@ -546,7 +550,7 @@ def list_queue():
                 job["estimate"] = _generation_estimate(chosen, job["analysis"])
             except Exception:
                 job["estimate"] = {}
-    return {"jobs": jobs, "settings": {k: settings.get(k) for k in FOLDER_OPTION_KEYS},
+    return {"jobs": jobs, "settings": {k: settings.get(k) for k in FOLDER_OPTION_KEYS}, "inbox": _inbox_public(),
         "summary": _setting_summary(settings), "octo_token_set": bool(settings.get("octo_token"))}
 
 
@@ -582,10 +586,27 @@ return answer
     return {"paths": [line.strip().rstrip("/") for line in run.stdout.splitlines() if line.strip()]}
 
 
-@router.post("/add")
-def add_folders(data: dict = Body(...)):
+@router.post("/pick-one")
+def pick_one_folder(data: dict = Body(default={})):
+    """One folder for the inbox/work settings."""
+    if sys.platform != "darwin":
+        raise UserError("Выбор папки кнопкой пока поддерживается на Mac. Впишите путь в поле вручную.")
+    prompt = str(data.get("prompt") or "Выберите папку").replace('"', "'")
+    script = f'return POSIX path of (choose folder with prompt "{prompt}")'
+    try:
+        run = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise UserError(f"Не получилось открыть выбор папки: {exc}") from exc
+    if run.returncode:
+        if "User canceled" in run.stderr or "-128" in run.stderr:
+            return {"path": ""}
+        raise UserError(f"Не получилось выбрать папку: {run.stderr.strip()[-300:]}")
+    return {"path": run.stdout.strip().rstrip("/")}
+
+
+def _add_paths(paths) -> list[str]:
     added = []
-    for raw in data.get("paths") or []:
+    for raw in paths or []:
         analysis = _analyze(Path(str(raw)))
         jid = _job_id(Path(analysis["path"]))
         with _lock:
@@ -596,7 +617,12 @@ def add_folders(data: dict = Body(...)):
                           "updated": _now(), "output": old.get("output", "")}
             added.append(jid)
     _save_queue()
-    return {"added": added}
+    return added
+
+
+@router.post("/add")
+def add_folders(data: dict = Body(...)):
+    return {"added": _add_paths(data.get("paths"))}
 
 
 @router.delete("/{job_id}")
@@ -638,7 +664,14 @@ def start_queue(data: dict = Body(...)):
     save_settings({k: v for k, v in options.items() if k in allowed})
     settings = load_settings()
     explicit_ids = data.get("ids") is not None
-    ids = set(data.get("ids") or _jobs)
+    queued = _queue_jobs(set(data.get("ids") or _jobs), settings, explicit_ids)
+    _kick_scheduler()
+    return {"queued": queued}
+
+
+def _queue_jobs(ids: set, settings: dict, explicit_ids: bool) -> list[str]:
+    """Same checks as the «Запустить» button: projects with problems get status error with the reason."""
+    allowed = set(FOLDER_OPTION_KEYS)
     queued = []
     with _lock:
         for jid, job in _jobs.items():
@@ -658,8 +691,7 @@ def start_queue(data: dict = Body(...)):
                        auto_retries=0, retry_at=0, last_error="")
             queued.append(jid)
         _save_queue()
-    _kick_scheduler()
-    return {"queued": queued}
+    return queued
 
 
 @router.post("/{job_id}/action")
@@ -2329,4 +2361,67 @@ def _kick_scheduler():
         _scheduler.start()
 
 
+# ---------------------------------------------------------------- автоподхват из «Папки входящих»
+
+_inbox_wake = threading.Event()
+
+
+def _inbox_public() -> dict:
+    state = folder_inbox.load_state(INBOX_STATE_FILE)
+    return {k: state.get(k) for k in ("last_check", "picked", "errors", "last_error", "last_picked", "status")}
+
+
+def _inbox_is_project(path: Path) -> bool:
+    try:
+        _analyze(path)
+        return True
+    except Exception:
+        return False
+
+
+def _inbox_enqueue(path: Path, channel: str):
+    added = _add_paths([str(path)])
+    settings = load_settings()
+    if settings.get("folder_inbox_autostart") and added:
+        _queue_jobs(set(added), settings, True)
+        _kick_scheduler()
+
+
+def inbox_pass() -> dict:
+    """One pass of the watcher with the saved settings (also used by «Проверить сейчас»)."""
+    settings = load_settings()
+    inbox, work = str(settings.get("folder_inbox_dir") or "").strip(), str(settings.get("folder_work_dir") or "").strip()
+    if not inbox or not work:
+        return _inbox_public()
+    state = folder_inbox.load_state(INBOX_STATE_FILE)
+    try:
+        folder_inbox.scan_once(Path(inbox), Path(work), state, is_project=_inbox_is_project, enqueue=_inbox_enqueue,
+                               log=lambda m: print(m, flush=True))
+    except Exception as exc:  # the watcher must survive anything
+        state["status"] = f"Ошибка проверки: {exc}"
+    try:
+        _write_json(INBOX_STATE_FILE, state)
+    except OSError:
+        pass
+    return _inbox_public()
+
+
+def _inbox_loop():
+    time.sleep(5)
+    while True:
+        try:
+            inbox_pass()
+        except Exception:
+            pass
+        _inbox_wake.wait(INBOX_INTERVAL)
+        _inbox_wake.clear()
+
+
+@router.post("/inbox/check")
+def inbox_check_now():
+    _inbox_wake.set()
+    return {"ok": True, "inbox": _inbox_public()}
+
+
 _load_queue()
+threading.Thread(target=_inbox_loop, daemon=True, name="folder-inbox").start()

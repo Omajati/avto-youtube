@@ -3640,9 +3640,22 @@ async function startFolderQueue(ids = null) {
   if (btn) btn.disabled = false;
 }
 
+let fbInboxTimer = null;
+function drawInboxStatus(inbox) {
+  const el = $("#fb-inbox-status"); if (!el || !inbox) return;
+  const inDir = (main.querySelector('[data-fbo="folder_inbox_dir"]') || {}).value, workDir = (main.querySelector('[data-fbo="folder_work_dir"]') || {}).value;
+  if (!inDir || !workDir) { el.textContent = "Выберите обе папки — тогда программа начнёт следить за входящими."; return; }
+  const when = inbox.last_check ? new Date(inbox.last_check * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "ещё не было";
+  let text = `Последняя проверка: ${when} · подхвачено: ${inbox.picked || 0} · ошибок: ${inbox.errors || 0}`;
+  if (inbox.status) text += ` — ⚠️ ${inbox.status}`;
+  else if (inbox.last_error) text += ` — последняя ошибка: ${inbox.last_error}`;
+  el.textContent = text;
+}
+
 async function refreshFolderBuilder() {
   const data = await api("/api/folder-builder");
   drawFolderJobs(data);
+  drawInboxStatus(data.inbox);
   const active = data.jobs.some(x => ["running", "queued", "pausing", "stopping"].includes(x.status));
   if (active && !timer) timer = setInterval(() => refreshFolderBuilder().catch(() => null), 2000);
   if (!active && timer) { clearInterval(timer); timer = null; }
@@ -3718,6 +3731,15 @@ async function viewFolderBuilder() {
       <div class="row" style="gap:6px;flex-wrap:nowrap"><input type="password" id="fb-octo-token" placeholder="${data.octo_token_set ? "•••• токен сохранён" : "вставьте токен"}" autocomplete="off"><button class="sm" id="fb-octo-save">Сохранить и загрузить профили</button></div>
       <div class="muted small" id="fb-octo-r">${OCTO.profiles ? `Профилей в Octo: ${OCTO.profiles.length}` : OCTO.error ? "⚠️ " + esc(OCTO.error) : ""}</div>
     </div></div></div>
+  <div class="card fb-inbox"><h2 style="margin-top:0">📥 Автоподхват из папки</h2>
+    <p class="muted small">Положите <code>.zip</code> сценария (или готовую папку проекта) в подпапку канала внутри «Папки входящих» — программа раз в минуту проверит её, распакует проект в «Рабочую папку» (в подпапку с тем же именем канала) и поставит в очередь. Готовые архивы переезжают в <code>_обработано</code>, неудачные — в <code>_ошибки</code> с файлом-объяснением.</p>
+    <label class="f">Папка входящих (папка Google Drive, внутри — папки каналов)</label>
+    <div class="row"><input class="grow" type="text" data-fbo="folder_inbox_dir" id="fb-inbox-dir" placeholder="/Users/…/Google Drive/Мой диск/Авто ютуб входящие" value="${esc(q("folder_inbox_dir", ""))}"><button class="btn" data-fb-pick-dir="fb-inbox-dir" data-prompt="Выберите папку входящих (в Google Drive)">📁 Выбрать</button></div>
+    <label class="f">Рабочая папка (на этом Mac, не в Google Drive: тут будут кадры, озвучка и MP4)</label>
+    <div class="row"><input class="grow" type="text" data-fbo="folder_work_dir" id="fb-work-dir" placeholder="/Users/…/Авто ютуб проекты" value="${esc(q("folder_work_dir", ""))}"><button class="btn" data-fb-pick-dir="fb-work-dir" data-prompt="Выберите рабочую папку (не в Google Drive)">📁 Выбрать</button></div>
+    <label class="check"><input type="checkbox" data-fbo="folder_inbox_autostart" ${q("folder_inbox_autostart", false) ? "checked" : ""}><span><b>Запускать сразу</b><span class="muted small">Подхваченный проект сразу начинает собираться с настройками ниже. Выключено — он просто появится в очереди, а запускаете вы.</span></span></label>
+    <div class="row"><span class="muted small grow" id="fb-inbox-status"></span><button class="btn sm" id="fb-inbox-check">🔄 Проверить сейчас</button></div>
+  </div>
   <div class="row fb-actions"><button class="primary big" id="fb-add">＋ Добавить папки</button><button class="blue big" id="fb-start" ${data.jobs.length ? "" : "disabled"}>▶ Собрать всю очередь</button><span class="muted small">Можно выбрать несколько папок сразу. Все готовые этапы кэшируются.</span></div>
   <div id="fb-jobs" style="margin-top:16px"></div>`;
   drawFolderJobs(data);
@@ -3764,6 +3786,19 @@ async function viewFolderBuilder() {
     catch(e){ toast(e.message,true); } finally { if(document.body.contains(b)){ b.disabled=false; b.textContent="＋ Добавить папки"; } }
   };
   $("#fb-start").onclick = () => startFolderQueue();
+  drawInboxStatus(data.inbox);
+  main.querySelectorAll("[data-fb-pick-dir]").forEach(b => b.onclick = async () => {
+    try {
+      const r = await api("/api/folder-builder/pick-one", { json: { prompt: b.dataset.prompt } });
+      if (r.path) { $("#" + b.dataset.fbPickDir).value = r.path; await saveFolderOptions(); await api("/api/folder-builder/inbox/check", { json: {} }); toast("Папка сохранена"); }
+    } catch (e) { toast(e.message, true); }
+  });
+  $("#fb-inbox-check").onclick = async () => {
+    try { await saveFolderOptions(); await api("/api/folder-builder/inbox/check", { json: {} }); toast("Проверяю папку входящих…"); setTimeout(() => refreshFolderBuilder().catch(() => null), 4000); }
+    catch (e) { toast(e.message, true); }
+  };
+  clearInterval(fbInboxTimer);
+  fbInboxTimer = setInterval(() => { if (!$("#fb-inbox-status")) { clearInterval(fbInboxTimer); return; } if (!timer) refreshFolderBuilder().catch(() => null); }, 20000);
   $("#fb-octo-save").onclick = async () => {
     const v = $("#fb-octo-token").value.trim(), r = $("#fb-octo-r");
     try {
