@@ -332,20 +332,104 @@ def _type_into(page, selector: str, text: str):
     raise UserError(f"Не получилось вписать текст в поле YouTube Studio: там «{_norm(box.inner_text())[:80]}».")
 
 
-def _uploading(page) -> bool:
-    """True while the file is still going up (the progress line shows a percentage of the upload)."""
+# No inline (?i): the pattern is also run inside the browser, where JavaScript does not know it; re.I is passed on.
+UPLOADING_TEXT = re.compile(r"(Uploading|Загрузка|Загружено|Загружается|Subiendo|Wird hochgeladen|Hochladen|"
+                            r"Enviando|Carregando|Importation|Mise en ligne)\D{0,8}(\d{1,3})\s?%", re.I)
+# YouTube's checks (copyright and the rules), shown in the same status line once the file is up.
+CHECKS_OK = re.compile(r"(No issues found|Проблем не (обнаружено|найдено|выявлено)|No se ha encontrado ning[uú]n problema|"
+                       r"No se encontraron problemas|Keine Probleme gefunden|Nenhum problema encontrado|"
+                       r"Aucun probl[eè]me d[ée]tect[ée])", re.I)
+CHECKS_BAD = re.compile(r"(Copyright|авторск|derechos de autor|Urheberrecht|direitos autorais|droits d.auteur|"
+                        r"issues?|problems?|проблем|problema|Probleme?)", re.I)
+# …and the same line says something was found: so a «privacy or copyright» link text is not taken for a verdict.
+CHECKS_FOUND = re.compile(r"(found|detected|обнаруж|найден|выявлен|encontr|detect|gefunden|erkannt|encontrad|d[ée]tect)",
+                          re.I)
+
+
+def _status_text(page) -> str:
+    """All the short status lines visible in the upload window (the footer and the Checks step)."""
     try:
+        return page.evaluate("""() => {
+            const out = []; const walk = root => { for (const el of root.querySelectorAll('*')) {
+              if (el.shadowRoot) walk(el.shadowRoot);
+              if (el.children.length === 0 && el.offsetParent !== null) { const t = (el.textContent || '').trim();
+                if (t && t.length < 200) out.push(t); } } };
+            walk(document); return out.join('\\n'); }""") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _wait_checks(page, log, cancelled, max_s: int = 3 * 3600):
+    """After the upload: waits until YouTube has finished its checks. «No issues found» -> True; a copyright or
+    rules problem -> UserError (the video stays a draft, not published); no verdict in time -> False."""
+    log("Файл загружен. Жду проверку YouTube (авторские права и правила)…")
+    started, last_log = time.time(), 0
+    while time.time() - started < max_s:
+        if cancelled():
+            raise _Stop()
+        text = _status_text(page)
+        if CHECKS_OK.search(text):
+            log("Проверка YouTube пройдена: проблем не найдено")
+            return True
+        line = next((l for l in text.splitlines() if CHECKS_BAD.search(l) and CHECKS_FOUND.search(l)
+                     and not CHECKS_OK.search(l)), "")
+        if line:
+            raise UserError(f"YouTube при проверке нашёл проблему: «{line[:160]}». Ролик загружен, но НЕ опубликован "
+                            "(лежит черновиком в Studio): посмотрите шаг «Checks» и решите сами.")
+        if time.time() - last_log > 300:
+            last_log = time.time()
+            log(f"Жду проверку YouTube… ({int((time.time() - started) // 60)} мин)")
+        time.sleep(10)
+    return False
+
+
+def _upload_percent(page):
+    """The upload percentage Studio shows at the bottom of the window («Uploading 10% ... 4 minutes left»), or None.
+    Found by the text itself, so a new look of Studio with renamed elements does not fool it."""
+    try:
+        hits = page.get_by_text(UPLOADING_TEXT)
+        for i in range(min(hits.count(), 5)):
+            if hits.nth(i).is_visible():
+                m = UPLOADING_TEXT.search(hits.nth(i).inner_text(timeout=3000) or "")
+                if m:
+                    return int(m.group(2))
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _uploading(page) -> bool:
+    """True while the file is still going up."""
+    if _upload_percent(page) is not None:
+        return True
+    try:
+        if page.locator("ytcp-video-upload-progress[uploading], ytcp-video-upload-progress[is-uploading]").count():
+            return True
         label = page.locator("ytcp-video-upload-progress .progress-label, ytcp-video-upload-progress span").first
         text = (label.inner_text(timeout=3000) or "").strip()
     except Exception:  # noqa: BLE001
         return False
-    still = page.locator("ytcp-video-upload-progress[uploading], ytcp-video-upload-progress[is-uploading]")
+    return bool(re.search(r"\d+\s?%", text)) and not re.search(r"(?i)process|обработ|verarbeit|procesa", text)
+
+
+PUBLISH_TEXT = r"^\s*(Publish|Опубликовать|Publicar|Veröffentlichen|Save|Сохранить|Guardar|Speichern)\s*$"
+
+
+def _publish_button(page):
+    btn = page.locator("#done-button")
     try:
-        if still.count():
-            return True
+        if btn.count() and btn.first.is_visible():
+            return btn.first
     except Exception:  # noqa: BLE001
         pass
-    return bool(re.search(r"\d+\s?%", text)) and not re.search(r"(?i)process|обработ|verarbeit|procesa", text)
+    hits = page.get_by_role("button", name=re.compile(PUBLISH_TEXT, re.I))
+    try:
+        for i in range(min(hits.count(), 5)):
+            if hits.nth(i).is_visible():
+                return hits.nth(i)
+    except Exception:  # noqa: BLE001
+        pass
+    return btn.first
 
 
 def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privacy: str = "public",
@@ -425,25 +509,42 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
             except PWTimeout:
                 link = ""
             log("Жду, пока файл загрузится целиком…")
-            started = time.time()
+            started, shown = time.time(), None
+            time.sleep(3)
             while _uploading(page):
                 if cancelled():
                     raise _Stop()
                 if time.time() - started > 6 * 3600:
                     raise UserError("Видео загружается дольше шести часов. Проверьте интернет в профиле Octo.")
+                pct = _upload_percent(page)
+                if pct is not None and pct != shown:
+                    shown = pct
+                    log(f"Файл загружается на YouTube: {pct}%")
                 time.sleep(5)
-            done = page.locator("#done-button").first
+            if not _wait_checks(page, log, cancelled):
+                log("YouTube не закончил проверку за 3 часа — публикую, проверка продолжится на YouTube")
+            log("Публикую…")
+            done = _publish_button(page)
             for _ in range(120):
-                if done.is_enabled():
-                    break
+                try:
+                    if done.is_enabled():
+                        break
+                except Exception:  # noqa: BLE001
+                    done = _publish_button(page)
                 time.sleep(5)
             done.click()
             time.sleep(5)
-            # Published while the file was still going up: Studio warns and keeps uploading; wait for it.
-            for _ in range(720):
-                if not page.locator("ytcp-uploads-still-processing-dialog, ytcp-video-upload-progress").count() or not _uploading(page):
+            # If Studio still shows the upload going (it lets one publish before the end), the tab stays open
+            # until it is over: closing it would cut the upload off.
+            for _ in range(6 * 720):
+                if not _uploading(page):
                     break
                 time.sleep(5)
+            if not link:
+                try:
+                    link = page.locator("a[href*='youtu.be/']").first.get_attribute("href", timeout=5_000) or ""
+                except Exception:  # noqa: BLE001
+                    link = ""
             if not link:
                 try:
                     link = page.locator("ytcp-video-share-dialog a, a#share-url").first.get_attribute("href", timeout=15_000) or ""
