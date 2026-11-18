@@ -35,6 +35,9 @@ VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 SCENE_FILE = re.compile(r"^S(\d{3})", re.I)
 SCENE_HEAD = re.compile(r"(?m)^###\s+(S\d{3})([^\n]*)$")
 REF_HEAD = re.compile(r"(?m)^###\s+(R\d+)([^\n]*)$")
+# The plain-text layout (сцены_генерация.txt): one paragraph per scene, «SCENE S001. prompt…», «REFERENCE R1. prompt…».
+SCENE_LINE = re.compile(r"(?m)^\s*SCENE\s+(S\d{3})\b[.:]?[ \t]*")
+REF_LINE = re.compile(r"(?m)^\s*REFERENCE\s+(R\d+)\b[.:]?[ \t]*")
 _lock = threading.RLock()
 _jobs: dict[str, dict] = {}
 _scheduler: threading.Thread | None = None
@@ -214,9 +217,51 @@ def _chapter(raw: str) -> str:
     return ""
 
 
+def _paragraph(text: str, start: int) -> str:
+    """The text from start to the first empty line: one scene or reference of the plain layout."""
+    return re.split(r"\n\s*\n", text[start:], maxsplit=1)[0].strip()
+
+
+def _plain_ref_keys(prompt: str) -> list[str]:
+    """Regexes that tie a plain-layout reference to the scenes showing it: the ages of its people
+    («71-year-old», «the old widow is 71»), its subject («young couple», «living room», «toy locomotive»)."""
+    low = prompt.lower()
+    keys = []
+    for age in dict.fromkeys(re.findall(r"\b(\d{1,2})-year-old\b", low)):
+        keys.append(rf"\b{age}-year-old\b|\b(?:is|of|aged)\s+{age}\b")
+    head = re.split(r"[:.]", low, maxsplit=1)[0]
+    subject = re.search(r"\bof\s+(?:a|an|the)\s+(.+)$", head)
+    if not keys:
+        words = (subject.group(1) if subject else head).split()
+        if re.fullmatch(r"(?:prop|object)?\s*close-up|prop|object", head.strip()):
+            words = low.split(":", 1)[1].split(".")[0].split()[:8] if ":" in low else words
+        stop = {"a", "an", "the", "of", "on", "at", "in", "with", "and", "small", "large", "old-fashioned", "hand-made",
+                "black", "white", "red", "night", "day", "character", "reference", "sheet", "prop", "close-up"}
+        words = [w.strip(",;") for w in words if w.strip(",;") not in stop]
+        keys += [rf"\b{re.escape(a)}\s+{re.escape(b)}\b" for a, b in zip(words, words[1:])][:4]
+    elif subject and not re.match(r"\d", subject.group(1)):
+        keys.append(rf"\b{re.escape(subject.group(1).split(':')[0].strip())}\b")
+    return keys
+
+
+def _parse_plain_scenes(path: Path, text: str) -> tuple[list[dict], list[dict]]:
+    scenes = [{"id": m.group(1).upper(), "heading": "", "voice_hint": "", "prompt": _paragraph(text, m.end()),
+               "chapter": "", "preview": False} for m in SCENE_LINE.finditer(text)]
+    if not scenes:
+        raise UserError(f"В файле {path.name} не найдены сцены SCENE S001, SCENE S002…")
+    refs = []
+    for m in REF_LINE.finditer(text):
+        prompt = _paragraph(text, m.end())
+        refs.append({"id": m.group(1).upper(), "name": re.split(r"[:.]", prompt, maxsplit=1)[0][:80],
+                     "prompt": prompt, "keys": _plain_ref_keys(prompt)})
+    return scenes, refs
+
+
 def _parse_scenes(path: Path) -> tuple[list[dict], list[dict]]:
     text = path.read_text("utf-8", errors="replace")
     matches = list(SCENE_HEAD.finditer(text))
+    if not matches and SCENE_LINE.search(text):
+        return _parse_plain_scenes(path, text)
     if not matches:
         raise UserError(f"В файле {path.name} не найдены сцены S001, S002…")
     chapters = list(re.finditer(r"(?m)^##\s+([^#\n].*)$", text))
@@ -250,11 +295,13 @@ def _parse_scenes(path: Path) -> tuple[list[dict], list[dict]]:
 
 def _find_scene_file(root: Path) -> Path:
     candidates = []
-    for path in root.rglob("*.md"):
-        if any(part.startswith(".") or part.lower() in ("готово", "output", "render") for part in path.relative_to(root).parts[:-1]):
+    for path in [*root.rglob("*.md"), *root.rglob("*.txt")]:
+        if any(part.startswith(".") or part.lower() in ("готово", "output", "render", "__macosx")
+               for part in path.relative_to(root).parts[:-1]) or path.name.startswith("."):
             continue
         try:
-            count = len(SCENE_HEAD.findall(path.read_text("utf-8", errors="ignore")))
+            text = path.read_text("utf-8", errors="ignore")
+            count = len(SCENE_HEAD.findall(text)) or len(SCENE_LINE.findall(text))
         except OSError:
             continue
         if count:
@@ -264,7 +311,7 @@ def _find_scene_file(root: Path) -> Path:
                        - (2 if any(re.fullmatch(r"[A-Z]{2}", part) for part in rel.parts[:-1]) else 0)
             candidates.append((count, priority, path))
     if not candidates:
-        raise UserError("Не найден Markdown-файл с описаниями сцен S001, S002…")
+        raise UserError("Не найден файл с описаниями сцен S001, S002… (например, «сцены_генерация.txt»).")
     return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
@@ -282,6 +329,19 @@ def _lang_dir(root: Path, lang: str) -> Path | None:
     return None
 
 
+def _lang_home(root: Path, lang: str) -> Path | None:
+    """Where one language's files live: its own folder (EN/, ES/…) or, in the flat layout, the project folder
+    itself when files there carry the language in the name (озвучка_ES.txt, загрузка_YouTube_ES.md)."""
+    folder = _lang_dir(root, lang)
+    if folder:
+        return folder
+    code = lang.upper()
+    if root.is_dir() and any(p.is_file() and re.search(rf"(?<![A-Za-z]){code}(?![A-Za-z])", p.stem)
+                             and not p.name.startswith(".") for p in root.iterdir()):
+        return root
+    return None
+
+
 def _find_narration(root: Path, lang: str = "en") -> Path | None:
     """The final narration text of one language: <LANG>/…озвучка…<LANG>.txt (or any narration txt in that folder)."""
     folder = _lang_dir(root, lang)
@@ -292,6 +352,12 @@ def _find_narration(root: Path, lang: str = "en") -> Path | None:
         named = [p for p in texts if any(w in p.name.lower() for w in NARRATION_WORDS)]
         coded = [p for p in named if re.search(rf"(?<![A-Za-z]){code}(?![A-Za-z])", p.stem)]
         candidates = coded or named or (texts if len(texts) == 1 else [])
+    if not candidates and not folder:
+        # Flat layout: everything lies in the project folder itself, the language only in the name (озвучка_ES.txt).
+        places = [root] + [p for p in root.iterdir() if p.is_dir() and p.name.lower() == "исходники"]
+        texts = [p for d in places for p in d.glob("*.txt") if not p.name.startswith((".", "_"))]
+        candidates = [p for p in texts if any(w in p.name.lower() for w in NARRATION_WORDS)
+                      and re.search(rf"(?<![A-Za-z]){code}(?![A-Za-z])", p.stem)]
     if not candidates and lang == "en":
         # Old layout: the English narration somewhere else in the project, never another language's file.
         others = [x.upper() for x in LANGS if x != "en"]
@@ -338,7 +404,7 @@ def _analyze(path: Path) -> dict:
         narration = _find_narration(path, lang)
         if not narration:
             continue
-        folder = _lang_dir(path, lang) or (path / lang.upper())
+        folder = _lang_home(path, lang) or (path / lang.upper())
         languages[lang] = {"narration_file": str(narration),
                            "words": len(narration.read_text("utf-8", errors="replace").split()),
                            "output": str(folder / f"{path.name}_{lang.upper()}.mp4")}
@@ -356,6 +422,7 @@ def _analyze(path: Path) -> dict:
         "frame_dir": str(frame_dir), "output": first["output"], "scenes": len(scenes), "references": len(refs),
         "existing_videos": videos, "existing_images": pictures, "missing_images": len(missing),
         "missing_ids": missing[:30], "words": first["words"], "languages": languages,
+        "hinted_scenes": sum(bool(scene.get("voice_hint")) for scene in scenes),
         "styled_scenes": sum(bool(re.search(r"\bstyle\s*:", scene.get("prompt") or "", re.I)) for scene in scenes),
     }
 
@@ -409,7 +476,10 @@ def _problems(settings: dict, analysis: dict) -> tuple[list[str], list[str]]:
     for lang in present:
         if not settings.get(f"folder_voice_{lang}_id") and not (lang == "en" and settings.get("elevenlabs_voice_id")):
             problems.append(f"Не выбран голос для языка «{LANG_RU[lang]}».")
-    if scene_binding(settings) == "even":
+    if scene_binding(settings) == "hints" and analysis.get("hinted_scenes") == 0:
+        warnings.append("В файле сцен нет подсказок «Голос:»: сцены разложу равномерно по предложениям текста. "
+                        "Чтобы кадр точнее совпадал с тем, о чём говорит голос, выберите «ИИ уточняет» в «Привязке сцен».")
+    elif scene_binding(settings) == "even":
         warnings.append("Сцены раскладываются равномерно по тексту, без подсказок «Голос:»: "
                         "кадр может не совпасть с тем, о чём говорит голос.")
     elif "en" not in found and any(lang != "en" for lang in present) and scene_binding(settings) == "hints":
@@ -423,9 +493,9 @@ def _problems(settings: dict, analysis: dict) -> tuple[list[str], list[str]]:
         for lang in present:
             if not rules.get(f"{channel}|{lang}"):
                 warnings.append(f"Не выбран профиль Octo для «{channel} · {lang.upper()}»: ролик соберу, но не выложу.")
-            folder = _lang_dir(Path(analysis["path"]), lang)
-            if not folder or not upload_package.find_file(folder):
-                warnings.append(f"Нет файла загрузки в папке {lang.upper()} (загрузка_YouTube_{lang.upper()}.md): "
+            folder = _lang_home(Path(analysis["path"]), lang)
+            if not folder or not upload_package.find_file(folder, lang):
+                warnings.append(f"Нет файла загрузки для {lang.upper()} (загрузка_YouTube_{lang.upper()}.md): "
                                 "ролик соберу, но не выложу.")
     if settings.get("folder_motion_inserts", True) and not llm.has_key(settings):
         warnings.append("Карты и линии времени выключены: для них нужен ключ Claude или OpenAI (Настройки → «1. Сценарий»).")
@@ -628,7 +698,7 @@ def control_job(job_id: str, data: dict = Body(...)):
             for path in (job.get("thumbs_generated") or {}).values():
                 Path(path).unlink(missing_ok=True)
             source = next((p for p in root.iterdir() if p.is_dir() and p.name.lower() == "исходники"), root)
-            for base in source.glob("превью_основа.*"):
+            for base in source.glob("превью_основа*"):
                 base.unlink(missing_ok=True)
             job.update(thumbs_generated={}, thumbs={}, approved={}, status="queued",
                        step="Перерисовываю превью…", error="")
@@ -930,6 +1000,12 @@ def _mapping(job_id: str, scenes: list[dict], narration: str, settings: dict, ca
         texts = _even_mapping(scenes, narration)
         _write_json(cache / "mapping.json", {"fingerprint": fingerprint, "texts": texts, "mode": "even"})
         return texts
+    if not any((s.get("voice_hint") or "").strip() for s in scenes) and (not smart or not llm.has_key(settings)):
+        # The plain scene file (сцены_генерация.txt) has no «Голос:» hints: spread by sentences instead of words.
+        _update(job_id, progress=progress, step="В файле сцен нет подсказок «Голос:»: раскладываю сцены равномерно по предложениям…")
+        texts = _even_mapping(scenes, narration)
+        _write_json(cache / "mapping.json", {"fingerprint": fingerprint, "texts": texts, "mode": "even"})
+        return texts
     if not smart or not llm.has_key(settings):
         _update(job_id, progress=progress, step="Быстро привязываю сцены к подсказкам «Голос:»…")
         texts, matched = _fast_mapping(scenes, narration)
@@ -989,6 +1065,10 @@ def _scene_reference_ids(scene: dict, refs: list[dict]) -> list[str]:
     chosen = []
     for ref in refs:
         rid = ref["id"]
+        if ref.get("keys") is not None:
+            if rid in explicit or any(re.search(k, low) for k in ref["keys"]):
+                chosen.append(rid)
+            continue
         keys = _reference_keywords(ref)
         if rid in explicit or keys and (" ".join(keys) in low or any(re.search(rf"\b{re.escape(k)}\b", low) for k in keys)):
             chosen.append(rid)
@@ -2065,21 +2145,21 @@ def _make_thumbs(job_id: str, analysis: dict, outputs: dict, settings: dict):
     file. A thumbnail that does not work out is reported, the videos stay done."""
     job = _jobs[job_id]
     root = Path(analysis["path"])
-    en_dir = _lang_dir(root, "en")
-    en_file = upload_package.find_file(en_dir) if en_dir else None
+    en_dir = _lang_home(root, "en")
+    en_file = upload_package.find_file(en_dir, "en") if en_dir else None
     english = upload_package.parse(en_file) if en_file else None
     thumbs = dict(job.get("thumbs") or {})
     generated = dict(job.get("thumbs_generated") or {})
     problems = {}
     for lang in outputs:
-        folder = _lang_dir(root, lang)
+        folder = _lang_home(root, lang)
         if not folder:
             continue
-        own = upload_package.finished_thumb(folder)
+        own = upload_package.finished_thumb(folder, lang)
         if own and generated.get(lang) != str(own):
             thumbs[lang] = str(own)  # the owner's own thumbnail: used as it is
             continue
-        file = upload_package.find_file(folder)
+        file = upload_package.find_file(folder, lang)
         if not file:
             problems[lang] = f"нет файла загрузка_YouTube_{lang.upper()}.md: не знаю, что написать на превью"
             continue
@@ -2106,15 +2186,15 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
     uploaded = dict(job.get("uploaded") or {})
     approved = job.get("approved") or {}
     generated = dict(job.get("thumbs_generated") or {})
-    en_dir = _lang_dir(root, "en")
-    en_file = upload_package.find_file(en_dir) if en_dir else None
+    en_dir = _lang_home(root, "en")
+    en_file = upload_package.find_file(en_dir, "en") if en_dir else None
     english = upload_package.parse(en_file) if en_file else None
     ready, skipped, thumbs = {}, {}, dict(job.get("thumbs") or {})
     for lang, out in outputs.items():
         if lang in uploaded:
             continue
-        folder = _lang_dir(root, lang)
-        file = upload_package.find_file(folder) if folder else None
+        folder = _lang_home(root, lang)
+        file = upload_package.find_file(folder, lang) if folder else None
         if not file:
             skipped[lang] = f"нет файла загрузки_YouTube_{lang.upper()}.md"
             continue
@@ -2126,7 +2206,7 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
             skipped[lang] = "в файле загрузки нет названия (раздел «1. Название»)"
             continue
         _check_control(job_id)
-        own = upload_package.finished_thumb(folder)
+        own = upload_package.finished_thumb(folder, lang)
         if not own or generated.get(lang) == str(own):
             _update(job_id, progress=.99, step=f"[{lang.upper()}] Готовлю превью…")
         thumb = upload_package.make_thumb(root, lang, folder, package, settings, english)
