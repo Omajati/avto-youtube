@@ -1,0 +1,53 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#wrap{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center}
+#row{display:inline-flex;align-items:baseline;gap:.18em;white-space:nowrap}
+#pre{font-family:Oswald;font-weight:500;font-size:170px;opacity:.85}
+#num,#cur{font-size:300px}
+#cur{margin-right:-.02em}
+#unit{font-family:Oswald;font-weight:700;font-size:118px;color:#fff}
+#cap{font-size:40px;margin-top:34px}
+#note{font-size:26px;margin-top:16px}
+#line{height:5px;width:150px;margin:30px auto 0;border-radius:3px;transform-origin:50% 50%}
+</style></head><body>
+<canvas id="bg"></canvas><div id="tag"></div>
+<div id="wrap"><div id="row"><span id="pre"></span><span id="cur" class="fig"></span><span id="num" class="fig"></span><span id="unit"></span></div>
+<div id="cap" class="cap"></div><div id="note" class="note"></div><div id="line"></div></div>
+<script src="card_common.js"></script>
+<script>
+// One big number that counts up to its value, its unit, a widely spaced caption, a small note and an accent line.
+// SPEC: {tag, value, from, decimals, prefix ("≈", "+", "~"), suffix ("+", "%"), unit, caption, note, tone: cold|hot|warm|white, lang}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 180);
+  const bg = document.getElementById("bg"); bg.width = W; bg.height = H;
+  const color = { cold: "var(--cold)", hot: "var(--hot)", warm: "var(--warm)", white: "#fff" }[S.tone] || "var(--hot)";
+  const $ = id => document.getElementById(id);
+  $("num").style.color = color; $("pre").style.color = color; $("line").style.background = color;
+  // a currency sign goes before the number in English ($2,500,000), after it elsewhere (2,5 млн $)
+  const unit = S.unit || "", currency = /^[$€£¥₽]$/.test(unit) && (S.lang || "en") === "en";
+  $("pre").textContent = S.prefix || ""; $("unit").textContent = currency ? "" : unit; $("cur").textContent = currency ? unit : "";
+  $("num").style.color = color; $("cur").style.color = color; $("cap").textContent = S.caption || ""; $("note").textContent = S.note || "";
+  const value = +S.value || 0, from = S.from != null ? +S.from : 0;
+  const dec = S.decimals != null ? S.decimals : (String(S.value).split(/[.,]/)[1] || "").length;
+  await C.ready();
+  // a long number is made smaller once (measured with its final text), so it always fits the frame
+  $("num").textContent = C.fmt(value, dec, S.lang) + (S.suffix || "");
+  const fit = Math.min(1, (W - 220) / $("row").scrollWidth);
+  if (fit < 1) { $("row").style.fontSize = ""; for (const id of ["num", "cur", "pre", "unit"]) { const el = $(id); el.style.fontSize = `${parseFloat(getComputedStyle(el).fontSize) * fit}px`; } }
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N);
+    const a = C.ease(C.seg(f, 0.05 * N, 0.05 * N + 14));
+    C.blurIn($("row"), a, 0);
+    const k = C.out3(C.seg(f, 0.07 * N, 0.45 * N));
+    $("num").textContent = C.fmt(C.lerp(from, value, k), dec, S.lang) + (k >= 1 ? (S.suffix || "") : "");
+    C.blurIn($("cap"), C.ease(C.seg(f, 0.30 * N, 0.30 * N + 16)));
+    C.blurIn($("note"), C.ease(C.seg(f, 0.36 * N, 0.36 * N + 16)));
+    const l = C.out3(C.seg(f, 0.42 * N, 0.42 * N + 20));
+    $("line").style.opacity = l > 0 ? 1 : 0; $("line").style.transform = `scaleX(${l})`;
+  };
+  window.renderFrame(0);
+  window.READY = true;
+})();
+</script></body></html>

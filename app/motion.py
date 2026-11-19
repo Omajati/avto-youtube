@@ -16,7 +16,9 @@ from .media import UserError
 
 GEO = Path(__file__).parent / "geo" / "countries.json"
 KINDS = {"map": "🗺 Карта", "timeline": "📅 Линия времени", "chart": "📈 График", "compare": "⚖️ Сравнение",
-         "quote": "💬 Цитата", "list": "📋 Список", "globe": "🌍 Глобус"}
+         "quote": "💬 Цитата", "list": "📋 Список", "globe": "🌍 Глобус", "counter": "🔢 Цифра",
+         "thermo": "🌡 Термометр", "calendar": "🟦 Сетка-календарь"}
+WEB_KINDS = ("globe", "counter", "thermo", "calendar")  # drawn by the new engine (webmotion.py)
 MODES = {"auto": "Авто: карты и даты там, где они к месту", "off": "Выключено"}
 
 OCEAN_TOP, OCEAN_BOTTOM = (12, 22, 40), (6, 12, 24)
@@ -986,10 +988,10 @@ def render(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int, lang
         render_map(spec, out, seconds, w, h, fps, lang, poster, pic)
     elif spec.get("type") == "timeline":
         render_timeline(spec, out, seconds, w, h, fps, poster, pic)
-    elif spec.get("type") == "globe":
-        # The new engine: a web page shot frame by frame (see webmotion.py); 3D or flat, as the channel chose.
+    elif spec.get("type") in WEB_KINDS:
+        # The new engine: a web page shot frame by frame (see webmotion.py).
         from . import webmotion
-        webmotion.render_globe(spec, out, seconds, w, h, fps, lang, poster)
+        webmotion.render_kind(spec, out, seconds, w, h, fps, lang, poster)
     elif spec.get("type") in DRAW:
         DRAW[spec["type"]](spec, out, seconds, w, h, fps, poster, pic)
     else:
@@ -1040,6 +1042,13 @@ def cues(spec: dict, seconds: float) -> list:
             out.append((0.35, "pop"))
             out += [(0.40 + 0.34 * k / (len(route) - 1) - 0.02, "pop") for k in range(1, len(route))]
         out += [(min(0.36 + 0.07 * k, 0.72), "pop") for k in range(len(pins))]
+    elif kind == "counter":
+        out.append((0.46, "pop"))  # the number lands
+    elif kind == "thermo":
+        steps = [x for x in spec.get("steps") or [] if isinstance(x, dict)][:3]
+        out += [(0.08 + k * 0.9 / max(1, len(steps)) + 0.36 / max(1, len(steps)), "pop") for k in range(len(steps))]
+    elif kind == "calendar":
+        out.append((0.82, "pop"))
     elif kind == "quote" and str(spec.get("author") or "").strip():
         out.append((0.72, "tick"))
     # Never two sounds closer than a fifth of a second, and none in the first half second (the whoosh).
@@ -1057,8 +1066,30 @@ def globe_ok(spec: dict) -> bool:
     return webmotion.globe_ok(spec)
 
 
+def _num(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def counter_ok(spec: dict) -> bool:
+    return _num(spec.get("value")) is not None and bool(str(spec.get("caption") or "").strip())
+
+
+def thermo_ok(spec: dict) -> bool:
+    steps = [x for x in spec.get("steps") or [] if isinstance(x, dict)]
+    return 1 <= len(steps) <= 3 and all(_num(x.get("value")) is not None for x in steps)
+
+
+def calendar_ok(spec: dict) -> bool:
+    total, filled = _num(spec.get("total")), _num(spec.get("filled"))
+    return total is not None and filled is not None and 2 <= total <= 1000 and 0 < filled <= total
+
+
 CHECK = {"map": map_ok, "timeline": timeline_ok, "chart": chart_ok, "compare": compare_ok, "quote": quote_ok,
-         "list": list_ok, "globe": globe_ok}
+         "list": list_ok, "globe": globe_ok, "counter": counter_ok, "thermo": thermo_ok, "calendar": calendar_ok}
 
 
 def poster(spec: dict, path: Path, w: int, h: int, lang: str = "ru"):
@@ -1073,7 +1104,8 @@ def poster(spec: dict, path: Path, w: int, h: int, lang: str = "ru"):
 # ---------------------------------------------------------------- the plan
 
 FIELDS = ("index", "type", "title", "countries", "route", "pins", "events", "current", "points", "chart_style", "unit",
-          "left_name", "right_name", "rows", "quote", "author", "lines")
+          "left_name", "right_name", "rows", "quote", "author", "lines",
+          "value", "prefix", "suffix", "caption", "note", "tone", "steps", "total", "filled", "legend", "season")
 _PLACE = {"type": "object", "properties": {"name": {"type": "string"}, "lat": {"type": "number"},
                                            "lon": {"type": "number"}}, "required": ["name", "lat", "lon"]}
 SCHEMA = {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
@@ -1094,7 +1126,15 @@ SCHEMA = {"type": "object", "properties": {"items": {"type": "array", "items": {
         "label": {"type": "string"}, "left": {"type": "number"}, "right": {"type": "number"}},
         "required": ["label", "left", "right"]}},
     "quote": {"type": "string"}, "author": {"type": "string"},
-    "lines": {"type": "array", "items": {"type": "string"}}},
+    "lines": {"type": "array", "items": {"type": "string"}},
+    "value": {"type": "number"}, "prefix": {"type": "string"}, "suffix": {"type": "string"},
+    "caption": {"type": "string"}, "note": {"type": "string"},
+    "tone": {"type": "string", "enum": ["cold", "hot", "warm"]},
+    "steps": {"type": "array", "items": {"type": "object", "properties": {
+        "value": {"type": "number"}, "caption": {"type": "string"}, "prefix": {"type": "string"},
+        "tone": {"type": "string", "enum": ["cold", "hot", "warm"]}}, "required": ["value", "caption", "prefix", "tone"]}},
+    "total": {"type": "number"}, "filled": {"type": "number"}, "legend": {"type": "string"},
+    "season": {"type": "string", "enum": ["winter", "summer", "even"]}},
     "required": list(FIELDS)}}},
     "required": ["items"]}
 
@@ -1105,6 +1145,9 @@ PLAN_PROMPT = """You are the motion designer of a narrated YouTube video. Some s
 - "chart": numbers that change over time or several values to compare in one series (population grew from... to..., prices, army size by year).
 - "compare": two sides head to head on one or more measures (Italy vs Ethiopia: soldiers, cannons, losses).
 - "quote": a real, well-known quote said by a named person in the story, worth showing word for word.
+- "counter": ONE striking number the narration says (a record, a total, a price, a distance, a toll): it counts up big on screen.
+- "thermo": temperatures said in the narration (an average, then a record), or one value on a scale that rises or falls.
+- "calendar": "N days a year" or "N out of M" (days of storm, nights without sun, survivors out of a crew): a grid of M cells where N light up.
 - "list": the narration counts points ("three reasons", "first... second... third...", a top).
 
 Choose up to {limit} scenes, mixing kinds where the story allows. Only where the animation is the point of that moment; never two such scenes in a row; never the first or the last scene. Choose none if nothing fits.
@@ -1118,6 +1161,9 @@ Fill only the fields of the chosen kind; leave the others empty ("" / [] / 0, ch
 - compare: left_name and right_name = the two sides (max 2 words); rows = 1-4 measures, label = what is measured, left and right = the numbers; unit if the same for all rows.
 - quote: quote = the exact words in {language}, max 30 words; author = who said it and when ("Менелик II, 1896").
 - list: lines = 2-6 points, max 8 words each, in {language}.
+- counter: value = the number as said (1.8 for "1.8 million tonnes"); unit = short, in {language} ("млн т", "km", "%", "$"); prefix "≈" if the narration says about/around, else ""; suffix "+" if it says "more than", else ""; caption = what the number is, max 6 words, in {language}; note = 0-4 words of context or ""; tone = "hot" for danger, records, losses, "cold" for cold, ice, distance, "warm" otherwise; title = the topic in 1-3 words.
+- thermo: steps = 1-3 values in the order told, each: value, caption (max 5 words, in {language}), prefix ("≈" or ""), tone ("cold" for ordinary cold, "hot" for the extreme or heat); unit = "°C" (or the scale's unit); title = the topic in 1-3 words.
+- calendar: total = M (365 for "a year"), filled = N; suffix "+" if "more than"; caption = what is counted, max 5 words, in {language}; legend = "= " + one cell's meaning, max 4 words; season = "winter" if those days are in winter, "summer" if in summer, else "even"; tone; title = the topic in 1-3 words.
 Never invent facts or numbers: only what the narration says or certain common knowledge. If the numbers are not known for sure, do not make a chart or a comparison.
 
 SCENES:

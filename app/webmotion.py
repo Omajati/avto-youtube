@@ -195,6 +195,49 @@ def render_globe(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int
         raise UserError(f"Глобус не нарисовался: {str(e).splitlines()[0][:200] if str(e) else type(e).__name__}")
 
 
+def _dec(v) -> int:
+    v = float(v)
+    if v.is_integer():
+        return 0
+    return min(2, len(repr(abs(v)).split(".")[1]))
+
+
+def card_spec(spec: dict, lang: str) -> dict:
+    """The data of a «card» template (counter, thermo, calendar) from a motion spec."""
+    kind, t = spec.get("type"), lambda k, n: str(spec.get(k) or "").strip()[:n]
+    base = {"tag": t("title", 50), "lang": lang, "tone": spec.get("tone") or "hot"}
+    if kind == "counter":
+        v = float(spec.get("value") or 0)
+        return {**base, "value": v, "decimals": _dec(v), "prefix": t("prefix", 2), "suffix": t("suffix", 2),
+                "unit": t("unit", 10), "caption": t("caption", 60), "note": t("note", 50)}
+    if kind == "thermo":
+        steps = [{"value": float(x.get("value")), "caption": str(x.get("caption") or "")[:50], "prefix": str(x.get("prefix") or "")[:2],
+                  "tone": x.get("tone") or "cold", "decimals": _dec(x.get("value"))}
+                 for x in (spec.get("steps") or [])[:3] if isinstance(x, dict)]
+        return {**base, "unit": t("unit", 6) or "°C", "steps": steps}
+    if kind == "calendar":
+        return {**base, "total": int(float(spec.get("total") or 365)), "filled": int(float(spec.get("filled") or 0)),
+                "suffix": t("suffix", 2), "caption": t("caption", 60), "legend": t("legend", 50),
+                "season": spec.get("season") or "even", "tone": spec.get("tone") or "cold"}
+    raise UserError(f"Неизвестный вид моушена: {kind}")
+
+
+def render_kind(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int, lang: str = "en",
+                poster: Path | None = None, log=lambda s: None):
+    """Any insert of the new engine by its motion type; every failure becomes a UserError (the scene keeps its picture)."""
+    kind = spec.get("type")
+    try:
+        if kind == "globe":
+            style = "globe2d" if str(spec.get("style") or "3d").lower() in ("2d", "globe2d", "flat") else "globe3d"
+            render(style, globe_spec(spec, lang), out, seconds, w, h, fps, poster, log)
+        else:
+            render(kind, card_spec(spec, lang), out, seconds, w, h, fps, poster, log)
+    except UserError:
+        raise
+    except Exception as e:  # noqa: BLE001 - the browser's own errors
+        raise UserError(f"Моушен «{kind}» не нарисовался: {str(e).splitlines()[0][:200] if str(e) else type(e).__name__}")
+
+
 def globe_ok(spec: dict) -> bool:
     from . import motion
     pts = [p for p in (spec.get("route") or []) + (spec.get("pins") or []) if isinstance(p, dict)]

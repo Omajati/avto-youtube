@@ -1,0 +1,72 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#head{position:absolute;left:0;right:0;top:118px;text-align:center}
+#num{font-size:190px}
+#cap{font-size:36px;margin-top:22px}
+#grid{position:absolute;left:0;top:0;width:100%;height:100%}
+#legend{position:absolute;font-family:Montserrat;font-weight:500;font-size:24px;color:#c3cfe0;white-space:nowrap}
+#legend i{display:inline-block;width:20px;height:20px;border-radius:4px;margin-right:12px;vertical-align:-3px}
+</style></head><body>
+<canvas id="bg"></canvas><canvas id="grid"></canvas><div id="tag"></div>
+<div id="head"><div id="num" class="fig"></div><div id="cap" class="cap"></div></div>
+<div id="legend"><i></i><span></span></div>
+<script src="card_common.js"></script>
+<script>
+// A year (or any whole) as a grid of cells: a cursor runs through it, the counted cells light up and the number on
+// top counts them. SPEC: {tag, total (365), filled, suffix ("+"), caption, legend, tone: cold|hot|warm,
+//                          season: winter|summer|even, rows (7), lang}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 240);
+  const bg = document.getElementById("bg"); bg.width = W; bg.height = H;
+  const gc = document.getElementById("grid"); gc.width = W; gc.height = H; const x = gc.getContext("2d");
+  const $ = id => document.getElementById(id);
+  const total = Math.max(1, Math.min(+S.total || 365, 1000)), filled = Math.max(0, Math.min(+S.filled || 0, total));
+  const rows = Math.max(1, +S.rows || (total > 60 ? 7 : Math.ceil(Math.sqrt(total / 3))));
+  const cols = Math.ceil(total / rows);
+  const cell = Math.max(10, Math.min(30, Math.floor((W - 380) / cols) - 4)), gap = Math.max(3, Math.round(cell * .18));
+  const gw = cols * (cell + gap) - gap, gh = rows * (cell + gap) - gap, gx = (W - gw) / 2, gy = 560;
+  const COL = { cold: "140,200,255", hot: "236,59,77", warm: "255,200,97" }[S.tone] || "140,200,255";
+  // which cells are counted: spread by the season (winter: both ends of the year), always the same for the same data
+  let seed = 1 + total * 31 + filled; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const weight = d => { const t = d / total; if (S.season === "winter") return Math.pow(Math.max(0, Math.cos(2 * Math.PI * t)), 2) + .04;
+    if (S.season === "summer") return Math.pow(Math.max(0, -Math.cos(2 * Math.PI * t)), 2) + .04; return 1; };
+  const keys = Array.from({ length: total }, (_, d) => ({ d, k: Math.pow(rnd(), 1 / weight(d)) })).sort((a, b) => b.k - a.k);
+  const on = new Set(keys.slice(0, filled).map(o => o.d));
+  const order = [...on].sort((a, b) => a - b);  // lit in the order of the year
+  $("cap").textContent = S.caption || ""; $("num").style.color = `rgb(${COL})`;
+  $("legend").querySelector("i").style.background = `rgb(${COL})`; $("legend").querySelector("span").textContent = S.legend || "";
+  $("legend").style.left = `${gx}px`; $("legend").style.top = `${gy + gh + 34}px`;
+  const sweepA = 0.22 * N, sweepB = 0.82 * N;
+  await C.ready();
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N);
+    x.clearRect(0, 0, W, H);
+    const appear = C.ease(C.seg(f, 0.05 * N, 0.18 * N));
+    const k = C.ease(C.seg(f, sweepA, sweepB)), cursor = k * cols;  // the column the year has reached
+    let lit = 0;
+    for (let d = 0; d < total; d++) {
+      const c = Math.floor(d / rows), r = d % rows, px = gx + c * (cell + gap), py = gy + r * (cell + gap);
+      const a = C.ease(appear * 1.6 - c / cols * .6);  // the grid fades in from left to right
+      if (a <= 0) continue;
+      let fill = `rgba(120,140,175,${.16 * a})`, glow = 0;
+      if (on.has(d) && cursor > c) {
+        const t = C.ease((cursor - c) / 2.5); lit++;
+        fill = `rgba(${COL},${.35 + .65 * t})`; glow = 1 - t;
+      }
+      x.fillStyle = fill;
+      if (glow > 0) { x.shadowColor = `rgba(${COL},1)`; x.shadowBlur = 18 * glow; } else x.shadowBlur = 0;
+      x.beginPath(); x.roundRect(px, py, cell, cell, Math.max(2, cell * .2)); x.fill();
+    }
+    x.shadowBlur = 0;
+    const shown = f >= sweepB ? filled : lit;
+    $("num").textContent = C.fmt(shown, 0, S.lang) + (f >= sweepB - 2 ? (S.suffix || "") : "");
+    C.blurIn($("head"), C.ease(C.seg(f, 0.16 * N, 0.16 * N + 14)), 0);
+    C.blurIn($("cap"), C.ease(C.seg(f, 0.2 * N, 0.2 * N + 14)));
+    C.blurIn($("legend"), C.ease(C.seg(f, 0.4 * N, 0.4 * N + 14)), 0);
+  };
+  window.renderFrame(0);
+  window.READY = true;
+})();
+</script></body></html>

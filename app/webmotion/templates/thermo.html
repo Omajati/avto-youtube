@@ -1,0 +1,89 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#scale{position:absolute;left:0;top:0;width:100%;height:100%}
+#val{position:absolute;left:820px;top:0;white-space:nowrap}
+#row{display:flex;align-items:baseline;gap:.12em}
+#pre{font-family:Oswald;font-weight:500;font-size:150px;opacity:.85;margin-right:.1em}
+#num{font-size:230px}
+#unit{font-family:Oswald;font-weight:500;font-size:96px}
+#cap{position:absolute;left:820px;font-family:Montserrat;font-weight:600;font-size:34px;color:#fff;white-space:nowrap}
+</style></head><body>
+<canvas id="bg"></canvas><canvas id="scale"></canvas><div id="tag"></div>
+<div id="val"><div id="row"><span id="pre"></span><span id="num" class="fig"></span><span id="unit"></span></div></div>
+<div id="cap"></div>
+<script src="card_common.js"></script>
+<script>
+// A thermometer (or any vertical scale): its column moves from value to value, the number counts with it, and the
+// colour turns from cold to hot where the story turns. SPEC: {tag, min, max, unit ("°C"), lang,
+//   steps: [{value, caption, prefix ("≈"), tone: cold|hot|warm, decimals}]}  (1–3 steps)
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 240);
+  const bg = document.getElementById("bg"); bg.width = W; bg.height = H;
+  const sc = document.getElementById("scale"); sc.width = W; sc.height = H; const x = sc.getContext("2d");
+  const $ = id => document.getElementById(id);
+  const steps = (S.steps || []).slice(0, 3);
+  const vals = steps.map(s => +s.value || 0);
+  let lo = S.min != null ? +S.min : Math.min(0, ...vals), hi = S.max != null ? +S.max : Math.max(0, ...vals);
+  const span0 = Math.max(hi - lo, 1), tickStep = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000].find(s => span0 / s <= 6) || 1000;
+  lo = Math.floor(Math.min(lo, ...vals) / tickStep) * tickStep; hi = Math.ceil(Math.max(hi, ...vals) / tickStep) * tickStep;
+  if (hi - lo < tickStep * 3) hi = lo + tickStep * 3;
+  const TX = 590, TW = 62, TOP = 205, BOT = 900, unitShort = (S.unit || "").replace(/[CFК]$/i, "") || "";
+  const yOf = v => BOT - 30 - (v - lo) / (hi - lo) * (BOT - TOP - 60);
+  const COL = { cold: [140, 200, 255], hot: [236, 59, 77], warm: [255, 200, 97] };
+  const decOf = s => s.decimals != null ? s.decimals : (String(s.value).split(/[.,]/)[1] || "").length;
+  $("unit").textContent = S.unit || "";
+  const win = steps.map((s, i) => { const a = 0.08 * N + i * (0.9 * N / steps.length); return { a, b: a + 0.9 * N / steps.length }; });
+  function state(f) {  // which step, how far, the shown value and colour
+    let i = 0; while (i < steps.length - 1 && f >= win[i + 1].a) i++;
+    const s = steps[i], w = win[i], from = i ? vals[i - 1] : 0;
+    const k = C.out3(C.seg(f, w.a, w.a + (w.b - w.a) * 0.4));
+    const v = C.lerp(from, vals[i], k);
+    const c0 = COL[i ? steps[i - 1].tone : s.tone] || COL.cold, c1 = COL[s.tone] || COL.cold;
+    const m = C.ease(C.seg(f, w.a, w.a + (w.b - w.a) * 0.2));
+    const col = c0.map((c, j) => Math.round(C.lerp(c, c1[j], m)));
+    return { i, s, w, v, k, col };
+  }
+  function drawScale(f, st) {
+    x.clearRect(0, 0, W, H);
+    const a = C.ease(C.seg(f, 0.02 * N, 0.02 * N + 14));
+    x.globalAlpha = a;
+    x.font = "500 30px Montserrat"; x.textAlign = "right"; x.textBaseline = "middle";
+    for (let v = lo; v <= hi + 1e-9; v += tickStep) {
+      const y = yOf(v), zero = Math.abs(v) < 1e-9;
+      x.fillStyle = zero ? "#ffffff" : "rgba(190,205,225,.75)"; x.font = `${zero ? 700 : 500} 30px Montserrat`;
+      x.fillText((v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v) + unitShort, TX - 46, y);
+      x.fillRect(TX - 34, y - (zero ? 1.5 : 1), zero ? 22 : 18, zero ? 3 : 2);
+    }
+    x.lineWidth = 2.5; x.strokeStyle = "rgba(170,190,220,.55)"; x.fillStyle = "rgba(10,24,52,.85)";
+    x.beginPath(); x.roundRect(TX, TOP, TW, BOT - TOP, TW / 2); x.fill(); x.stroke();
+    const y0 = yOf(0); x.fillStyle = "rgba(140,200,255,.45)"; x.fillRect(TX + 12, y0 - 1, TW - 24, 2);
+    if (st && st.k > 0) {  // the column, from the zero line to the value, with a soft glow
+      const yv = yOf(st.v), [r, g, b] = st.col, top = Math.min(y0, yv), h = Math.abs(yv - y0);
+      x.save(); x.shadowColor = `rgba(${r},${g},${b},.8)`; x.shadowBlur = 24; x.fillStyle = `rgb(${r},${g},${b})`;
+      x.beginPath(); x.roundRect(TX + 15, top, TW - 30, Math.max(h, 4), (TW - 30) / 2); x.fill(); x.restore();
+    }
+    x.globalAlpha = 1;
+  }
+  await C.ready();
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N);
+    const st = steps.length ? state(f) : null;
+    drawScale(f, st);
+    if (!st) return;
+    const { s, w, v, col, i } = st, last = i === steps.length - 1;
+    const color = `rgb(${col.join(",")})`;
+    $("num").style.color = color; $("pre").style.color = color; $("unit").style.color = color;
+    $("pre").textContent = s.prefix || "";
+    $("num").textContent = C.fmt(v, decOf(s), S.lang);
+    const yv = 500;  // the figure stays at one height, as in a documentary card
+    $("val").style.top = `${yv - 150}px`; $("cap").style.top = `${yv + 110}px`; $("cap").textContent = s.caption || "";
+    const inA = C.ease(C.seg(f, w.a, w.a + 12)), outA = last ? 1 : 1 - C.ease(C.seg(f, w.b - 14, w.b - 2));
+    C.blurIn($("val"), Math.min(inA, outA), 0);
+    C.blurIn($("cap"), Math.min(C.ease(C.seg(f, w.a + (w.b - w.a) * 0.38, w.a + (w.b - w.a) * 0.38 + 14)), outA));
+  };
+  window.renderFrame(0);
+  window.READY = true;
+})();
+</script></body></html>
