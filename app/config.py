@@ -131,6 +131,7 @@ DEFAULTS = {
     "folder_voice_es_id": "",
     "folder_voice_es_name": "",
     "folder_motion_inserts": True,
+    "folder_motion_density": "dense",  # how often the motion inserts come: max / dense / normal / calm (see folder_builder.MOTION_DENSITY)
     "folder_pause_paragraph": 0.8,  # seconds of silence where a paragraph of the narration ends (made after the voice-over)
     "folder_pause_sentence": 0.3,  # … and where a sentence ends
     "folder_voice_tempo": 1.0,  # the narration's pace: below 1 slower (the pitch stays), free, no new voice-over

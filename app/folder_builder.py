@@ -50,7 +50,7 @@ LANG_RU = {"en": "английский", "ru": "русский", "de": "неме
 NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech", "vertonung", "текст")
 
 FOLDER_OPTION_KEYS = (
-    "folder_languages", "folder_motion_inserts", "folder_globe_style", "folder_motion_theme", "folder_pause_paragraph", "folder_pause_sentence", "folder_voice_tempo", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
+    "folder_languages", "folder_motion_inserts", "folder_motion_density", "folder_globe_style", "folder_motion_theme", "folder_pause_paragraph", "folder_pause_sentence", "folder_voice_tempo", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
     "folder_schedule", "folder_schedule_time", "folder_schedule_from", "folder_schedule_studio", "folder_mp4_forever",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
@@ -63,7 +63,7 @@ FOLDER_OPTION_KEYS = (
 # What may differ from channel to channel (niche): the look and sound of the video and where it goes.
 # Folders, threads and speed stay common for the whole Mac.
 CHANNEL_OPTION_KEYS = (
-    "folder_languages", "folder_fast", "folder_motion_inserts", "folder_globe_style", "folder_motion_theme", "folder_pause_paragraph", "folder_pause_sentence", "folder_voice_tempo", "folder_music_source", "folder_thumbs", "folder_upload",
+    "folder_languages", "folder_fast", "folder_motion_inserts", "folder_motion_density", "folder_globe_style", "folder_motion_theme", "folder_pause_paragraph", "folder_pause_sentence", "folder_voice_tempo", "folder_music_source", "folder_thumbs", "folder_upload",
     "folder_upload_privacy", "folder_thumb_review", "folder_schedule", "folder_schedule_time",
     "folder_schedule_from", "folder_schedule_studio",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
@@ -2173,6 +2173,65 @@ MOTION_KINDS = ("map", "timeline", "chart", "compare", "globe", "counter", "ther
 INSERT_MAX = 12.0  # seconds: the longest a motion insert stays on screen
 
 
+MOTION_DENSITY = {  # seconds between inserts: (first half, second half)
+    "max": (20, 40), "dense": (25, 50), "normal": (40, 70), "calm": (60, 90),
+}
+
+
+def _plan_batch(batch: list[int], scenes: list[dict], texts: list[str], orders: dict, lang: str, limit: int,
+                early: float, late: float, b_start: float, half: float, total: float, settings: dict,
+                helper_settings, taken: list[int]) -> list[dict]:
+    """One LLM call for the inserts of one piece of the video (about 8 minutes): the free ones and the ordered ones."""
+    mine_orders = {i: orders[i] for i in batch if i in orders}
+    rows = [texts[i] + (f"  [SCRIPTWRITER ORDER — kind «{mine_orders[i][0]}» ({mine_orders[i][1]}): {mine_orders[i][2]}]"
+                        if i in mine_orders else "") for i in batch]
+    prompt = motion.PLAN_PROMPT.format(limit=limit, language=LANG_NAMES[lang],
+                                       scenes="\n".join(f"{k}. {r}" for k, r in enumerate(rows)))
+    if mine_orders:
+        prompt += ("\n\nScenes marked SCRIPTWRITER ORDER must EACH get an item of exactly the ordered kind, built from "
+                   "the order's content (take its numbers, names, dates and words as written; «столбцы» = a chart with "
+                   "chart_style bar, «проценты» = a calendar with total 100). They are not counted in the limit and "
+                   "may stand next to other chosen scenes.")
+    where = ("the first half of the video" if b_start + 1 < half else "the second half of the video")
+    prompt += (f"\n\nThis list is one piece of a {round(total / 60)}-minute video, starting at minute {round(b_start / 60)} "
+               f"({where}). Density: in the first half one insert every {round(early)} seconds or so, in the second half one "
+               f"every {round(late)} seconds; for this piece that is about {limit} inserts. Each line here lasts a few "
+               "seconds of narration; spread the chosen ones evenly over the piece.")
+    prompt += ("\n\nOnly use the kinds map, globe, timeline, chart, compare, counter, thermo, calendar, photonum, place, "
+               "document, scale, layer, satmap, quote and list. These scenes are only some of the video, so the rule "
+               "about the first and the last scene does not apply.")
+    try:
+        r = llm.call_json(helper_settings(settings), "You plan motion design scenes. Answer only with JSON.",
+                          prompt, motion.SCHEMA, {}, min(32000, 4000 + 900 * (limit + len(mine_orders))))
+    except UserError:
+        return []
+    raw = [g for g in r.get("items") or [] if isinstance(g, dict) and g.get("type") in MOTION_KINDS]
+    # clean_plan drops the first and the last of the list: pad the list so every candidate can be chosen.
+    for g in raw:
+        try:
+            g["index"] = int(g.get("index")) + 1
+        except (TypeError, ValueError):
+            g["index"] = -1
+    pos = {k + 1: i for k, i in enumerate(batch)}
+    mine = [g for g in raw if pos.get(g["index"]) in mine_orders]
+    free = [g for g in raw if g["index"] in pos and pos[g["index"]] not in mine_orders]
+    near = set(taken) | set(mine_orders)
+    items = []
+    for g in motion.clean_plan(free, len(batch) + 2):
+        i = batch[g["index"] - 1]
+        if i in near or i - 1 in near or i + 1 in near:  # never next to an order or the previous piece's last insert
+            continue
+        items.append(dict(g, index=i))
+        if len(items) >= limit:
+            break
+    for g in mine:  # the ordered ones: kept if they can be drawn and are the kind that was ordered
+        i = pos[g["index"]]
+        if g.get("type") == mine_orders[i][0] and motion.CHECK[g["type"]](g) and i not in [x["index"] for x in items]:
+            items.append({k: g.get(k) for k in motion.FIELDS} | {"index": i, "ordered": True})
+    items.sort(key=lambda g: g["index"])
+    return items
+
+
 def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations: list[float], media_map: dict[str, Path],
                     lang: str, settings: dict, options: dict, cache: Path, progress: float) -> dict[str, dict]:
     """Motion inserts drawn in place of pictures, all over the video and denser in its first half, wherever the
@@ -2199,53 +2258,37 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
     candidates = sorted(set(candidates) | set(ordered))
     if not candidates:
         return {}
-    limit = max(3, min(40, round(total / 70)))  # about one every 70 s over the video; the prompt asks for more early
+    # How often (the owner, 19.11.2026: «чаще, первая часть динамичная»): one insert every `early` seconds in the
+    # first half, every `late` seconds after it. Planned in batches of about 8 minutes, so every batch fits the answer.
+    early, late = MOTION_DENSITY.get(options.get("folder_motion_density") or "dense", MOTION_DENSITY["dense"])
+    starts = [sum(durations[:i]) for i in range(len(scenes))]
+    batches, current = [], []
+    for i in candidates:
+        if current and starts[i] - starts[current[0]] >= 480:
+            batches.append(current)
+            current = []
+        current.append(i)
+    if current:
+        batches.append(current)
     plan_path = cache / "motion.json"
     orders = {i: scenes[i]["insert"] for i in ordered}
-    mark = hashlib.sha256(json.dumps([lang, limit, [texts[i] for i in candidates], sorted(orders.items())],
+    mark = hashlib.sha256(json.dumps([lang, early, late, [texts[i] for i in candidates], sorted(orders.items())],
                                      ensure_ascii=False).encode()).hexdigest()
     saved = _read_json(plan_path, {})
     if saved.get("mark") == mark:
         items = saved.get("items") or []
     else:
-        _update(job_id, progress=progress, step=f"[{lang.upper()}] Ищу места для моушен-вставок…")
-        rows = [{"text": texts[i] + (f"  [SCRIPTWRITER ORDER — kind «{orders[i][0]}» ({orders[i][1]}): {orders[i][2]}]"
-                                     if i in orders else "")} for i in candidates]
-        prompt = motion.PLAN_PROMPT.format(limit=limit, language=LANG_NAMES[lang],
-                                           scenes="\n".join(f"{k}. {r['text']}" for k, r in enumerate(rows)))
-        if orders:
-            prompt += ("\n\nScenes marked SCRIPTWRITER ORDER must EACH get an item of exactly the ordered kind, built from "
-                       "the order's content (take its numbers, names, dates and words as written; «столбцы» = a chart with "
-                       "chart_style bar, «проценты» = a calendar with total 100). They are not counted in the limit and "
-                       "may stand next to other chosen scenes.")
-        prompt += (f"\n\nThe video lasts {round(total / 60)} minutes; its first half ends at scene "
-                   f"{next((k for k, i in enumerate(candidates) if sum(durations[:i]) >= half), len(candidates))} of this list.")
-        prompt += ("\n\nOnly use the kinds map, globe, timeline, chart, compare, counter, thermo, calendar, photonum, place, document, scale, layer, satmap, quote and list. These scenes are only some of the video, "
-                   "so the rule about the first and the last scene does not apply; choose fewer rather than weak ones.")
+        items = []
         from .pipeline import _helper_settings
-        try:
-            r = llm.call_json(_helper_settings(settings), "You plan motion design scenes. Answer only with JSON.",
-                              prompt, motion.SCHEMA, {}, min(32000, 4000 + 900 * (limit + len(orders))))
-            raw = [g for g in r.get("items") or [] if isinstance(g, dict) and g.get("type") in MOTION_KINDS]
-            # clean_plan drops the first and the last of the list: pad the list so every candidate can be chosen.
-            for g in raw:
-                try:
-                    g["index"] = int(g.get("index")) + 1
-                except (TypeError, ValueError):
-                    g["index"] = -1
-            pos = {k + 1: i for k, i in enumerate(candidates)}
-            mine = [g for g in raw if pos.get(g["index"]) in orders]
-            free = [g for g in raw if g["index"] in pos and pos[g["index"]] not in orders]
-            items = [dict(g, index=candidates[g["index"] - 1]) for g in motion.clean_plan(free, len(candidates) + 2)
-                     if candidates[g["index"] - 1] not in orders][:limit]
-            # the ordered ones: kept if they can be drawn and are the kind that was ordered
-            for g in mine:
-                i = pos[g["index"]]
-                if g.get("type") == orders[i][0] and motion.CHECK[g["type"]](g) and i not in [x["index"] for x in items]:
-                    items.append({k: g.get(k) for k in motion.FIELDS} | {"index": i, "ordered": True})
-            items.sort(key=lambda g: g["index"])
-        except UserError:
-            items = []
+        for number, batch in enumerate(batches, 1):
+            _update(job_id, progress=progress, step=f"[{lang.upper()}] Ищу места для моушен-вставок ({number} из {len(batches)})…")
+            b_start = starts[batch[0]]
+            b_end = starts[batch[-1]] + durations[batch[-1]]
+            first = max(0.0, min(b_end, half) - b_start)
+            second = max(0.0, b_end - max(b_start, half))
+            limit = max(2, round(first / early + second / late))
+            items += _plan_batch(batch, scenes, texts, orders, lang, limit, early, late, b_start, half, total, settings,
+                                 _helper_settings, [x["index"] for x in items])
         _write_json(plan_path, {"mark": mark, "items": items})
     out = {}
     fps = int(settings.get("fps") or 30)

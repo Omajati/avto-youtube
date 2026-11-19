@@ -361,7 +361,7 @@ PLAN_PROMPT = """You are the motion designer of a narrated YouTube video. Some s
 - "satmap": a region's land itself matters: a great river through it, its vastness, how remote it is, a railway that does not reach a city (a dark relief map: rivers draw themselves, railways as a dashed line).
 - "list": the narration counts points ("three reasons", "first... second... third...", a top).
 
-Choose generously, up to {limit} scenes: every moment where one of the kinds fits the narration (a number, a place, a date, a change over time, a comparison, a document, a quote, a list) gets one — about one every 60–90 seconds, and denser in the first half (the start keeps the viewers). Mix the kinds. Never two such scenes in a row; never the first or the last scene. Skip a moment only when nothing fits it.
+Choose generously, about {limit} scenes: every moment where one of the kinds fits the narration gets one — every number said (counter, photonum), every city or country named (map or globe with pins of the cities), every date or chain of dates (timeline), every price or value that changed (chart), every "then and now" or "A against B" (compare), every decision, letter or headline (document), every count of points (list). The first half of the video is the most dynamic (the start keeps the viewers). Mix the kinds. Never two such scenes in a row; never the first or the last scene. Skip a moment only when nothing fits it.
 
 Fill only the fields of the chosen kind; leave the others empty ("" / [] / 0, chart_style "line"):
 - index: the scene number from the list. title: a short plate in {language}, max 5 words ("Эфиопия, 1896", "Армии при Адуа").
