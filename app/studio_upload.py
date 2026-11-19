@@ -97,6 +97,7 @@ PICKER = ("ytcp-uploads-file-picker input[type=file], input[type=file][name=File
 CREATE_TEXT = r"^\s*(Create|Создать|Crear|Erstellen|Criar|Créer)\s*$"
 UPLOAD_TEXT = r"(Upload videos?|Загрузить видео|Subir v[íi]deos?|Videos? hochladen|Carregar v[íi]deos?|Importer des v[ée]os)"
 SELECT_TEXT = r"(Select files|Выбрать файлы|Seleccionar archivos|Dateien auswählen|Selecionar arquivos|Sélectionner des fichiers)"
+SELECT_RE = re.compile(SELECT_TEXT, re.I)
 
 
 UPLOAD_DIALOG = "ytcp-uploads-dialog"
@@ -109,9 +110,51 @@ KEEP_TEXT = re.compile(r"^\s*(Close|Закрыть|Cerrar|Schließen|Fechar|Ferm
 
 def _upload_dialog_open(page) -> bool:
     try:
-        return page.locator(UPLOAD_DIALOG).first.is_visible()
+        if page.locator(UPLOAD_DIALOG).first.is_visible():
+            return True
+        # Studio's new look may rename the window: its «Select files» button / file field still give it away.
+        return bool(page.locator("#select-files-button:visible, ytcp-uploads-file-picker:visible").count())
     except Exception:  # noqa: BLE001
         return False
+
+
+# A notice YouTube now shows over the upload window: «You're all set. You already have access to this feature.
+# Try refreshing the page.» — it only needs «Got it».
+NOTICE_TEXT = re.compile(r"(already have access|уже есть доступ|Ya tienes acceso|bereits Zugriff|j[áa] tem acesso|"
+                         r"d[ée]j[àa] acc[èe]s)", re.I)
+GOT_IT_TEXT = re.compile(r"^\s*(Got it|OK|Понятно|Ок|Хорошо|Entendido|Entendi|Verstanden|Compris)\s*$",
+                         re.I)
+
+
+def _feature_notice(page, log=lambda s: None) -> bool:
+    """Closes YouTube's «You're all set / You already have access to this feature» notice with «Got it».
+    True if one was closed."""
+    closed = False
+    try:
+        boxes = page.locator("tp-yt-paper-dialog:visible, ytcp-dialog:visible, ytcp-confirmation-dialog:visible, "
+                             "[role=dialog]:visible, [role=alertdialog]:visible")
+        for i in range(min(boxes.count(), 8)):
+            d = boxes.nth(i)
+            try:
+                text = d.inner_text(timeout=2000) or ""
+            except Exception:  # noqa: BLE001
+                continue
+            if not NOTICE_TEXT.search(text) or CANCEL_UPLOAD_TEXT.search(text) or SELECT_RE.search(text):
+                continue
+            if d.locator("#title-textarea, ytcp-uploads-file-picker, #select-files-button").count():
+                continue  # the upload window itself, never its own buttons
+            btn = _first_visible(d.get_by_role("button", name=GOT_IT_TEXT), 2) or _first_visible(
+                d.locator("button, ytcp-button, tp-yt-paper-button, [role=button]").filter(has_text=GOT_IT_TEXT), 2)
+            if not btn:
+                continue
+            btn.click(timeout=5000)
+            time.sleep(1)
+            closed = True
+            log("YouTube показал «You're all set / доступ уже есть» — нажал «Got it»")
+            break
+    except Exception:  # noqa: BLE001
+        pass
+    return closed
 
 
 def _keep_upload(page, log=lambda s: None) -> bool:
@@ -144,17 +187,21 @@ def _close_popup(page):
             time.sleep(.5)
     except Exception:  # noqa: BLE001
         pass
+    _feature_notice(page)
     _keep_upload(page)
 
 
 def _dismiss(page):
     """Closes the welcome / news / «what's new» windows Studio sometimes shows over everything. Never while the
     upload window is open: its own cross and Escape would cancel the upload."""
+    _feature_notice(page)
     if _upload_dialog_open(page):
         _keep_upload(page)
         return
-    for sel in ("ytcp-warm-welcome-dialog #dismiss-button", "#dismiss-button", "ytcp-button#close-button",
-                "#close-button", "tp-yt-paper-dialog #close-icon-button", "ytcp-dialog #close-button"):
+    # Only buttons of real pop-up windows: a «dismiss» on a card of the page itself may switch a feature on.
+    for sel in ("ytcp-warm-welcome-dialog #dismiss-button", "tp-yt-paper-dialog:visible #dismiss-button",
+                "ytcp-dialog:visible #dismiss-button", "tp-yt-paper-dialog:visible ytcp-button#close-button",
+                "tp-yt-paper-dialog #close-icon-button", "ytcp-dialog #close-button"):
         try:
             btn = page.locator(sel)
             if btn.count() and btn.first.is_visible():
@@ -177,7 +224,8 @@ def _picker_ready(page, wait_s: int):
     except Exception:  # noqa: BLE001
         pass
     # Studio's new look may rename the upload window: any file field that accepts video will do.
-    any_video = page.locator("input[type=file][accept*='video'], input[type=file][accept*='mp4']")
+    any_video = page.locator("input[type=file][accept*='video'], input[type=file][accept*='mp4'], "
+                             "input[type=file]:not([accept*='image']):not([accept*='.vtt']):not([accept*='.srt'])")
     try:
         if any_video.count():
             return any_video.first
@@ -229,8 +277,10 @@ def _click_create_upload(page) -> bool:
 def _picker_via_chooser(page):
     """Last resort: press «Select files» and take the file field the browser's file window was opened for."""
     import re as _re
+    _feature_notice(page)
     btn = _first_visible(page.locator("#select-files-button, ytcp-button#select-files-button"), 2) or _first_visible(
-        page.get_by_role("button", name=_re.compile(SELECT_TEXT, _re.I)), 5)
+        page.get_by_role("button", name=_re.compile(SELECT_TEXT, _re.I)), 5) or _first_visible(
+        page.locator("button, ytcp-button, [role=button]").filter(has_text=_re.compile(SELECT_TEXT, _re.I)), 3)
     if not btn:
         return None
     try:
@@ -261,6 +311,8 @@ def _open_upload(page, video: Path, log):
                         break
                 except Exception:  # noqa: BLE001
                     pass
+        time.sleep(2)
+        _feature_notice(page, log)
         picker = _picker_ready(page, 20)
         if picker:
             return picker
@@ -269,7 +321,20 @@ def _open_upload(page, video: Path, log):
             return picker
     log("Кнопка не открыла окно загрузки — пробую адрес youtube.com/upload…")
     page.goto(STUDIO.replace("studio.", "www.") + "/upload", wait_until="domcontentloaded", timeout=120_000)
-    picker = _picker_ready(page, 40)
+    time.sleep(5)
+    _feature_notice(page, log)
+    picker = _picker_ready(page, 40) or _picker_via_chooser(page)
+    if picker:
+        return picker
+    log("Обновляю страницу, как просит YouTube, и пробую ещё раз…")
+    page.reload(wait_until="domcontentloaded", timeout=120_000)
+    time.sleep(6)
+    _feature_notice(page, log)
+    if not _upload_dialog_open(page):
+        _click_create_upload(page)
+        time.sleep(2)
+        _feature_notice(page, log)
+    picker = _picker_ready(page, 30) or _picker_via_chooser(page)
     if picker:
         return picker
     _check_url(page)
@@ -1031,7 +1096,15 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
             _check_channel(page, want, log, quiet=True)
             log("Загружаю файл видео…")
             _set_file(page, picker, video)
-            page.locator("#title-textarea #textbox").first.wait_for(state="visible", timeout=180_000)
+            title_box = page.locator("#title-textarea #textbox").first
+            for _ in range(36):
+                _feature_notice(page, log)
+                try:
+                    title_box.wait_for(state="visible", timeout=5000)
+                    break
+                except PWTimeout:
+                    pass
+            title_box.wait_for(state="visible", timeout=10_000)
             time.sleep(2)
             log("Вписываю название и описание…")
             _type_into(page, "#title-textarea #textbox", title)
