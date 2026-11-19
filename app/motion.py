@@ -17,8 +17,9 @@ from .media import UserError
 GEO = Path(__file__).parent / "geo" / "countries.json"
 KINDS = {"map": "🗺 Карта", "timeline": "📅 Линия времени", "chart": "📈 График", "compare": "⚖️ Сравнение",
          "quote": "💬 Цитата", "list": "📋 Список", "globe": "🌍 Глобус", "counter": "🔢 Цифра",
-         "thermo": "🌡 Термометр", "calendar": "🟦 Сетка-календарь"}
-WEB_KINDS = ("globe", "counter", "thermo", "calendar")  # drawn by the new engine (webmotion.py)
+         "thermo": "🌡 Термометр", "calendar": "🟦 Сетка-календарь", "photonum": "🖼 Цифра поверх фото",
+         "place": "📍 Плашка места", "document": "📄 Документ"}
+WEB_KINDS = ("globe", "counter", "thermo", "calendar", "photonum", "place", "document")  # the new engine (webmotion.py)
 MODES = {"auto": "Авто: карты и даты там, где они к месту", "off": "Выключено"}
 
 OCEAN_TOP, OCEAN_BOTTOM = (12, 22, 40), (6, 12, 24)
@@ -976,7 +977,7 @@ def render_list(spec, out, seconds, w, h, fps, poster=None, prev=None):
 
 
 def render(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int, lang: str = "ru", poster: Path = None,
-           prev: Path = None):
+           prev: Path = None, photo: Path = None):
     """prev: the picture of the scene before, for a soft way in (and the background colours)."""
     pic = None
     if prev:
@@ -991,7 +992,7 @@ def render(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int, lang
     elif spec.get("type") in WEB_KINDS:
         # The new engine: a web page shot frame by frame (see webmotion.py).
         from . import webmotion
-        webmotion.render_kind(spec, out, seconds, w, h, fps, lang, poster)
+        webmotion.render_kind(spec, out, seconds, w, h, fps, lang, poster, photo=photo)
     elif spec.get("type") in DRAW:
         DRAW[spec["type"]](spec, out, seconds, w, h, fps, poster, pic)
     else:
@@ -1049,6 +1050,12 @@ def cues(spec: dict, seconds: float) -> list:
         out += [(0.08 + k * 0.9 / max(1, len(steps)) + 0.36 / max(1, len(steps)), "pop") for k in range(len(steps))]
     elif kind == "calendar":
         out.append((0.82, "pop"))
+    elif kind == "photonum":
+        out.append((0.3, "pop"))
+    elif kind == "place":
+        out.append((0.12, "tick"))
+    elif kind == "document":
+        out += [(0.1, "tick")] + ([(0.42, "tick")] if str(spec.get("highlight") or "").strip() else [])
     elif kind == "quote" and str(spec.get("author") or "").strip():
         out.append((0.72, "tick"))
     # Never two sounds closer than a fifth of a second, and none in the first half second (the whoosh).
@@ -1088,7 +1095,19 @@ def calendar_ok(spec: dict) -> bool:
     return total is not None and filled is not None and 2 <= total <= 1000 and 0 < filled <= total
 
 
-CHECK = {"map": map_ok, "timeline": timeline_ok, "chart": chart_ok, "compare": compare_ok, "quote": quote_ok,
+def photonum_ok(spec: dict) -> bool:
+    return counter_ok(spec)
+
+
+def place_ok(spec: dict) -> bool:
+    return bool(str(spec.get("title") or "").strip())
+
+
+def document_ok(spec: dict) -> bool:
+    return bool(str(spec.get("headline") or "").strip())
+
+
+CHECK = {"photonum": photonum_ok, "place": place_ok, "document": document_ok, "map": map_ok, "timeline": timeline_ok, "chart": chart_ok, "compare": compare_ok, "quote": quote_ok,
          "list": list_ok, "globe": globe_ok, "counter": counter_ok, "thermo": thermo_ok, "calendar": calendar_ok}
 
 
@@ -1105,7 +1124,8 @@ def poster(spec: dict, path: Path, w: int, h: int, lang: str = "ru"):
 
 FIELDS = ("index", "type", "title", "countries", "route", "pins", "events", "current", "points", "chart_style", "unit",
           "left_name", "right_name", "rows", "quote", "author", "lines",
-          "value", "prefix", "suffix", "caption", "note", "tone", "steps", "total", "filled", "legend", "season")
+          "value", "prefix", "suffix", "caption", "note", "tone", "steps", "total", "filled", "legend", "season",
+          "org", "headline", "highlight", "when_label", "when")
 _PLACE = {"type": "object", "properties": {"name": {"type": "string"}, "lat": {"type": "number"},
                                            "lon": {"type": "number"}}, "required": ["name", "lat", "lon"]}
 SCHEMA = {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
@@ -1134,7 +1154,9 @@ SCHEMA = {"type": "object", "properties": {"items": {"type": "array", "items": {
         "value": {"type": "number"}, "caption": {"type": "string"}, "prefix": {"type": "string"},
         "tone": {"type": "string", "enum": ["cold", "hot", "warm"]}}, "required": ["value", "caption", "prefix", "tone"]}},
     "total": {"type": "number"}, "filled": {"type": "number"}, "legend": {"type": "string"},
-    "season": {"type": "string", "enum": ["winter", "summer", "even"]}},
+    "season": {"type": "string", "enum": ["winter", "summer", "even"]},
+    "org": {"type": "string"}, "headline": {"type": "string"}, "highlight": {"type": "string"},
+    "when_label": {"type": "string"}, "when": {"type": "string"}},
     "required": list(FIELDS)}}},
     "required": ["items"]}
 
@@ -1147,7 +1169,10 @@ PLAN_PROMPT = """You are the motion designer of a narrated YouTube video. Some s
 - "quote": a real, well-known quote said by a named person in the story, worth showing word for word.
 - "counter": ONE striking number the narration says (a record, a total, a price, a distance, a toll): it counts up big on screen.
 - "thermo": temperatures said in the narration (an average, then a record), or one value on a scale that rises or falls.
-- "calendar": "N days a year" or "N out of M" (days of storm, nights without sun, survivors out of a crew): a grid of M cells where N light up.
+- "calendar": "N days a year", "N out of M" or "N percent" (days of storm, survivors out of a crew, a 68% chance): a grid of M cells where N light up.
+- "photonum": one striking number about what the picture of that scene shows (a city's population, a depth, a height, a record): the number is written right over the picture.
+- "place": the story moves to a new place or a new time ("Yakutsk, 2026", "Texas, April 2025"): a plate at the bottom of the picture.
+- "document": an official decision, a court ruling, a letter, a will, a newspaper headline the narration retells or quotes.
 - "list": the narration counts points ("three reasons", "first... second... third...", a top).
 
 Choose up to {limit} scenes, mixing kinds where the story allows. Only where the animation is the point of that moment; never two such scenes in a row; never the first or the last scene. Choose none if nothing fits.
@@ -1163,7 +1188,10 @@ Fill only the fields of the chosen kind; leave the others empty ("" / [] / 0, ch
 - list: lines = 2-6 points, max 8 words each, in {language}.
 - counter: value = the number as said (1.8 for "1.8 million tonnes"); unit = short, in {language} ("млн т", "km", "%", "$"); prefix "≈" if the narration says about/around, else ""; suffix "+" if it says "more than", else ""; caption = what the number is, max 6 words, in {language}; note = 0-4 words of context or ""; tone = "hot" for danger, records, losses, "cold" for cold, ice, distance, "warm" otherwise; title = the topic in 1-3 words.
 - thermo: steps = 1-3 values in the order told, each: value, caption (max 5 words, in {language}), prefix ("≈" or ""), tone ("cold" for ordinary cold, "hot" for the extreme or heat); unit = "°C" (or the scale's unit); title = the topic in 1-3 words.
-- calendar: total = M (365 for "a year"), filled = N; suffix "+" if "more than"; caption = what is counted, max 5 words, in {language}; legend = "= " + one cell's meaning, max 4 words; season = "winter" if those days are in winter, "summer" if in summer, else "even"; tone; title = the topic in 1-3 words.
+- photonum: the same fields as counter (value, unit, prefix, suffix, caption; no note).
+- place: title = the place, max 4 words, in {language}; note = the year or the date, or "".
+- document: org = who issued or wrote it (max 4 words, in {language}, or ""); headline = its gist, max 8 words, in {language}; highlight = the exact words the narration quotes from it, max 14 words, or ""; when_label = the word "When" in {language}; when = the date as said, or "".
+- calendar: total = M (365 for "a year", 100 for a percentage), filled = N; suffix "+" if "more than"; caption = what is counted, max 5 words, in {language}; legend = "= " + one cell's meaning, max 4 words; season = "winter" if those days are in winter, "summer" if in summer, else "even"; tone; title = the topic in 1-3 words.
 Never invent facts or numbers: only what the narration says or certain common knowledge. If the numbers are not known for sure, do not make a chart or a comparison.
 
 SCENES:

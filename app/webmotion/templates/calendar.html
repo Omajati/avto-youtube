@@ -23,36 +23,55 @@
   const gc = document.getElementById("grid"); gc.width = W; gc.height = H; const x = gc.getContext("2d");
   const $ = id => document.getElementById(id);
   const total = Math.max(1, Math.min(+S.total || 365, 1000)), filled = Math.max(0, Math.min(+S.filled || 0, total));
-  const rows = Math.max(1, +S.rows || (total > 60 ? 7 : Math.ceil(Math.sqrt(total / 3))));
-  const cols = Math.ceil(total / rows);
-  const cell = Math.max(10, Math.min(30, Math.floor((W - 380) / cols) - 4)), gap = Math.max(3, Math.round(cell * .18));
-  const gw = cols * (cell + gap) - gap, gh = rows * (cell + gap) - gap, gx = (W - gw) / 2, gy = 560;
-  const COL = { cold: "140,200,255", hot: "236,59,77", warm: "255,200,97" }[S.tone] || "140,200,255";
+  // up to 100 cells (a percentage, «N out of M»): a square grid on the right that fills from the bottom, the number
+  // on the left; more cells (a year): a long strip, the cursor running through it like time
+  const square = total <= 100;
+  const rows = square ? Math.ceil(total / 10) : Math.max(1, +S.rows || (total > 60 ? 7 : Math.ceil(Math.sqrt(total / 3))));
+  const cols = square ? Math.min(10, total) : Math.ceil(total / rows);
+  const cell = square ? Math.min(58, Math.floor(640 / rows) - 10) : Math.max(10, Math.min(30, Math.floor((W - 380) / cols) - 4));
+  const gap = square ? Math.round(cell * .2) : Math.max(3, Math.round(cell * .18));
+  const gw = cols * (cell + gap) - gap, gh = rows * (cell + gap) - gap;
+  const gx = square ? W * 0.56 : (W - gw) / 2, gy = square ? (H - gh) / 2 + 20 : 560;
+  if (square) {
+    Object.assign($("head").style, { left: "150px", right: "auto", textAlign: "left" });
+    $("num").style.fontSize = "220px"; $("cap").style.cssText += ";font-size:32px;letter-spacing:.06em;text-transform:none;max-width:640px;line-height:1.3";
+  }
+  const COL = C.rgb(`--${["cold", "hot", "warm"].includes(S.tone) ? S.tone : "cold"}`);
   // which cells are counted: spread by the season (winter: both ends of the year), always the same for the same data
   let seed = 1 + total * 31 + filled; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   const weight = d => { const t = d / total; if (S.season === "winter") return Math.pow(Math.max(0, Math.cos(2 * Math.PI * t)), 2) + .04;
     if (S.season === "summer") return Math.pow(Math.max(0, -Math.cos(2 * Math.PI * t)), 2) + .04; return 1; };
   const keys = Array.from({ length: total }, (_, d) => ({ d, k: Math.pow(rnd(), 1 / weight(d)) })).sort((a, b) => b.k - a.k);
-  const on = new Set(keys.slice(0, filled).map(o => o.d));
+  // the square grid fills from the bottom row up, left to right; the year strip by the season
+  const cellOf = d => square ? { c: d % cols, r: rows - 1 - Math.floor(d / cols) } : { c: Math.floor(d / rows), r: d % rows };
+  const on = new Set(square ? Array.from({ length: filled }, (_, i) => i) : keys.slice(0, filled).map(o => o.d));
   const order = [...on].sort((a, b) => a - b);  // lit in the order of the year
   $("cap").textContent = S.caption || ""; $("num").style.color = `rgb(${COL})`;
   $("legend").querySelector("i").style.background = `rgb(${COL})`; $("legend").querySelector("span").textContent = S.legend || "";
-  $("legend").style.left = `${gx}px`; $("legend").style.top = `${gy + gh + 34}px`;
+  if (square) { $("legend").style.left = "156px"; $("legend").style.top = `${H / 2 + 190}px`; $("legend").querySelector("i").style.display = "none"; }
+  else { $("legend").style.left = `${gx}px`; $("legend").style.top = `${gy + gh + 34}px`; }
   const sweepA = 0.22 * N, sweepB = 0.82 * N;
   await C.ready();
+  if (square) {  // the number block centred on the left, measured with its final text
+    $("num").textContent = C.fmt(filled, 0, S.lang) + (S.suffix || "");
+    $("head").style.top = `${(H - $("head").offsetHeight) / 2 - 30}px`;
+    $("legend").style.top = `${(H + $("head").offsetHeight) / 2 + 4}px`;
+  }
   window.renderFrame = f => {
     C.background(bg, f); C.tag(S, f, N);
     x.clearRect(0, 0, W, H);
     const appear = C.ease(C.seg(f, 0.05 * N, 0.18 * N));
-    const k = C.ease(C.seg(f, sweepA, sweepB)), cursor = k * cols;  // the column the year has reached
+    const k = C.ease(C.seg(f, sweepA, sweepB));
+    const cursor = square ? k * filled : k * cols;  // how far the filling has gone: cells (square) or columns (year)
     let lit = 0;
     for (let d = 0; d < total; d++) {
-      const c = Math.floor(d / rows), r = d % rows, px = gx + c * (cell + gap), py = gy + r * (cell + gap);
-      const a = C.ease(appear * 1.6 - c / cols * .6);  // the grid fades in from left to right
+      const { c, r } = cellOf(d), px = gx + c * (cell + gap), py = gy + r * (cell + gap);
+      const a = C.ease(appear * 1.6 - (square ? (rows - 1 - r) / rows : c / cols) * .6);  // the grid fades in
       if (a <= 0) continue;
       let fill = `rgba(120,140,175,${.16 * a})`, glow = 0;
-      if (on.has(d) && cursor > c) {
-        const t = C.ease((cursor - c) / 2.5); lit++;
+      const pos = square ? d : c;
+      if (on.has(d) && cursor > pos) {
+        const t = k >= 1 ? 1 : C.ease((cursor - pos) / (square ? 4 : 2.5)); lit++;
         fill = `rgba(${COL},${.35 + .65 * t})`; glow = 1 - t;
       }
       x.fillStyle = fill;

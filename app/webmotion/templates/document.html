@@ -1,0 +1,66 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#stage{position:absolute;left:50%;top:50%;width:960px;transform-origin:50% 50%}
+#paper{background:var(--paper);color:var(--ink);border-radius:6px;padding:62px 86px 70px;box-shadow:0 30px 90px rgba(0,0,0,.55),0 2px 0 rgba(255,255,255,.4) inset}
+#org{font-family:Montserrat;font-weight:600;font-size:17px;letter-spacing:.32em;text-transform:uppercase;text-align:center;color:#5d646d}
+#head{font-family:'PT Serif',Georgia,serif;font-weight:700;font-size:46px;line-height:1.18;text-align:center;margin:26px 0 34px}
+#rule{height:1px;background:rgba(0,0,0,.18);margin-bottom:30px}
+.ln{height:14px;border-radius:7px;background:rgba(40,45,52,.14);margin:0 0 19px;transform-origin:0 50%}
+#hl{position:relative;font-family:'PT Serif',Georgia,serif;font-size:31px;line-height:1.35;margin:4px 0 22px}
+#hl mark{background:none;color:inherit;position:relative;z-index:1}
+#hl .marker{position:absolute;left:-8px;top:2px;bottom:2px;background:rgba(255,200,60,.55);border-radius:4px;z-index:0;transform-origin:0 50%}
+#when{position:absolute;left:80px;bottom:84px;border-left:5px solid var(--accent);padding:6px 0 8px 22px;background:linear-gradient(90deg,rgba(6,10,18,.7),rgba(6,10,18,0))}
+#when .k{font-family:Montserrat;font-weight:600;font-size:18px;letter-spacing:.3em;text-transform:uppercase;color:var(--muted)}
+#when .v{font-family:Montserrat;font-weight:700;font-size:34px;color:#fff;margin-top:6px}
+</style></head><body>
+<canvas id="bg"></canvas><div id="tag"></div>
+<div id="stage"><div id="paper"><div id="org"></div><div id="head"></div><div id="rule"></div><div id="body"></div></div></div>
+<div id="when"><div class="k"></div><div class="v"></div></div>
+<script src="card_common.js"></script>
+<script>
+// A document, a letter or a news piece shown as a sheet: the issuer on top, the headline, grey lines for the text
+// and, if given, one real sentence marked with a highlighter. A plate «КОГДА / октябрь этого года» at the bottom left.
+// SPEC: {tag, org, headline, highlight, label, value, theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 210);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H;
+  $("org").textContent = S.org || ""; $("head").textContent = S.headline || "";
+  if (!S.org) $("org").style.display = "none";
+  const body = $("body"), widths = [96, 88, 92, 70, 94, 84, 90, 62];
+  const lines = [];
+  const at = S.highlight ? 2 : -1;
+  widths.forEach((w, i) => {
+    if (i === at) {
+      const d = document.createElement("div"); d.id = "hl";
+      d.innerHTML = `<span class="marker"></span><mark></mark>`; d.querySelector("mark").textContent = `«${S.highlight}»`;
+      body.appendChild(d); lines.push(d);
+    }
+    const l = document.createElement("div"); l.className = "ln"; l.style.width = `${w}%`; body.appendChild(l); lines.push(l);
+  });
+  $("when").querySelector(".k").textContent = S.label || ""; $("when").querySelector(".v").textContent = S.value || "";
+  if (!S.label && !S.value) $("when").style.display = "none";
+  await C.ready();
+  const ph = $("stage").offsetHeight;
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N);
+    const t = f / (N - 1), s = 0.94 + 0.06 * C.ease(t);  // a slow push towards the sheet
+    const a = C.out3(C.seg(f, 0.03 * N, 0.03 * N + 20));
+    $("stage").style.transform = `translate(-50%, calc(-50% + ${36 * (1 - a)}px)) scale(${s}) rotate(${-0.6 + 0.6 * C.ease(t)}deg)`;
+    $("stage").style.opacity = a;
+    C.blurIn($("head"), C.ease(C.seg(f, 0.10 * N, 0.10 * N + 16)), 0);
+    lines.forEach((l, i) => {
+      const k = C.out3(C.seg(f, 0.16 * N + i * 4, 0.16 * N + i * 4 + 14));
+      if (l.id === "hl") { C.blurIn(l, k, 0); const m = l.querySelector(".marker");
+        m.style.transform = `scaleX(${C.out3(C.seg(f, 0.40 * N, 0.40 * N + 26))})`; m.style.right = "-8px"; }
+      else { l.style.transform = `scaleX(${k})`; l.style.opacity = k > 0 ? 1 : 0; }
+    });
+    const w = C.ease(C.seg(f, 0.30 * N, 0.30 * N + 16));
+    C.blurIn($("when"), w, 0); $("when").style.transform = `translateX(${-20 * (1 - w)}px)`;
+  };
+  window.renderFrame(0);
+  window.READY = true;
+})();
+</script></body></html>

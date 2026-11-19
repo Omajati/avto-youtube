@@ -31,7 +31,7 @@
   if (hi - lo < tickStep * 3) hi = lo + tickStep * 3;
   const TX = 590, TW = 62, TOP = 205, BOT = 900, unitShort = (S.unit || "").replace(/[CFК]$/i, "") || "";
   const yOf = v => BOT - 30 - (v - lo) / (hi - lo) * (BOT - TOP - 60);
-  const COL = { cold: [140, 200, 255], hot: [236, 59, 77], warm: [255, 200, 97] };
+  const COL = Object.fromEntries(["cold", "hot", "warm"].map(k => [k, C.rgb(`--${k}`).split(",").map(Number)]));
   const decOf = s => s.decimals != null ? s.decimals : (String(s.value).split(/[.,]/)[1] || "").length;
   $("unit").textContent = S.unit || "";
   const win = steps.map((s, i) => { const a = 0.08 * N + i * (0.9 * N / steps.length); return { a, b: a + 0.9 * N / steps.length }; });

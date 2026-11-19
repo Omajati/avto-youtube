@@ -21,7 +21,7 @@ from .net import UserError
 ROOT = Path(__file__).parent / "webmotion"
 GEO = Path(__file__).parent / "geo"
 HOST = "http://webmotion.local/"
-TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+TYPES = {".webp": "image/webp", ".jpeg": "image/jpeg", ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
          ".json": "application/json", ".woff2": "font/woff2", ".jpg": "image/jpeg", ".png": "image/png"}
 _install_lock = threading.Lock()
 _installed = False
@@ -34,8 +34,10 @@ def _file_for(url: str) -> Path | None:
     return path if path.is_file() and base.resolve() in path.parents else None
 
 
-def _serve(route):
-    path = _file_for(route.request.url)
+def _serve(route, extra: dict | None = None):
+    """extra: {"photo/<name>": Path} — the scene's own picture, served only to this one render."""
+    rel = route.request.url[len(HOST):].split("?", 1)[0]
+    path = (extra or {}).get(rel) or _file_for(route.request.url)
     if not path:
         route.fulfill(status=404, body="")
         return
@@ -72,8 +74,9 @@ def _launch(pw, args, log):
 
 
 def render(template: str, spec: dict, out: Path, seconds: float, w: int = 1920, h: int = 1080, fps: int = 30,
-           poster: Path | None = None, log=lambda s: None):
-    """Shoots templates/<template>.html into an MP4 of exactly round(seconds * fps) frames."""
+           poster: Path | None = None, log=lambda s: None, photo: Path | None = None):
+    """Shoots templates/<template>.html into an MP4 of exactly round(seconds * fps) frames.
+    photo: a picture shown by the template (spec["photo"] then holds its address)."""
     from playwright.sync_api import sync_playwright
 
     n = max(2, round(seconds * fps))
@@ -81,6 +84,11 @@ def render(template: str, spec: dict, out: Path, seconds: float, w: int = 1920, 
     # sampled, so its last frame shows everything that appears.
     timing = max(n, 240) if poster else n
     data = {**spec, "w": w, "h": h, "frames": timing, "fps": fps}
+    extra = {}
+    if photo and Path(photo).is_file():
+        key = "photo/scene" + Path(photo).suffix.lower()
+        extra[key] = Path(photo)
+        data["photo"] = "../" + key
     out = Path(out)
     with sync_playwright() as pw:
         last = None
@@ -90,7 +98,7 @@ def render(template: str, spec: dict, out: Path, seconds: float, w: int = 1920, 
                 page = browser.new_page(viewport={"width": w, "height": h}, device_scale_factor=1)
                 errors: list[str] = []
                 page.on("pageerror", lambda e: errors.append(str(e)))
-                page.route(HOST + "**", _serve)
+                page.route(HOST + "**", lambda route: _serve(route, extra))
                 page.add_init_script("window.SPEC = " + json.dumps(data, ensure_ascii=False) + ";")
                 page.goto(HOST + f"templates/{template}.html", wait_until="load", timeout=60_000)
                 try:
@@ -205,7 +213,8 @@ def _dec(v) -> int:
 def card_spec(spec: dict, lang: str) -> dict:
     """The data of a «card» template (counter, thermo, calendar) from a motion spec."""
     kind, t = spec.get("type"), lambda k, n: str(spec.get(k) or "").strip()[:n]
-    base = {"tag": t("title", 50), "lang": lang, "tone": spec.get("tone") or "hot"}
+    base = {"tag": t("title", 50), "lang": lang, "tone": spec.get("tone") or "hot",
+            "theme": spec.get("theme") if spec.get("theme") in ("navy", "graphite") else "navy"}
     if kind == "counter":
         v = float(spec.get("value") or 0)
         return {**base, "value": v, "decimals": _dec(v), "prefix": t("prefix", 2), "suffix": t("suffix", 2),
@@ -215,6 +224,15 @@ def card_spec(spec: dict, lang: str) -> dict:
                   "tone": x.get("tone") or "cold", "decimals": _dec(x.get("value"))}
                  for x in (spec.get("steps") or [])[:3] if isinstance(x, dict)]
         return {**base, "unit": t("unit", 6) or "°C", "steps": steps}
+    if kind == "photonum":
+        v = float(spec.get("value") or 0)
+        return {**base, "value": v, "decimals": _dec(v), "prefix": t("prefix", 2), "suffix": t("suffix", 2),
+                "unit": t("unit", 10), "caption": t("caption", 60)}
+    if kind == "place":
+        return {**base, "name": t("title", 60), "sub": t("note", 40)}
+    if kind == "document":
+        return {**base, "tag": "", "org": t("org", 50), "headline": t("headline", 90), "highlight": t("highlight", 120),
+                "label": t("when_label", 20) if t("when", 40) else "", "value": t("when", 40)}
     if kind == "calendar":
         return {**base, "total": int(float(spec.get("total") or 365)), "filled": int(float(spec.get("filled") or 0)),
                 "suffix": t("suffix", 2), "caption": t("caption", 60), "legend": t("legend", 50),
@@ -223,7 +241,7 @@ def card_spec(spec: dict, lang: str) -> dict:
 
 
 def render_kind(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int, lang: str = "en",
-                poster: Path | None = None, log=lambda s: None):
+                poster: Path | None = None, log=lambda s: None, photo: Path | None = None):
     """Any insert of the new engine by its motion type; every failure becomes a UserError (the scene keeps its picture)."""
     kind = spec.get("type")
     try:
@@ -231,7 +249,9 @@ def render_kind(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int,
             style = "globe2d" if str(spec.get("style") or "3d").lower() in ("2d", "globe2d", "flat") else "globe3d"
             render(style, globe_spec(spec, lang), out, seconds, w, h, fps, poster, log)
         else:
-            render(kind, card_spec(spec, lang), out, seconds, w, h, fps, poster, log)
+            template = "calendar" if kind == "calendar" else kind
+            render(template, card_spec(spec, lang), out, seconds, w, h, fps, poster, log,
+                   photo=photo if kind in ("photonum", "place") else None)
     except UserError:
         raise
     except Exception as e:  # noqa: BLE001 - the browser's own errors

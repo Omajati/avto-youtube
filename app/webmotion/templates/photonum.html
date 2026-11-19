@@ -1,0 +1,47 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#wrap{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center}
+#row{display:inline-flex;align-items:baseline;gap:.14em;white-space:nowrap;text-shadow:0 6px 40px rgba(0,0,0,.55)}
+#pre{font-family:Oswald;font-weight:500;font-size:150px;color:#fff;opacity:.9}
+#num,#cur{font-size:250px;color:#fff}
+#unit{font-family:Oswald;font-weight:500;font-size:110px;color:#fff}
+#cap{font-size:34px;margin-top:22px;text-shadow:0 2px 20px rgba(0,0,0,.7)}
+#line{height:5px;width:120px;margin:26px auto 0;border-radius:3px;background:var(--accent)}
+</style></head><body>
+<canvas id="bg"></canvas><img id="photo" alt=""><div id="shade"></div><div id="tag"></div>
+<div id="wrap"><div id="row"><span id="pre"></span><span id="cur" class="fig"></span><span id="num" class="fig"></span><span id="unit"></span></div>
+<div id="cap" class="cap"></div><div id="line"></div></div>
+<script src="card_common.js"></script>
+<script>
+// A number written straight over the scene's picture: «≈180 000 / ЖИТЕЛЕЙ», with a short accent line.
+// SPEC: {photo, value, decimals, prefix, suffix, unit, caption, lang, theme}  (no picture: the theme's night instead)
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 180);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H;
+  const has = await C.loadPhoto($("photo"), S.photo);
+  if (!has) { $("photo").style.display = "none"; $("shade").style.display = "none"; }
+  const unit = S.unit || "", currency = /^[$€£¥₽]$/.test(unit) && (S.lang || "en") === "en";
+  $("pre").textContent = S.prefix || ""; $("unit").textContent = currency ? "" : unit; $("cur").textContent = currency ? unit : "";
+  $("cap").textContent = S.caption || "";
+  const value = +S.value || 0, dec = S.decimals != null ? S.decimals : 0;
+  await C.ready();
+  $("num").textContent = C.fmt(value, dec, S.lang) + (S.suffix || "");
+  const fit = Math.min(1, (W - 260) / $("row").scrollWidth);
+  if (fit < 1) for (const id of ["num", "cur", "pre", "unit"]) { const el = $(id); el.style.fontSize = `${parseFloat(getComputedStyle(el).fontSize) * fit}px`; }
+  window.renderFrame = f => {
+    if (has) C.photo($("photo"), f, N); else C.background(bg, f);
+    const a = C.ease(C.seg(f, 0.06 * N, 0.06 * N + 16));
+    C.blurIn($("row"), a, 0);
+    const k = C.out3(C.seg(f, 0.06 * N, 0.30 * N));
+    $("num").textContent = C.fmt(value * (0.82 + 0.18 * k), dec, S.lang) + (k >= 1 ? (S.suffix || "") : "");
+    C.blurIn($("cap"), C.ease(C.seg(f, 0.16 * N, 0.16 * N + 16)));
+    const l = C.out3(C.seg(f, 0.22 * N, 0.22 * N + 18));
+    $("line").style.transform = `scaleX(${l})`; $("line").style.opacity = l > 0 ? 1 : 0;
+  };
+  window.renderFrame(0);
+  window.READY = true;
+})();
+</script></body></html>

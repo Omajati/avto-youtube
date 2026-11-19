@@ -3864,8 +3864,9 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
         if i in moving:
             try:
                 prev = c.dir / "images" / f"{prefix}_{i - 1:03d}.png"
+                own = c.dir / "images" / f"{prefix}_{i:03d}.png"
                 motion.render(moving[i], clips[i], (b - a) / fps, width, height, fps, c.lang,
-                              prev=prev if i and prev.exists() else None)
+                              prev=prev if i and prev.exists() else None, photo=own if own.exists() else None)
                 return
             except UserError as e:
                 c.log(f"Моушен в сцене {i + 1} не собрался ({e}), там будет картинка.")

@@ -1,0 +1,37 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#low{position:absolute;left:110px;bottom:120px}
+#low .bar{width:54px;height:5px;border-radius:3px;background:var(--accent);margin-bottom:22px;transform-origin:0 50%}
+#name{font-family:Montserrat;font-weight:700;font-size:62px;color:#fff;letter-spacing:.01em;text-shadow:0 3px 26px rgba(0,0,0,.6)}
+#sub{font-family:Montserrat;font-weight:500;font-size:30px;color:#d4dde8;margin-top:10px;text-shadow:0 2px 18px rgba(0,0,0,.7)}
+#fade{position:absolute;left:0;right:0;bottom:0;height:46%;background:linear-gradient(0deg,rgba(0,0,0,.55),rgba(0,0,0,0))}
+</style></head><body>
+<canvas id="bg"></canvas><img id="photo" alt=""><div id="fade"></div>
+<div id="low"><div class="bar"></div><div id="name"></div><div id="sub"></div></div>
+<script src="card_common.js"></script>
+<script>
+// Where and when: a lower-left plate over the scene's picture — «Якутск, река Лена / 2026».
+// SPEC: {photo, name, sub, theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 150);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H;
+  const has = await C.loadPhoto($("photo"), S.photo);
+  if (!has) $("photo").style.display = "none";
+  $("name").textContent = S.name || ""; $("sub").textContent = S.sub || "";
+  await C.ready();
+  window.renderFrame = f => {
+    if (has) C.photo($("photo"), f, N, -1); else C.background(bg, f);
+    const b = C.out3(C.seg(f, 0.08 * N, 0.08 * N + 16));
+    $("low").querySelector(".bar").style.transform = `scaleX(${b})`;
+    const a = C.ease(C.seg(f, 0.11 * N, 0.11 * N + 16));
+    C.blurIn($("name"), a, 0); $("name").style.transform = `translateX(${-24 * (1 - a)}px)`;
+    C.blurIn($("sub"), C.ease(C.seg(f, 0.18 * N, 0.18 * N + 16)), 0);
+    $("fade").style.opacity = C.ease(C.seg(f, 0, 0.1 * N));
+  };
+  window.renderFrame(0);
+  window.READY = true;
+})();
+</script></body></html>
