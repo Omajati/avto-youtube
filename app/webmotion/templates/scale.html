@@ -85,7 +85,9 @@
         x.beginPath(); x.arc(p.x, y, r + 30 * t, 0, 6.283); x.stroke();
       }
       p.el.style.opacity = a; p.el.style.filter = a >= 1 ? "none" : `blur(${(1 - a) * 10}px)`;
-      p.el.style.transform = `translate(${p.x + r + 16}px, ${y - (p.hero ? 27 : 17)}px)`;
+      // near the right edge the label goes to the left of its dot
+      const lw = p.el.offsetWidth, left = p.x + r + 16 + lw > W - 40;
+      p.el.style.transform = `translate(${left ? p.x - r - 16 - lw : p.x + r + 16}px, ${y - (p.hero ? 27 : 17)}px)`;
     }
   };
   window.renderFrame(0);

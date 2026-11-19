@@ -212,13 +212,20 @@ def _dec(v) -> int:
 
 def card_spec(spec: dict, lang: str) -> dict:
     """The data of a «card» template (counter, thermo, calendar) from a motion spec."""
-    kind, t = spec.get("type"), lambda k, n: str(spec.get(k) or "").strip()[:n]
+    def t(k: str, n: int) -> str:  # the text of a field, at most n characters, never cut inside a word
+        v = " ".join(str(spec.get(k) or "").split())
+        if len(v) <= n:
+            return v
+        cut = v[:n + 1].rsplit(" ", 1)[0].rstrip(",;:—-– ")
+        return (cut or v[:n]) + "…"
+
+    kind = spec.get("type")
     base = {"tag": t("title", 50), "lang": lang, "tone": spec.get("tone") or "hot",
             "theme": spec.get("theme") if spec.get("theme") in ("navy", "graphite") else "navy"}
     if kind == "counter":
         v = float(spec.get("value") or 0)
         return {**base, "value": v, "decimals": _dec(v), "prefix": t("prefix", 2), "suffix": t("suffix", 2),
-                "unit": t("unit", 10), "caption": t("caption", 60), "note": t("note", 50)}
+                "unit": t("unit", 10), "caption": t("caption", 90), "note": t("note", 60)}
     if kind == "thermo":
         steps = [{"value": float(x.get("value")), "caption": str(x.get("caption") or "")[:50], "prefix": str(x.get("prefix") or "")[:2],
                   "tone": x.get("tone") or "cold", "decimals": _dec(x.get("value"))}
@@ -258,7 +265,7 @@ def card_spec(spec: dict, lang: str) -> dict:
     if kind == "photonum":
         v = float(spec.get("value") or 0)
         return {**base, "value": v, "decimals": _dec(v), "prefix": t("prefix", 2), "suffix": t("suffix", 2),
-                "unit": t("unit", 10), "caption": t("caption", 60)}
+                "unit": t("unit", 10), "caption": t("caption", 90)}
     if kind == "place":
         return {**base, "name": t("title", 60), "sub": t("note", 40)}
     if kind == "document":
