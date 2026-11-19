@@ -3773,6 +3773,11 @@ async function viewFolderBuilder() {
       <div class="grid2"><div><label class="f small">Пауза между абзацами, с</label><input type="number" min="0" max="3" step="0.1" data-fbo="folder_pause_paragraph" value="${esc(q("folder_pause_paragraph", 0.8))}"></div>
       <div><label class="f small">Пауза между предложениями, с</label><input type="number" min="0" max="1.5" step="0.05" data-fbo="folder_pause_sentence" value="${esc(q("folder_pause_sentence", 0.3))}"></div></div>
       <label class="f small">Темп диктора</label><select data-fbo="folder_voice_tempo">${[["1","Как озвучено"],["0.97","Чуть медленнее (−3 %)"],["0.94","Медленнее (−6 %)"],["0.9","Заметно медленнее (−10 %)"],["0.86","Сильно медленнее (−14 %)"],["1.04","Чуть быстрее (+4 %)"]].map(([v,n])=>`<option value="${v}" ${String(q("folder_voice_tempo",1))===v||(+q("folder_voice_tempo",1)===+v)?"selected":""}>${n}</option>`).join("")}</select>
+      <label class="f">Ударения (русская озвучка) <span class="hint">По слову в строке, ударную гласную — заглавной (сундУчком) или знаком (сунду́чком). Звёздочка в конце — все формы слова: сундУч* = сундучок, сундучком, сундучка… Имена — только знаком: И́рмино. Субтитры остаются обычными.</span></label>
+      <textarea data-fbo="folder_stress_dict" id="fb-stress" rows="4" style="width:100%;font-family:inherit" placeholder="сундУч*&#10;договОр&#10;звонИт">${esc(q("folder_stress_dict", "сундУч*\nКу́йбышев*\nСтаха́нов*\nГа́стев*\nВи́чуг*\n"))}</textarea>
+      <div class="grid2"><div><label class="f small">Как показать ударение голосу</label><select data-fbo="folder_stress_mode" id="fb-stress-mode">${[["accent","Знак ударения (сунду́чком)"],["capital","Заглавная гласная (сундУчком)"]].map(([v,n])=>`<option value="${v}" ${q("folder_stress_mode","accent")===v?"selected":""}>${n}</option>`).join("")}</select></div>
+      <div><label class="f small">Проверить на фразе</label><div class="row" style="gap:6px;flex-wrap:nowrap"><input id="fb-stress-text" value="У тебя холщовая сумка и сундучок."><button class="sm" id="fb-stress-test">🔊 Послушать</button></div></div></div>
+      <div class="muted small" id="fb-stress-r" style="margin:4px 0 6px"></div>
       <div class="muted small" style="margin:4px 0 10px">Скорость самого голоса при озвучке — в Настройках → «2. Озвучка» (на модели Eleven v3 она не меняется — там помогает только темп выше).</div>
       <label class="f">Стиль монтажа</label><select data-fbo="folder_edit_style">${[["auto","Подбирать автоматически и не повторяться"],["science","Научпоп"],["cinematic","Кинодокументалистика"],["investigation","Расследование"],["archive","Архивная хроника"],["dynamic","Динамичный YouTube"],["minimal","Премиальный минимализм"]].map(([v,n])=>`<option value="${v}" ${q("folder_edit_style","auto")===v?"selected":""}>${n}</option>`).join("")}</select>
       <div class="grid2"><div><label class="f">Темп</label><select data-fbo="folder_edit_tempo">${[["calm","Спокойный"],["balanced","Сбалансированный"],["dynamic","Динамичный"]].map(([v,n])=>`<option value="${v}" ${q("folder_edit_tempo","balanced")===v?"selected":""}>${n}</option>`).join("")}</select></div>
@@ -4014,6 +4019,14 @@ async function viewFolderBuilder() {
     const v = $("#fb-octo-uuid").value.trim(); if (!v) return;
     try { octoLocalDone(await api("/api/folder-builder/octo/local-profile", { json: { uuid: v } }), "Профиль добавлен"); }
     catch (e) { toast(e.message, true); }
+  });
+  $("#fb-stress-test") && ($("#fb-stress-test").onclick = async () => {
+    const r = $("#fb-stress-r"), b = $("#fb-stress-test"); b.disabled = true;
+    r.textContent = "Озвучиваю фразу русским голосом из настроек… (это платный короткий заказ)";
+    try { const d = await api("/api/folder-builder/stress/test", { json: { text: $("#fb-stress-text").value, dict: $("#fb-stress").value, mode: $("#fb-stress-mode").value } });
+      r.innerHTML = `Голосу ушло: «${esc(d.sent)}»<br><audio controls autoplay src="data:audio/mpeg;base64,${d.audio}" style="width:100%;margin-top:4px"></audio>`; }
+    catch (e) { r.textContent = "❌ " + e.message; }
+    b.disabled = false;
   });
   $("#fb-wm-test") && ($("#fb-wm-test").onclick = async () => {
     const r = $("#fb-wm-r"), b = $("#fb-wm-test"); b.disabled = true;

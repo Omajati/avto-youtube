@@ -135,6 +135,8 @@ DEFAULTS = {
     "folder_pause_paragraph": 0.8,  # seconds of silence where a paragraph of the narration ends (made after the voice-over)
     "folder_pause_sentence": 0.3,  # … and where a sentence ends
     "folder_voice_tempo": 1.0,  # the narration's pace: below 1 slower (the pitch stays), free, no new voice-over
+    "folder_stress_dict": "сундУч*\nКу́йбышев*\nСтаха́нов*\nГа́стев*\nВи́чуг*\n",  # words where the voice puts the stress wrongly (RU), see stress.py
+    "folder_stress_mode": "accent",  # how the stress is shown to the voice: "accent" (знак ударения) or "capital"
     "folder_motion_theme": "navy",  # the colours of the motion inserts: "navy" (deep blue) or "graphite" (slate + orange)
     "folder_globe_style": "3d",  # the globe insert: "3d" (the Earth from space) or "2d" (a flat infographic globe)
     "folder_music_source": "library",  # library, or "compose": a new track per project (Lumean or ElevenLabs)

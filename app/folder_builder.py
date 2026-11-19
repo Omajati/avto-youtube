@@ -50,7 +50,7 @@ LANG_RU = {"en": "английский", "ru": "русский", "de": "неме
 NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech", "vertonung", "текст")
 
 FOLDER_OPTION_KEYS = (
-    "folder_languages", "folder_motion_inserts", "folder_motion_density", "folder_globe_style", "folder_motion_theme", "folder_pause_paragraph", "folder_pause_sentence", "folder_voice_tempo", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
+    "folder_languages", "folder_motion_inserts", "folder_motion_density", "folder_globe_style", "folder_motion_theme", "folder_pause_paragraph", "folder_pause_sentence", "folder_voice_tempo", "folder_stress_dict", "folder_stress_mode", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
     "folder_schedule", "folder_schedule_time", "folder_schedule_from", "folder_schedule_studio", "folder_mp4_forever",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
@@ -1107,6 +1107,27 @@ def webmotion_test():
     return {**webmotion.selftest(), "status": dict(webmotion.STATUS)}
 
 
+@router.post("/stress/test")
+def stress_test(data: dict = Body(...)):
+    """«🔊 Послушать»: the phrase voiced by the Russian voice of the folder settings, with the stress dictionary."""
+    import base64
+    import tempfile
+    from . import stress
+    settings = load_settings()
+    text = " ".join(str(data.get("text") or "").split())[:300]
+    if not text:
+        raise UserError("Впишите фразу для проверки.")
+    rules = stress.parse(str(data.get("dict") or settings.get("folder_stress_dict") or ""))
+    mode = data.get("mode") if data.get("mode") in stress.MODES else settings.get("folder_stress_mode") or "accent"
+    voice = dict(settings, stress_rules=rules, stress_mode=mode,
+                 elevenlabs_voice_id=settings.get("folder_voice_ru_id") or settings.get("elevenlabs_voice_id"))
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "test.mp3"
+        tts.synthesize(voice, text, out, "", "", "ru")
+        audio = base64.b64encode(out.read_bytes()).decode()
+    return {"audio": audio, "sent": stress.apply(text, rules, mode)}
+
+
 @router.get("/webmotion/status")
 def webmotion_status():
     from . import webmotion
@@ -1939,6 +1960,16 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
                                              or fallback_id or settings.get("elevenlabs_voice_id"))
     voice_settings["elevenlabs_voice_name"] = (options.get(f"folder_voice_{lang}_name") or settings.get(f"folder_voice_{lang}_name")
                                                or settings.get("elevenlabs_voice_name"))
+    # Stress dictionary (the owner's, for all channels, plus the scriptwriter's ударения.txt in the project folder).
+    if lang == "ru":
+        from . import stress
+        extra = ""
+        for folder in [keep_dir, *(list(keep_dir.parents)[:2] if keep_dir else [])]:
+            if folder and (folder / "ударения.txt").is_file():
+                extra = (folder / "ударения.txt").read_text("utf-8", errors="replace")
+                break
+        voice_settings["stress_rules"] = stress.parse(options.get("folder_stress_dict") or settings.get("folder_stress_dict") or "", extra)
+        voice_settings["stress_mode"] = options.get("folder_stress_mode") or settings.get("folder_stress_mode") or "accent"
     manifest_path = audio / "manifest.json"
     manifest = _read_json(manifest_path, {})
     mp3, spoken = audio / "narration.mp3", audio / "narration.wav"
@@ -1950,7 +1981,12 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
     ] + ([voice_settings.get("lumean_model")] if voice_settings.get("voice_provider") == "lumean" else [])
     voice_signature = hashlib.sha256(json.dumps(voice_values, ensure_ascii=False).encode()).hexdigest()
     # Keep the pre-v186 final signature so a valid cached narration is never billed a second time after an update.
-    signature = hashlib.sha256(json.dumps([narration, *voice_values], ensure_ascii=False).encode()).hexdigest()
+    marked = narration
+    if voice_settings.get("stress_rules"):
+        from . import stress
+        marked = stress.apply(narration, voice_settings["stress_rules"], voice_settings.get("stress_mode") or "accent")
+    # A stress word that occurs in this narration changes what is voiced: then (and only then) it is voiced anew.
+    signature = hashlib.sha256(json.dumps([marked, *voice_values], ensure_ascii=False).encode()).hexdigest()
     # Lumean cuts and stitches long text itself: a whole hour of narration goes in one or two orders.
     chunks = _voice_chunks(narration, 45000 if voice_settings.get("voice_provider") == "lumean" else 9000)
     spoken_words = []
@@ -1976,7 +2012,8 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
             previous = chunks[index - 1] if index else ""
             following = chunks[index + 1] if index + 1 < len(chunks) else ""
             part_signature = hashlib.sha256(json.dumps([
-                voice_signature, chunk, previous[-1000:], following[:1000], lang,
+                voice_signature, chunk if marked == narration else stress.apply(chunk, voice_settings["stress_rules"],
+                voice_settings.get("stress_mode") or "accent"), previous[-1000:], following[:1000], lang,
             ], ensure_ascii=False).encode()).hexdigest()
             needs_synthesis = saved_parts.get(str(number)) != part_signature or not part_mp3.exists()
             if needs_synthesis:

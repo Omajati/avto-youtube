@@ -197,6 +197,20 @@ def is_audio(head: bytes) -> bool:
 
 def synthesize(settings, text: str, out_path: Path, previous_text: str = "", next_text: str = "",
                language: str = "") -> int:
+    """The stress dictionary (settings["stress_rules"], see stress.py) marks the words first; the word timings
+    are given back their ordinary letters afterwards."""
+    from . import stress
+    rules = settings.get("stress_rules") or []
+    sent = stress.apply(text, rules, settings.get("stress_mode") or "accent") if rules else text
+    count = _synthesize_any(settings, sent, out_path, stress.apply(previous_text, rules) if rules else previous_text,
+                            stress.apply(next_text, rules) if rules else next_text, language)
+    if sent != text and out_path.with_suffix(".json").is_file():
+        stress.clean_alignment(out_path.with_suffix(".json"), text, sent)
+    return count
+
+
+def _synthesize_any(settings, text: str, out_path: Path, previous_text: str = "", next_text: str = "",
+                    language: str = "") -> int:
     """Writes an mp3 file. Returns the number of characters billed. When the credits of the working key run out,
     the next reserve key takes over (settings["elevenlabs_key"] is changed in place), and a library voice is added
     to that account by itself."""
