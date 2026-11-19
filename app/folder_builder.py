@@ -2111,8 +2111,9 @@ INSERT_MAX = 12.0  # seconds: the longest a motion insert stays on screen
 
 def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations: list[float], media_map: dict[str, Path],
                     lang: str, settings: dict, options: dict, cache: Path, progress: float) -> dict[str, dict]:
-    """A few maps, timelines and charts drawn in place of pictures, only in the first half of the video and only where
-    the narration names places, dates or numbers. Returns {scene id: {"clip": Path, "spec": dict}}."""
+    """Motion inserts drawn in place of pictures, all over the video and denser in its first half, wherever the
+    narration names places, dates, numbers, documents, quotes; plus the scriptwriter's own orders (вставки.txt).
+    Returns {scene id: {"clip": Path, "spec": dict, "seconds": float}}."""
     if not options.get("folder_motion_inserts", True) or not llm.has_key(settings) or len(scenes) < 6:
         return {}
     # the scriptwriter's orders (вставки.txt): anywhere in the video, on any picture scene
@@ -2123,18 +2124,18 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
     for i, (scene, duration) in enumerate(zip(scenes, durations)):
         start, elapsed = elapsed, elapsed + duration
         source = media_map.get(scene["id"])
-        if start >= half:
-            break
-        # Only pictures (the owner's videos stay), never the preview or a chapter card, and long enough to read.
-        if i == 0 or scene.get("preview") or scene.get("chapter") or not source or source.suffix.lower() in VIDEO_EXT:
+        # The whole video (the owner, 19.11.2026: «не скупиться», denser in the first half). Only pictures (the
+        # owner's videos stay), never the preview, a chapter card or the last scene, and long enough to read.
+        if i == 0 or i == len(scenes) - 1 or scene.get("preview") or scene.get("chapter") or not source \
+                or source.suffix.lower() in VIDEO_EXT:
             continue
-        if not 4.0 <= duration <= 18.0 or len(texts[i].split()) < 6:
+        if duration < 3.0 or len(texts[i].split()) < 5:
             continue
         candidates.append(i)
     candidates = sorted(set(candidates) | set(ordered))
     if not candidates:
         return {}
-    limit = max(1, min(4, round(half / 150)))
+    limit = max(3, min(40, round(total / 70)))  # about one every 70 s over the video; the prompt asks for more early
     plan_path = cache / "motion.json"
     orders = {i: scenes[i]["insert"] for i in ordered}
     mark = hashlib.sha256(json.dumps([lang, limit, [texts[i] for i in candidates], sorted(orders.items())],
@@ -2143,7 +2144,7 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
     if saved.get("mark") == mark:
         items = saved.get("items") or []
     else:
-        _update(job_id, progress=progress, step=f"[{lang.upper()}] Ищу места для карт и линий времени в первой половине…")
+        _update(job_id, progress=progress, step=f"[{lang.upper()}] Ищу места для моушен-вставок…")
         rows = [{"text": texts[i] + (f"  [SCRIPTWRITER ORDER — kind «{orders[i][0]}» ({orders[i][1]}): {orders[i][2]}]"
                                      if i in orders else "")} for i in candidates]
         prompt = motion.PLAN_PROMPT.format(limit=limit, language=LANG_NAMES[lang],
@@ -2153,12 +2154,14 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
                        "the order's content (take its numbers, names, dates and words as written; «столбцы» = a chart with "
                        "chart_style bar, «проценты» = a calendar with total 100). They are not counted in the limit and "
                        "may stand next to other chosen scenes.")
+        prompt += (f"\n\nThe video lasts {round(total / 60)} minutes; its first half ends at scene "
+                   f"{next((k for k, i in enumerate(candidates) if sum(durations[:i]) >= half), len(candidates))} of this list.")
         prompt += ("\n\nOnly use the kinds map, globe, timeline, chart, compare, counter, thermo, calendar, photonum, place, document, scale, layer, satmap, quote and list. These scenes are only some of the video, "
                    "so the rule about the first and the last scene does not apply; choose fewer rather than weak ones.")
         from .pipeline import _helper_settings
         try:
             r = llm.call_json(_helper_settings(settings), "You plan motion design scenes. Answer only with JSON.",
-                              prompt, motion.SCHEMA, {}, 8000)
+                              prompt, motion.SCHEMA, {}, min(32000, 4000 + 900 * (limit + len(orders))))
             raw = [g for g in r.get("items") or [] if isinstance(g, dict) and g.get("type") in MOTION_KINDS]
             # clean_plan drops the first and the last of the list: pad the list so every candidate can be chosen.
             for g in raw:

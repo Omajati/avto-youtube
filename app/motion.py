@@ -1213,7 +1213,7 @@ PLAN_PROMPT = """You are the motion designer of a narrated YouTube video. Some s
 - "satmap": a region's land itself matters: a great river through it, its vastness, how remote it is, a railway that does not reach a city (a dark relief map: rivers draw themselves, railways as a dashed line).
 - "list": the narration counts points ("three reasons", "first... second... third...", a top).
 
-Choose up to {limit} scenes, mixing kinds where the story allows. Only where the animation is the point of that moment; never two such scenes in a row; never the first or the last scene. Choose none if nothing fits.
+Choose generously, up to {limit} scenes: every moment where one of the kinds fits the narration (a number, a place, a date, a change over time, a comparison, a document, a quote, a list) gets one — about one every 60–90 seconds, and denser in the first half (the start keeps the viewers). Mix the kinds. Never two such scenes in a row; never the first or the last scene. Skip a moment only when nothing fits it.
 
 Fill only the fields of the chosen kind; leave the others empty ("" / [] / 0, chart_style "line"):
 - index: the scene number from the list. title: a short plate in {language}, max 5 words ("Эфиопия, 1896", "Армии при Адуа").
@@ -1240,7 +1240,7 @@ SCENES:
 
 
 def plan_prompt(scenes: list, language: str, total_seconds: float) -> str:
-    limit = max(1, min(14, round(total_seconds / 75)))
+    limit = max(3, min(40, round(total_seconds / 70)))
     rows = "\n".join(f"{i}. {sc.get('text', '')}" for i, sc in enumerate(scenes))
     return PLAN_PROMPT.format(limit=limit, language=language, scenes=rows)
 
