@@ -1,0 +1,99 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css">
+</head><body>
+<canvas id="c"></canvas>
+<div id="labels"></div>
+<div id="tag"></div>
+<div id="title"></div>
+<script src="../lib/d3.min.js"></script>
+<script src="globe_common.js"></script>
+<script>
+// A flat infographic globe: the same shot as the 3D one (fly in, light up, route, labels), drawn with d3 on a canvas.
+(async () => {
+const S = window.SPEC, G = window.GLOBE;
+const W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 240);
+const cv = document.getElementById("c"); cv.width = W; cv.height = H;
+const ctx = cv.getContext("2d");
+const plan = G.plan(S, N);
+const GOLD = "#ffc861";
+const geo = await (await fetch("../geo/countries.json")).json();
+// d3 wants the outer ring of a polygon clockwise: a ring that covers more than half the sphere is turned round
+const feature = c => {
+  const polys = c.r.map(ring => { let r = ring.slice(); if (r.length && (r[0][0] !== r[r.length - 1][0] || r[0][1] !== r[r.length - 1][1])) r.push(r[0]);
+    const f = { type: "Polygon", coordinates: [r] }; if (d3.geoArea(f) > 2 * Math.PI) f.coordinates = [r.slice().reverse()]; return f.coordinates; });
+  return { type: "Feature", properties: { a3: c.a3 }, geometry: { type: "MultiPolygon", coordinates: polys } };
+};
+const all = { type: "FeatureCollection", features: geo.map(feature) };
+const lit = new Set(S.countries || []);
+const chosen = { type: "FeatureCollection", features: all.features.filter(f => lit.has(f.properties.a3)) };
+const proj = d3.geoOrthographic().clipAngle(90).precision(0.3);
+const path = d3.geoPath(proj, ctx);
+const grat = d3.geoGraticule10();
+const legs = plan.legs.map(l => ({ ...l, i: d3.geoInterpolate([l.a.lon, l.a.lat], [l.b.lon, l.b.lat]) }));
+
+function setView(f) {
+  const v = plan.camera(f);
+  proj.rotate([-v.lon, -v.lat]).scale(v.r).translate([W / 2, H / 2]);
+  return v;
+}
+function project(p) {
+  const r = proj.rotate(), [x, y] = proj([p.lon, p.lat]) || [-999, -999];
+  return { x, y, facing: d3.geoDistance([p.lon, p.lat], [-r[0], -r[1]]) < Math.PI / 2 - 0.08 };
+}
+await G.ready();
+setView(N - 1);
+const labels = G.labels(plan.places.map(p => ({ ...p, ...project(p) })), W, H);
+
+window.renderFrame = f => {
+  const v = setView(f), r = v.r, cx = W / 2, cy = H / 2;
+  const bg = ctx.createRadialGradient(cx, cy, 100, cx, cy, 1300);
+  bg.addColorStop(0, "#0d1a33"); bg.addColorStop(1, "#04070f");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(cx, cy, r * .9, cx, cy, r * 1.25);
+  glow.addColorStop(0, "rgba(70,140,255,.28)"); glow.addColorStop(1, "rgba(70,140,255,0)");
+  ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, r * 1.25, 0, 2 * Math.PI); ctx.fill();
+  const sea = ctx.createRadialGradient(cx - r * .35, cy - r * .4, r * .1, cx, cy, r);
+  sea.addColorStop(0, "#1e4a86"); sea.addColorStop(1, "#0b2147");
+  ctx.beginPath(); path({ type: "Sphere" }); ctx.fillStyle = sea; ctx.fill();
+  ctx.beginPath(); path(grat); ctx.strokeStyle = "rgba(160,200,255,.10)"; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); path(all); ctx.fillStyle = "#34577f"; ctx.fill();
+  ctx.strokeStyle = "rgba(200,225,255,.30)"; ctx.lineWidth = 1; ctx.stroke();
+  const hl = G.ease(G.seg(f, plan.lightAt, plan.lightAt + N * 0.12));
+  if (hl > 0 && chosen.features.length) {
+    ctx.save(); ctx.globalAlpha = hl;
+    ctx.beginPath(); path(chosen); ctx.fillStyle = "rgba(255,200,97,.32)"; ctx.fill();
+    ctx.shadowColor = GOLD; ctx.shadowBlur = 18; ctx.strokeStyle = GOLD; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.restore();
+  }
+  const rim = ctx.createRadialGradient(cx - r * .3, cy - r * .35, r * .2, cx, cy, r);
+  rim.addColorStop(0, "rgba(255,255,255,.07)"); rim.addColorStop(.85, "rgba(0,0,0,0)"); rim.addColorStop(1, "rgba(0,0,0,.35)");
+  ctx.beginPath(); path({ type: "Sphere" }); ctx.fillStyle = rim; ctx.fill();
+  ctx.strokeStyle = "rgba(140,190,255,.45)"; ctx.lineWidth = 2; ctx.stroke();
+  for (const l of legs) {
+    const k = G.ease2(G.seg(f, l.from, l.to));
+    if (k <= 0) continue;
+    const pts = d3.range(0, 61).map(j => l.i(k * j / 60));
+    ctx.save(); ctx.beginPath(); path({ type: "LineString", coordinates: pts });
+    ctx.shadowColor = GOLD; ctx.shadowBlur = 14; ctx.strokeStyle = GOLD; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.stroke(); ctx.restore();
+    if (k < 1) { const q = project({ lon: l.i(k)[0], lat: l.i(k)[1] }); if (q.facing) { ctx.beginPath(); ctx.arc(q.x, q.y, 7, 0, 2 * Math.PI); ctx.fillStyle = "#fff"; ctx.fill(); } }
+  }
+  for (const p of plan.places) {
+    const q = project(p), a = G.ease(G.seg(f, p.at, p.at + 12));
+    if (!q.facing || a <= 0) continue;
+    for (let i = 0; i < 3; i++) {
+      if (f < p.at + i * 16) continue;
+      const t = ((f - p.at) / 50 + i / 3) % 1;
+      ctx.beginPath(); ctx.arc(q.x, q.y, 10 + 46 * t, 0, 2 * Math.PI);
+      ctx.strokeStyle = `rgba(255,200,97,${0.8 * (1 - t) * a})`; ctx.lineWidth = 3; ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(q.x, q.y, 11, 0, 2 * Math.PI); ctx.fillStyle = `rgba(255,200,97,${a})`; ctx.fill();
+    ctx.beginPath(); ctx.arc(q.x, q.y, 5, 0, 2 * Math.PI); ctx.fillStyle = `rgba(255,255,255,${a})`; ctx.fill();
+  }
+  G.drawLabels(labels, f, project);
+  G.drawPlates(S, plan, f);
+};
+window.renderFrame(0);
+window.READY = true;
+})();
+</script></body></html>

@@ -1,0 +1,8 @@
+Third-party files bundled for the motion-design engine (webmotion):
+- lib/three.module.js, lib/lines/*.js — three.js, MIT License, (c) 2010-2023 three.js authors.
+- lib/d3.min.js — D3, ISC License, (c) 2010-2023 Mike Bostock.
+- fonts/oswald-*.woff2 — Oswald (Vernon Adams et al.), SIL Open Font License 1.1, via Fontsource.
+- fonts/inter-*.woff2 — Inter (Rasmus Andersson), SIL Open Font License 1.1, via Fontsource.
+- img/earth-blue-marble.jpg, earth-topology.png, earth-water.png — NASA Visible Earth (public domain),
+  as packaged in the three-globe examples (MIT License, (c) 2019 Vasco Asturiano).
+- Country shapes come from app/geo/countries.json (Natural Earth, public domain).

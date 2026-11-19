@@ -16,7 +16,7 @@ from .media import UserError
 
 GEO = Path(__file__).parent / "geo" / "countries.json"
 KINDS = {"map": "🗺 Карта", "timeline": "📅 Линия времени", "chart": "📈 График", "compare": "⚖️ Сравнение",
-         "quote": "💬 Цитата", "list": "📋 Список"}
+         "quote": "💬 Цитата", "list": "📋 Список", "globe": "🌍 Глобус"}
 MODES = {"auto": "Авто: карты и даты там, где они к месту", "off": "Выключено"}
 
 OCEAN_TOP, OCEAN_BOTTOM = (12, 22, 40), (6, 12, 24)
@@ -986,6 +986,10 @@ def render(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int, lang
         render_map(spec, out, seconds, w, h, fps, lang, poster, pic)
     elif spec.get("type") == "timeline":
         render_timeline(spec, out, seconds, w, h, fps, poster, pic)
+    elif spec.get("type") == "globe":
+        # The new engine: a web page shot frame by frame (see webmotion.py); 3D or flat, as the channel chose.
+        from . import webmotion
+        webmotion.render_globe(spec, out, seconds, w, h, fps, lang, poster)
     elif spec.get("type") in DRAW:
         DRAW[spec["type"]](spec, out, seconds, w, h, fps, poster, pic)
     else:
@@ -1028,6 +1032,14 @@ def cues(spec: dict, seconds: float) -> list:
     elif kind == "list":
         m = len(_lines(spec))
         out += [(0.1 + 0.7 * k / m, "tick") for k in range(m)]
+    elif kind == "globe":
+        # the same timing as globe_common.js: the first stop at 35 %, the others as the route reaches them, pins after
+        route = [p for p in spec.get("route") or [] if isinstance(p, dict)][:6]
+        pins = [p for p in spec.get("pins") or [] if isinstance(p, dict)][:5]
+        if route:
+            out.append((0.35, "pop"))
+            out += [(0.40 + 0.34 * k / (len(route) - 1) - 0.02, "pop") for k in range(1, len(route))]
+        out += [(min(0.36 + 0.07 * k, 0.72), "pop") for k in range(len(pins))]
     elif kind == "quote" and str(spec.get("author") or "").strip():
         out.append((0.72, "tick"))
     # Never two sounds closer than a fifth of a second, and none in the first half second (the whoosh).
@@ -1040,8 +1052,13 @@ def cues(spec: dict, seconds: float) -> list:
 
 
 DRAW = {"chart": render_chart, "compare": render_compare, "quote": render_quote, "list": render_list}
+def globe_ok(spec: dict) -> bool:
+    from . import webmotion
+    return webmotion.globe_ok(spec)
+
+
 CHECK = {"map": map_ok, "timeline": timeline_ok, "chart": chart_ok, "compare": compare_ok, "quote": quote_ok,
-         "list": list_ok}
+         "list": list_ok, "globe": globe_ok}
 
 
 def poster(spec: dict, path: Path, w: int, h: int, lang: str = "ru"):
@@ -1082,7 +1099,8 @@ SCHEMA = {"type": "object", "properties": {"items": {"type": "array", "items": {
     "required": ["items"]}
 
 PLAN_PROMPT = """You are the motion designer of a narrated YouTube video. Some scenes will show an animation INSTEAD of a picture, where it explains the moment better than a picture:
-- "map": the narration names countries, a territory, a conquest, a journey, a trade route, a migration, borders, where something is ("a tiny island off the coast of Africa").
+- "map": the narration names countries, a territory, a conquest, a journey, a trade route, a migration, borders, where something is ("a tiny island off the coast of Africa"), within one region.
+- "globe": the place is far away or the story spans the world: places on different continents, a long journey or a route across oceans, "where on Earth" a remote place is (a city beyond the Arctic Circle, an island in the Pacific), a discovery in one country and its result in another.
 - "timeline": several dates in a row, a chain of events ("in 1890... five years later... by 1936").
 - "chart": numbers that change over time or several values to compare in one series (population grew from... to..., prices, army size by year).
 - "compare": two sides head to head on one or more measures (Italy vs Ethiopia: soldiers, cannons, losses).
@@ -1094,6 +1112,7 @@ Choose up to {limit} scenes, mixing kinds where the story allows. Only where the
 Fill only the fields of the chosen kind; leave the others empty ("" / [] / 0, chart_style "line"):
 - index: the scene number from the list. title: a short plate in {language}, max 5 words ("Эфиопия, 1896", "Армии при Адуа").
 - map: countries = modern countries to highlight (English names), the closest modern equivalent of the place in the story; route = 2-6 stops in order with real coordinates (lat, lon); pins = 0-4 places with real coordinates. Names in {language}, max 3 words.
+- globe: the same fields as map (countries 0-3, route 0-5 stops, pins 0-4, real coordinates); at least one place or country. Names in {language}, max 3 words; title = a short plate in {language}.
 - timeline: events = 3-6 dates in order, label = the date as said ("1896", "XV век"), text = what happened, max 7 words, in {language}; current = the index of the event this scene is about.
 - chart: points = 2-8 values in order, label = year or name (max 12 characters), value = the number; chart_style "line" for change over time, "bar" for separate items; unit = "%", "млн", "$", "чел." or "".
 - compare: left_name and right_name = the two sides (max 2 words); rows = 1-4 measures, label = what is measured, left and right = the numbers; unit if the same for all rows.

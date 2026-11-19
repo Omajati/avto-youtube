@@ -50,7 +50,7 @@ LANG_RU = {"en": "английский", "ru": "русский", "de": "неме
 NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech", "vertonung", "текст")
 
 FOLDER_OPTION_KEYS = (
-    "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
+    "folder_languages", "folder_motion_inserts", "folder_globe_style", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
     "folder_schedule", "folder_schedule_time", "folder_schedule_from", "folder_schedule_studio", "folder_mp4_forever",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
@@ -63,7 +63,7 @@ FOLDER_OPTION_KEYS = (
 # What may differ from channel to channel (niche): the look and sound of the video and where it goes.
 # Folders, threads and speed stay common for the whole Mac.
 CHANNEL_OPTION_KEYS = (
-    "folder_languages", "folder_fast", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_upload",
+    "folder_languages", "folder_fast", "folder_motion_inserts", "folder_globe_style", "folder_music_source", "folder_thumbs", "folder_upload",
     "folder_upload_privacy", "folder_thumb_review", "folder_schedule", "folder_schedule_time",
     "folder_schedule_from", "folder_schedule_studio",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
@@ -2052,7 +2052,7 @@ def _package_chapters(root: Path, lang: str, scenes: list[dict], texts: list[str
     return plates, times
 
 
-MOTION_KINDS = ("map", "timeline", "chart", "compare")
+MOTION_KINDS = ("map", "timeline", "chart", "compare", "globe")
 
 
 def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations: list[float], media_map: dict[str, Path],
@@ -2087,7 +2087,7 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
         rows = [{"text": texts[i]} for i in candidates]
         prompt = motion.PLAN_PROMPT.format(limit=limit, language=LANG_NAMES[lang],
                                            scenes="\n".join(f"{k}. {r['text']}" for k, r in enumerate(rows)))
-        prompt += ("\n\nOnly use the kinds map, timeline, chart and compare. These scenes are only some of the video, "
+        prompt += ("\n\nOnly use the kinds map, globe, timeline, chart and compare. These scenes are only some of the video, "
                    "so the rule about the first and the last scene does not apply; choose fewer rather than weak ones.")
         from .pipeline import _helper_settings
         try:
@@ -2110,6 +2110,8 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
         _check_control(job_id)
         i = int(g["index"])
         scene = scenes[i]
+        if g.get("type") == "globe":
+            g = {**g, "style": options.get("folder_globe_style") or "3d"}  # the channel's look; part of the clip's name
         clip = cache / "motion" / f"{scene['id']}_{hashlib.sha256(json.dumps([g, durations[i]], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:10]}.mp4"
         if not clip.exists():
             _update(job_id, step=f"[{lang.upper()}] Рисую {motion.KINDS[g['type']].split(' ', 1)[1].lower()} для сцены {scene['id']}…")

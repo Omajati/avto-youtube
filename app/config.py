@@ -131,6 +131,7 @@ DEFAULTS = {
     "folder_voice_es_id": "",
     "folder_voice_es_name": "",
     "folder_motion_inserts": True,
+    "folder_globe_style": "3d",  # the globe insert: "3d" (the Earth from space) or "2d" (a flat infographic globe)
     "folder_music_source": "library",  # library, or "compose": a new track per project (Lumean or ElevenLabs)
     "music_provider": "auto",  # who composes music: auto (Lumean when it voices), lumean, elevenlabs
     # Publishing the built videos through YouTube Studio in Octo Browser profiles (one profile = one channel).
