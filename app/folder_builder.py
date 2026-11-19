@@ -2053,7 +2053,7 @@ def _package_chapters(root: Path, lang: str, scenes: list[dict], texts: list[str
 
 
 MOTION_KINDS = ("map", "timeline", "chart", "compare", "globe", "counter", "thermo", "calendar", "photonum", "place",
-                "document")
+                "document", "scale", "layer")
 
 
 def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations: list[float], media_map: dict[str, Path],
@@ -2088,7 +2088,7 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
         rows = [{"text": texts[i]} for i in candidates]
         prompt = motion.PLAN_PROMPT.format(limit=limit, language=LANG_NAMES[lang],
                                            scenes="\n".join(f"{k}. {r['text']}" for k, r in enumerate(rows)))
-        prompt += ("\n\nOnly use the kinds map, globe, timeline, chart, compare, counter, thermo, calendar, photonum, place and document. These scenes are only some of the video, "
+        prompt += ("\n\nOnly use the kinds map, globe, timeline, chart, compare, counter, thermo, calendar, photonum, place, document, scale and layer. These scenes are only some of the video, "
                    "so the rule about the first and the last scene does not apply; choose fewer rather than weak ones.")
         from .pipeline import _helper_settings
         try:

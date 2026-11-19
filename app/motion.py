@@ -18,8 +18,9 @@ GEO = Path(__file__).parent / "geo" / "countries.json"
 KINDS = {"map": "🗺 Карта", "timeline": "📅 Линия времени", "chart": "📈 График", "compare": "⚖️ Сравнение",
          "quote": "💬 Цитата", "list": "📋 Список", "globe": "🌍 Глобус", "counter": "🔢 Цифра",
          "thermo": "🌡 Термометр", "calendar": "🟦 Сетка-календарь", "photonum": "🖼 Цифра поверх фото",
-         "place": "📍 Плашка места", "document": "📄 Документ"}
-WEB_KINDS = ("globe", "counter", "thermo", "calendar", "photonum", "place", "document")  # the new engine (webmotion.py)
+         "place": "📍 Плашка места", "document": "📄 Документ", "scale": "📏 Шкала", "layer": "🧍 Слой и человек"}
+# drawn by the new engine (webmotion.py); the older kinds below move to it one by one
+WEB_KINDS = ("globe", "counter", "thermo", "calendar", "photonum", "place", "document", "scale", "layer", "chart")
 MODES = {"auto": "Авто: карты и даты там, где они к месту", "off": "Выключено"}
 
 OCEAN_TOP, OCEAN_BOTTOM = (12, 22, 40), (6, 12, 24)
@@ -1029,7 +1030,10 @@ def cues(spec: dict, seconds: float) -> list:
     elif kind == "chart":
         m = len(_chart_points(spec))
         bars = spec.get("chart_style") == "bar" or m <= 3
-        out += [((0.12 + 0.55 * k / m) if bars else (0.12 + 0.68 * k / max(1, m - 1)), "pop") for k in range(m)]
+        # the new chart (webmotion): bars land one by one; a line passes its points, then the bracket comes
+        out += [((0.32 + 0.06 * k) if bars else (0.12 + 0.5 * k / max(1, m - 1)), "pop") for k in range(m)]
+        if not bars and m > 1:
+            out.append((0.68, "tick"))
     elif kind == "compare":
         out += [(0.15 + 0.12 * k, "tick") for k in range(len(_rows(spec)))]
     elif kind == "list":
@@ -1052,6 +1056,11 @@ def cues(spec: dict, seconds: float) -> list:
         out.append((0.82, "pop"))
     elif kind == "photonum":
         out.append((0.3, "pop"))
+    elif kind == "scale":
+        n = len([p for p in spec.get("points") or [] if isinstance(p, dict)][:6])
+        out += [(0.26 + k * 0.34 / max(n, 1) + 0.02, "tick") for k in range(n)] + [(0.68, "pop")]
+    elif kind == "layer":
+        out.append((0.45, "pop"))
     elif kind == "place":
         out.append((0.12, "tick"))
     elif kind == "document":
@@ -1107,7 +1116,17 @@ def document_ok(spec: dict) -> bool:
     return bool(str(spec.get("headline") or "").strip())
 
 
-CHECK = {"photonum": photonum_ok, "place": place_ok, "document": document_ok, "map": map_ok, "timeline": timeline_ok, "chart": chart_ok, "compare": compare_ok, "quote": quote_ok,
+def scale_ok(spec: dict) -> bool:
+    pts = [p for p in spec.get("points") or [] if isinstance(p, dict) and _num(p.get("value")) is not None]
+    return len(pts) >= 2 and bool(str(spec.get("hero_name") or "").strip()) and _num(spec.get("hero_value")) is not None
+
+
+def layer_ok(spec: dict) -> bool:
+    v = _num(spec.get("value"))
+    return v is not None and 0 < v <= 2000 and bool(str(spec.get("caption") or "").strip())
+
+
+CHECK = {"scale": scale_ok, "layer": layer_ok, "photonum": photonum_ok, "place": place_ok, "document": document_ok, "map": map_ok, "timeline": timeline_ok, "chart": chart_ok, "compare": compare_ok, "quote": quote_ok,
          "list": list_ok, "globe": globe_ok, "counter": counter_ok, "thermo": thermo_ok, "calendar": calendar_ok}
 
 
@@ -1125,7 +1144,8 @@ def poster(spec: dict, path: Path, w: int, h: int, lang: str = "ru"):
 FIELDS = ("index", "type", "title", "countries", "route", "pins", "events", "current", "points", "chart_style", "unit",
           "left_name", "right_name", "rows", "quote", "author", "lines",
           "value", "prefix", "suffix", "caption", "note", "tone", "steps", "total", "filled", "legend", "season",
-          "org", "headline", "highlight", "when_label", "when")
+          "org", "headline", "highlight", "when_label", "when",
+          "hero_name", "hero_value", "hero_note", "ref_value", "ref_label", "material", "layer_label", "below_label")
 _PLACE = {"type": "object", "properties": {"name": {"type": "string"}, "lat": {"type": "number"},
                                            "lon": {"type": "number"}}, "required": ["name", "lat", "lon"]}
 SCHEMA = {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
@@ -1156,7 +1176,11 @@ SCHEMA = {"type": "object", "properties": {"items": {"type": "array", "items": {
     "total": {"type": "number"}, "filled": {"type": "number"}, "legend": {"type": "string"},
     "season": {"type": "string", "enum": ["winter", "summer", "even"]},
     "org": {"type": "string"}, "headline": {"type": "string"}, "highlight": {"type": "string"},
-    "when_label": {"type": "string"}, "when": {"type": "string"}},
+    "when_label": {"type": "string"}, "when": {"type": "string"},
+    "hero_name": {"type": "string"}, "hero_value": {"type": "number"}, "hero_note": {"type": "string"},
+    "ref_value": {"type": "number"}, "ref_label": {"type": "string"},
+    "material": {"type": "string", "enum": ["ice", "snow", "ground", "water"]},
+    "layer_label": {"type": "string"}, "below_label": {"type": "string"}},
     "required": list(FIELDS)}}},
     "required": ["items"]}
 
@@ -1173,6 +1197,8 @@ PLAN_PROMPT = """You are the motion designer of a narrated YouTube video. Some s
 - "photonum": one striking number about what the picture of that scene shows (a city's population, a depth, a height, a record): the number is written right over the picture.
 - "place": the story moves to a new place or a new time ("Yakutsk, 2026", "Texas, April 2025"): a plate at the bottom of the picture.
 - "document": an official decision, a court ruling, a letter, a will, a newspaper headline the narration retells or quotes.
+- "scale": where the hero stands on one measure among places or things everyone knows (latitude among known cities, the height of a dinosaur among animals, the depth of a sea among others), often with a famous line (the Arctic Circle, sea level).
+- "layer": the thickness or the depth of a layer next to a person for scale (ice 1.5 m thick, snow, permafrost, the depth of water).
 - "list": the narration counts points ("three reasons", "first... second... third...", a top).
 
 Choose up to {limit} scenes, mixing kinds where the story allows. Only where the animation is the point of that moment; never two such scenes in a row; never the first or the last scene. Choose none if nothing fits.
@@ -1191,6 +1217,8 @@ Fill only the fields of the chosen kind; leave the others empty ("" / [] / 0, ch
 - photonum: the same fields as counter (value, unit, prefix, suffix, caption; no note).
 - place: title = the place, max 4 words, in {language}; note = the year or the date, or "".
 - document: org = who issued or wrote it (max 4 words, in {language}, or ""); headline = its gist, max 8 words, in {language}; highlight = the exact words the narration quotes from it, max 14 words, or ""; when_label = the word "When" in {language}; when = the date as said, or "".
+- scale: points = 2-5 known items (label = name in {language}, max 3 words; value = the real number); hero_name, hero_value, hero_note (e.g. "69° с. ш.", max 3 words) = the hero; unit = "°", "м", "км" or ""; ref_value and ref_label = a famous line on that scale (66.56 and "Полярный круг"), or 0 and ""; title = the measure ("Северная широта").
+- layer: value = the thickness in metres; unit = "м"/"m"; caption = what it is ("толщина льда"); material = ice, snow, ground or water; layer_label = the layer's name ("лёд"), below_label = what is under it ("вода"); title = the topic.
 - calendar: total = M (365 for "a year", 100 for a percentage), filled = N; suffix "+" if "more than"; caption = what is counted, max 5 words, in {language}; legend = "= " + one cell's meaning, max 4 words; season = "winter" if those days are in winter, "summer" if in summer, else "even"; tone; title = the topic in 1-3 words.
 Never invent facts or numbers: only what the narration says or certain common knowledge. If the numbers are not known for sure, do not make a chart or a comparison.
 

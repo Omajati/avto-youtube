@@ -1,0 +1,94 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#cv{position:absolute;inset:0}
+.pt{position:absolute;left:0;top:0;white-space:nowrap;font-family:Montserrat;font-weight:500;font-size:26px;color:#dfe7f2;opacity:0}
+.pt.hero{font-weight:700;font-size:44px;color:#fff}
+.pt.hero small{font-family:Montserrat;font-weight:600;font-size:24px;color:var(--accent);margin-left:14px;letter-spacing:.04em}
+#ref{position:absolute;right:150px;font-family:Montserrat;font-weight:600;font-size:22px;letter-spacing:.28em;text-transform:uppercase;color:#e7edf5;opacity:0}
+</style></head><body>
+<canvas id="bg"></canvas><canvas id="cv"></canvas><div id="tag"></div><div id="ref"></div><div id="pts"></div>
+<script src="card_common.js"></script>
+<script>
+// Where the hero stands on one measure among places or things everyone knows: a scale, a dashed reference line,
+// the known ones appearing one by one, the hero last, bigger and in the accent colour.
+// SPEC: {tag, unit ("°"), items: [{name, value}], hero: {name, value, note}, ref: {value, label}, lang, theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 240);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H;
+  const cv = $("cv"); cv.width = W; cv.height = H; const x = cv.getContext("2d");
+  const items = (S.items || []).slice(0, 6), hero = S.hero || null, ref = S.ref && S.ref.label ? S.ref : null;
+  const all = items.map(i => +i.value).concat(hero ? [+hero.value] : [], ref ? [+ref.value] : []);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  const span0 = Math.max(hi - lo, 1e-6), step = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000, 2000, 5000, 10000].find(s => span0 / s <= 5) || 10000;
+  lo = Math.floor(lo / step - 0.5) * step; hi = Math.ceil(hi / step + 0.5) * step;
+  const TOP = 190, BOT = H - 150, L = 230, R = W - 150, unit = S.unit || "";
+  const yOf = v => BOT - (v - lo) / (hi - lo) * (BOT - TOP);
+  const dec = Math.max(0, -Math.floor(Math.log10(step)));
+  // the known points spread across the width in the given order; the hero a little right of the middle
+  // places: the hero on the right; each known point takes the free column farthest from the points already placed
+  // (at a close height, two labels would collide), always the same for the same data
+  const pts = [], heroP = hero ? { ...hero, x: L + (R - L) * 0.62, hero: true } : null;
+  const slots = Array.from({ length: 6 }, (_, i) => L + 120 + (R - L - 700) * i / 5);
+  const placed = heroP ? [heroP] : [];
+  items.forEach(it => {
+    const y = yOf(+it.value);
+    let best = slots[0], score = -1;
+    for (const sx of slots) {
+      if (pts.some(p => p.x === sx)) continue;
+      const d = placed.length ? Math.min(...placed.map(p => Math.hypot((sx - p.x) / 2.2, (y - yOf(+p.value)) * 1.6))) : 1e9;
+      if (d > score) { score = d; best = sx; }
+    }
+    const p = { ...it, x: best, hero: false }; pts.push(p); placed.push(p);
+  });
+  if (heroP) pts.push(heroP);
+  const wrap = $("pts");
+  pts.forEach((p, i) => {
+    const el = document.createElement("div"); el.className = "pt" + (p.hero ? " hero" : "");
+    el.textContent = p.name || "";
+    if (p.hero && p.note) { const s = document.createElement("small"); s.textContent = p.note; el.appendChild(s); }
+    wrap.appendChild(el); p.el = el;
+    p.at = p.hero ? 0.66 * N : 0.26 * N + i * (0.34 * N / Math.max(items.length, 1));
+  });
+  if (ref) { $("ref").textContent = ref.label; }
+  await C.ready();
+  const accent = C.rgb("--accent");
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N);
+    x.clearRect(0, 0, W, H);
+    const g = C.ease(C.seg(f, 0.02 * N, 0.12 * N));
+    x.globalAlpha = g; x.font = "500 22px Montserrat"; x.textAlign = "right"; x.textBaseline = "middle";
+    for (let v = lo; v <= hi + 1e-9; v += step) {
+      const y = yOf(v);
+      x.fillStyle = "rgba(170,185,205,.7)"; x.fillText(C.fmt(v, dec, S.lang) + unit, L - 30, y);
+      x.fillStyle = "rgba(170,185,205,.10)"; x.fillRect(L, y, R - L, 1);
+    }
+    x.globalAlpha = 1;
+    if (ref) {  // the dashed reference line draws itself from left to right
+      const k = C.out3(C.seg(f, 0.1 * N, 0.26 * N)), y = yOf(+ref.value);
+      x.setLineDash([10, 9]); x.strokeStyle = "rgba(235,240,248,.75)"; x.lineWidth = 2.2;
+      x.beginPath(); x.moveTo(L, y); x.lineTo(L + (R - L) * k, y); x.stroke(); x.setLineDash([]);
+      const r = $("ref"); r.style.top = `${y - 42}px`; C.blurIn(r, C.ease(C.seg(f, 0.2 * N, 0.2 * N + 14)), 0);
+    }
+    for (const p of pts) {
+      const a = C.ease(C.seg(f, p.at, p.at + 12)), y = yOf(+p.value);
+      if (a <= 0) { p.el.style.opacity = 0; continue; }
+      const r = p.hero ? 13 : 7;
+      if (p.hero) { x.save(); x.shadowColor = `rgba(${accent},1)`; x.shadowBlur = 26; }
+      x.fillStyle = p.hero ? `rgba(${accent},${a})` : `rgba(240,244,250,${a})`;
+      x.beginPath(); x.arc(p.x, y, r * (0.6 + 0.4 * C.out3(C.seg(f, p.at, p.at + 10))), 0, 6.283); x.fill();
+      if (p.hero) {
+        x.restore();
+        const t = ((f - p.at) / 45) % 1; x.strokeStyle = `rgba(${accent},${0.7 * (1 - t) * a})`; x.lineWidth = 3;
+        x.beginPath(); x.arc(p.x, y, r + 30 * t, 0, 6.283); x.stroke();
+      }
+      p.el.style.opacity = a; p.el.style.filter = a >= 1 ? "none" : `blur(${(1 - a) * 10}px)`;
+      p.el.style.transform = `translate(${p.x + r + 16}px, ${y - (p.hero ? 27 : 17)}px)`;
+    }
+  };
+  window.renderFrame(0);
+  window.READY = true;
+})();
+</script></body></html>

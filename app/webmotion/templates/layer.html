@@ -1,0 +1,74 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#cv{position:absolute;inset:0}
+#fig{position:absolute;right:220px;top:150px;text-align:left}
+#fig .cap{font-size:26px;margin-bottom:6px}
+#num{font-size:170px;color:var(--accent)}
+#unitx{font-family:Oswald;font-weight:500;font-size:70px;color:var(--accent);margin-left:8px}
+.lbl{position:absolute;font-family:Montserrat;font-weight:600;font-size:20px;letter-spacing:.3em;text-transform:uppercase;opacity:0}
+</style></head><body>
+<canvas id="bg"></canvas><canvas id="cv"></canvas><div id="tag"></div>
+<div id="fig"><div class="cap" id="cap"></div><span id="num" class="fig"></span><span id="unitx"></span></div>
+<div class="lbl" id="l1"></div><div class="lbl" id="l2"></div>
+<script src="card_common.js"></script>
+<script>
+// A layer (ice, snow, ground, water) and a person standing on it for scale: the layer grows to its thickness, an
+// accent measure runs through it and the number counts up. SPEC: {tag, value (metres), unit ("м"), caption,
+//   material: ice|snow|ground|water, layer_label, below_label, lang, theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 210);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H;
+  const cv = $("cv"); cv.width = W; cv.height = H; const x = cv.getContext("2d");
+  const value = Math.max(+S.value || 1, 0.05), HUMAN = 1.8;
+  const ppm = Math.min(205, 430 / value);  // pixels per metre: the person and the layer always fit
+  const TOP = 560, thick = value * ppm;
+  const MAT = { ice: ["#d9f1fb", "#9fcde0", "#0f2733"], snow: ["#f4f8fb", "#cfdbe4", "#1d2a33"],
+                ground: ["#8a6a4c", "#5b432f", "#2a1e15"], water: ["#4a8fc2", "#245b85", "#0b1e2c"] };
+  const [c0, c1, under] = MAT[S.material] || MAT.ice;
+  $("cap").textContent = S.caption || ""; $("unitx").textContent = S.unit || "м";
+  $("l1").textContent = S.layer_label || ""; $("l2").textContent = S.below_label || "";
+  const dec = Math.max(1, (String(S.value).split(/[.,]/)[1] || "").length);
+  await C.ready();
+  const accent = C.rgb("--accent");
+  function person(px, by, h, a) {  // a plain silhouette: head and body, outlined like a diagram
+    const u = h / 10; x.save(); x.globalAlpha = a; x.lineWidth = Math.max(2, u * .18); x.strokeStyle = "rgba(235,242,250,.95)"; x.fillStyle = "rgba(10,18,26,.92)";
+    x.beginPath(); x.arc(px, by - h + u * 0.9, u * 0.9, 0, 6.283); x.fill(); x.stroke();
+    x.beginPath(); x.roundRect(px - u * 1.25, by - h + u * 2.05, u * 2.5, u * 4.1, u * 0.9); x.fill(); x.stroke();
+    x.beginPath(); x.roundRect(px - u * 1.05, by - h + u * 5.9, u * .95, u * 4.1, u * .4); x.fill(); x.stroke();
+    x.beginPath(); x.roundRect(px + u * .1, by - h + u * 5.9, u * .95, u * 4.1, u * .4); x.fill(); x.stroke();
+    x.restore();
+  }
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N);
+    x.clearRect(0, 0, W, H);
+    const g = C.out3(C.seg(f, 0.08 * N, 0.45 * N)), t = Math.max(thick * g, 2);
+    // under the layer
+    x.fillStyle = under; x.fillRect(0, TOP + t, W, H - TOP - t);
+    // the layer itself, with a soft gradient and a few cracks (ice)
+    const gr = x.createLinearGradient(0, TOP, 0, TOP + t); gr.addColorStop(0, c0); gr.addColorStop(1, c1);
+    x.fillStyle = gr; x.fillRect(0, TOP, W, t);
+    x.fillStyle = "rgba(255,255,255,.55)"; x.fillRect(0, TOP, W, 2);
+    if ((S.material || "ice") === "ice" && t > 30) {
+      x.strokeStyle = "rgba(255,255,255,.35)"; x.lineWidth = 1.4;
+      for (const cx0 of [260, 760, 1180, 1520]) { x.beginPath(); let yy = TOP + 6, xx = cx0; x.moveTo(xx, yy);
+        while (yy < TOP + t - 6) { yy += 18; xx += ((cx0 * 7 + yy) % 13) - 6; x.lineTo(xx, Math.min(yy, TOP + t - 6)); } x.stroke(); }
+    }
+    person(520, TOP, HUMAN * ppm, C.ease(C.seg(f, 0.04 * N, 0.04 * N + 16)));
+    // the measure through the layer
+    const mx = W - 520, m = C.ease(C.seg(f, 0.1 * N, 0.2 * N));
+    x.strokeStyle = `rgba(${accent},${m})`; x.lineWidth = 3;
+    x.beginPath(); x.moveTo(mx, TOP); x.lineTo(mx, TOP + t); x.moveTo(mx - 12, TOP); x.lineTo(mx + 12, TOP); x.moveTo(mx - 12, TOP + t); x.lineTo(mx + 12, TOP + t); x.stroke();
+    $("num").textContent = C.fmt(value * (0.9 + 0.1 * g), dec, S.lang);
+    C.blurIn($("fig"), C.ease(C.seg(f, 0.08 * N, 0.08 * N + 14)), 0);
+    const l1 = $("l1"); l1.style.left = "120px"; l1.style.top = `${TOP + 16}px`; l1.style.color = S.material === "ground" || S.material === "water" ? "#eef3f8" : "#2b4654";
+    C.blurIn(l1, C.ease(C.seg(f, 0.2 * N, 0.2 * N + 14)), 0);
+    const l2 = $("l2"); l2.style.left = "120px"; l2.style.top = `${Math.min(TOP + t + 22, H - 60)}px`; l2.style.color = "#9fb3c4";
+    C.blurIn(l2, C.ease(C.seg(f, 0.45 * N, 0.45 * N + 14)), 0);
+  };
+  window.renderFrame(0);
+  window.READY = true;
+})();
+</script></body></html>

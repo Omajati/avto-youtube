@@ -1,0 +1,86 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#cv{position:absolute;inset:0}
+#delta{position:absolute;font-family:Oswald;font-weight:700;font-size:96px;color:var(--hot);opacity:0;white-space:nowrap}
+</style></head><body>
+<canvas id="bg"></canvas><canvas id="cv"></canvas><div id="tag"></div><div id="delta"></div>
+<script src="card_common.js"></script>
+<script>
+// A chart. Line: a smooth curve draws itself over the years, the first and the last year below, and a bracket on the
+// right says how much it changed («+≈1 °C»). Bars: they grow one by one, the biggest in the accent colour.
+// SPEC: {tag, points: [{label, value}], style: line|bar, unit, prefix ("≈"), lang, theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 210);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H;
+  const cv = $("cv"); cv.width = W; cv.height = H; const x = cv.getContext("2d");
+  const pts = (S.points || []).filter(p => isFinite(+p.value)).slice(0, 12);
+  const bars = S.style === "bar";
+  const vals = pts.map(p => +p.value), unit = S.unit || "";
+  const withUnit = v => v + (unit ? (/^[°%]/.test(unit) && !/^°[CFК]/.test(unit) ? "" : "\u2009") + unit : "");
+  const dec = Math.max(...pts.map(p => (String(p.value).split(/[.,]/)[1] || "").length), 0);
+  await C.ready();
+  const accent = C.rgb("--accent"), hot = C.rgb("--hot");
+  const L = 150, R = bars ? W - 150 : W - 470, TOP = 230, BOT = H - 230;
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (bars) lo = Math.min(0, lo);
+  const pad = (hi - lo || 1) * 0.12; if (!bars) { lo -= pad; hi += pad; }
+  const yOf = v => BOT - (v - lo) / (hi - lo || 1) * (BOT - TOP);
+  const xs = pts.map((p, i) => L + (R - L) * (pts.length > 1 ? i / (pts.length - 1) : .5));
+  // a smooth curve through the points (Catmull–Rom as cubic Béziers), sampled for partial drawing
+  const path = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = [xs[Math.max(i - 1, 0)], yOf(vals[Math.max(i - 1, 0)])], p1 = [xs[i], yOf(vals[i])], p2 = [xs[i + 1], yOf(vals[i + 1])], p3 = [xs[Math.min(i + 2, pts.length - 1)], yOf(vals[Math.min(i + 2, pts.length - 1)])];
+    for (let s = 0; s < 24; s++) { const t = s / 24, t2 = t * t, t3 = t2 * t;
+      path.push([0, 1].map(k => 0.5 * ((2 * p1[k]) + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3))); }
+  }
+  if (pts.length) path.push([xs[pts.length - 1], yOf(vals[pts.length - 1])]);
+  const delta = vals.length ? vals[vals.length - 1] - vals[0] : 0;
+  $("delta").textContent = (delta > 0 ? "+" : delta < 0 ? "−" : "") + (S.prefix || "") + withUnit(C.fmt(Math.abs(delta), dec, S.lang));
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N);
+    x.clearRect(0, 0, W, H);
+    const g = C.ease(C.seg(f, 0.03 * N, 0.12 * N));
+    x.globalAlpha = g; x.fillStyle = "rgba(170,185,205,.35)"; x.fillRect(L, BOT + 40, R - L, 2); x.globalAlpha = 1;
+    x.font = "700 46px Oswald"; x.textBaseline = "top";
+    if (!bars) {
+      const k = C.ease(C.seg(f, 0.12 * N, 0.62 * N)), n = Math.max(1, Math.round(k * (path.length - 1)));
+      // the level where it started, dashed
+      x.setLineDash([6, 8]); x.strokeStyle = `rgba(200,210,225,${.35 * g})`; x.lineWidth = 1.5;
+      x.beginPath(); x.moveTo(L, yOf(vals[0])); x.lineTo(R, yOf(vals[0])); x.stroke(); x.setLineDash([]);
+      x.save(); x.shadowColor = `rgba(${accent},.9)`; x.shadowBlur = 18; x.strokeStyle = `rgb(${accent})`; x.lineWidth = 5; x.lineCap = "round"; x.lineJoin = "round";
+      x.beginPath(); path.slice(0, n + 1).forEach(([px, py], i) => i ? x.lineTo(px, py) : x.moveTo(px, py)); x.stroke(); x.restore();
+      x.fillStyle = `rgba(230,236,245,${g})`; x.textAlign = "left"; if (pts[0]) x.fillText(pts[0].label || "", L - 4, BOT + 64);
+      x.textAlign = "right"; if (pts.length > 1) x.fillText(pts[pts.length - 1].label || "", R + 4, BOT + 64);
+      // the bracket: how much it changed, from the first level to the last point
+      const b = C.out3(C.seg(f, 0.62 * N, 0.74 * N));
+      if (b > 0 && pts.length > 1) {
+        const bx = R + 60, y0 = yOf(vals[0]), y1 = yOf(vals[vals.length - 1]);
+        x.strokeStyle = `rgb(${hot})`; x.lineWidth = 3.5;
+        x.beginPath(); x.moveTo(bx, y0); x.lineTo(bx, y0 + (y1 - y0) * b); x.stroke();
+        const d = $("delta"); d.style.left = `${bx + 28}px`; d.style.top = `${(y0 + y1) / 2 - 62}px`;
+        C.blurIn(d, C.ease(C.seg(f, 0.68 * N, 0.68 * N + 14)), 0);
+      }
+    } else {
+      const bw = Math.min(150, (R - L) / pts.length * 0.62), best = vals.indexOf(Math.max(...vals));
+      pts.forEach((p, i) => {
+        const k = C.out3(C.seg(f, 0.12 * N + i * 0.06 * N, 0.12 * N + i * 0.06 * N + 0.2 * N)), y = yOf(vals[i] * k), y0 = yOf(Math.max(lo, 0));
+        const cx = xs[i];
+        x.fillStyle = i === best ? `rgb(${accent})` : "rgba(160,190,225,.55)";
+        if (i === best) { x.save(); x.shadowColor = `rgba(${accent},.8)`; x.shadowBlur = 22; }
+        x.beginPath(); x.roundRect(cx - bw / 2, Math.min(y, y0), bw, Math.max(Math.abs(y0 - y), 1), 6); x.fill();
+        if (i === best) x.restore();
+        const a = C.ease(C.seg(f, 0.12 * N + i * 0.06 * N + 0.12 * N, 0.12 * N + i * 0.06 * N + 0.18 * N));
+        x.globalAlpha = a; x.textAlign = "center"; x.fillStyle = "#fff"; x.font = "700 44px Oswald"; x.textBaseline = "bottom";
+        x.fillText(withUnit(C.fmt(vals[i], dec, S.lang)), cx, Math.min(y, y0) - 12);
+        x.textBaseline = "top"; x.font = "600 26px Montserrat"; x.fillStyle = "rgba(220,228,240,.9)"; x.fillText(p.label || "", cx, BOT + 62);
+        x.globalAlpha = 1;
+      });
+    }
+  };
+  window.renderFrame(0);
+  window.READY = true;
+})();
+</script></body></html>

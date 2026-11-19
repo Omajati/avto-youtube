@@ -224,6 +224,21 @@ def card_spec(spec: dict, lang: str) -> dict:
                   "tone": x.get("tone") or "cold", "decimals": _dec(x.get("value"))}
                  for x in (spec.get("steps") or [])[:3] if isinstance(x, dict)]
         return {**base, "unit": t("unit", 6) or "°C", "steps": steps}
+    if kind == "scale":
+        items = [{"name": str(x.get("label") or "")[:30], "value": float(x.get("value"))}
+                 for x in (spec.get("points") or [])[:5] if isinstance(x, dict)]
+        ref = {"value": float(spec.get("ref_value") or 0), "label": t("ref_label", 30)} if t("ref_label", 30) else None
+        return {**base, "unit": t("unit", 6), "items": items, "ref": ref,
+                "hero": {"name": t("hero_name", 30), "value": float(spec.get("hero_value") or 0), "note": t("hero_note", 30)}}
+    if kind == "layer":
+        return {**base, "value": float(spec.get("value") or 1), "unit": t("unit", 4) or ("м" if lang == "ru" else "m"),
+                "caption": t("caption", 40), "material": spec.get("material") or "ice",
+                "layer_label": t("layer_label", 20), "below_label": t("below_label", 20)}
+    if kind == "chart":
+        pts = [{"label": str(x.get("label") or "")[:14], "value": float(x.get("value"))}
+               for x in (spec.get("points") or [])[:12] if isinstance(x, dict)]
+        return {**base, "points": pts, "style": "bar" if spec.get("chart_style") == "bar" or len(pts) <= 3 else "line",
+                "unit": t("unit", 8), "prefix": t("prefix", 2)}
     if kind == "photonum":
         v = float(spec.get("value") or 0)
         return {**base, "value": v, "decimals": _dec(v), "prefix": t("prefix", 2), "suffix": t("suffix", 2),
