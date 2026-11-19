@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#q{position:absolute;left:220px;right:220px;top:50%;transform:translateY(-50%)}
+#mark{font-family:'PT Serif',Georgia,serif;font-weight:700;font-size:220px;line-height:.6;color:var(--accent);height:110px;opacity:0}
+#text{font-family:'PT Serif',Georgia,serif;font-weight:400;font-size:58px;line-height:1.32;color:#fff}
+#text span{display:inline-block;opacity:0;margin-right:.26em}
+#who{margin-top:44px;font-family:Montserrat;font-weight:600;font-size:26px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);opacity:0}
+#who:before{content:"";display:inline-block;width:46px;height:3px;background:var(--accent);vertical-align:middle;margin-right:18px}
+</style></head><body>
+<canvas id="bg"></canvas><div id="tag"></div>
+<div id="q"><div id="mark">“</div><div id="text"></div><div id="who"></div></div>
+<script src="card_common.js"></script>
+<script>
+// A quote: a large accent quotation mark, the words appearing one after another out of a soft blur, then the author.
+// SPEC: {tag, quote, author, theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 240);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H;
+  const words = String(S.quote || "").split(/\s+/).filter(Boolean);
+  if (words.length > 26) $("text").style.fontSize = "46px";
+  const spans = words.map(w => { const s = document.createElement("span"); s.textContent = w; $("text").appendChild(s); return s; });
+  $("who").textContent = S.author || "";
+  await C.ready();
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N);
+    C.blurIn($("mark"), C.ease(C.seg(f, 0.03 * N, 0.03 * N + 14)), 0);
+    spans.forEach((s, i) => { const a0 = 0.08 * N + 0.55 * N * i / Math.max(spans.length, 1); C.blurIn(s, C.ease(C.seg(f, a0, a0 + 10)), 8); });
+    C.blurIn($("who"), C.ease(C.seg(f, 0.7 * N, 0.7 * N + 16)), 0);
+  };
+  window.renderFrame(0); window.READY = true;
+})();
+</script></body></html>

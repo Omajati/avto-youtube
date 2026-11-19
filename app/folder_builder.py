@@ -2111,7 +2111,7 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
         _check_control(job_id)
         i = int(g["index"])
         scene = scenes[i]
-        if g.get("type") == "globe":
+        if g.get("type") in ("globe", "map"):
             g = {**g, "style": options.get("folder_globe_style") or "3d"}  # the channel's look; part of the clip's name
         if g.get("type") in motion.WEB_KINDS:
             g = {**g, "theme": options.get("folder_motion_theme") or "navy"}

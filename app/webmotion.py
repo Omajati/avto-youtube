@@ -239,6 +239,22 @@ def card_spec(spec: dict, lang: str) -> dict:
                for x in (spec.get("points") or [])[:12] if isinstance(x, dict)]
         return {**base, "points": pts, "style": "bar" if spec.get("chart_style") == "bar" or len(pts) <= 3 else "line",
                 "unit": t("unit", 8), "prefix": t("prefix", 2)}
+    if kind == "timeline":
+        ev = [{"label": str(e.get("label") or "")[:16], "text": str(e.get("text") or "")[:60]}
+              for e in (spec.get("events") or [])[:6] if isinstance(e, dict) and str(e.get("label") or "").strip()]
+        try:
+            cur = int(spec.get("current"))
+        except (TypeError, ValueError):
+            cur = len(ev) - 1
+        return {**base, "events": ev, "current": max(0, min(len(ev) - 1, cur))}
+    if kind == "compare":
+        rows = [{"label": str(r.get("label") or "")[:30], "left": float(r.get("left") or 0), "right": float(r.get("right") or 0)}
+                for r in (spec.get("rows") or [])[:4] if isinstance(r, dict)]
+        return {**base, "left_name": t("left_name", 24), "right_name": t("right_name", 24), "rows": rows, "unit": t("unit", 8)}
+    if kind == "quote":
+        return {**base, "quote": t("quote", 300), "author": t("author", 80)}
+    if kind == "list":
+        return {**base, "lines": [str(x)[:80] for x in (spec.get("lines") or [])[:6] if str(x).strip()]}
     if kind == "photonum":
         v = float(spec.get("value") or 0)
         return {**base, "value": v, "decimals": _dec(v), "prefix": t("prefix", 2), "suffix": t("suffix", 2),
@@ -313,7 +329,37 @@ def _chain(lines: list, start_far_from=None) -> tuple[list, list]:
     return chain, rest
 
 
-def satmap_spec(spec: dict, lang: str) -> dict:
+def map_spec(spec: dict, lang: str) -> dict | None:
+    """The old «map» (countries, a route, pins) on the dark relief map; None when the places spread over half the
+    world (then a globe tells it better)."""
+    from . import motion
+    route = [p for p in spec.get("route") or [] if isinstance(p, dict)][:6]
+    pins = [p for p in spec.get("pins") or [] if isinstance(p, dict)][:4]
+    stops = [p for p in route + pins if _num_ok(p.get("lat")) and _num_ok(p.get("lon"))]
+    found = [c for c in (motion.find_country(n) for n in spec.get("countries") or []) if c][:4]
+    pts = [(float(p["lat"]), float(p["lon"])) for p in stops]
+    for c in found:
+        pts += [(q[1], q[0]) for ring in motion._main_rings(c) for q in ring[::max(1, len(ring) // 30)]]
+    if not pts or _view(pts)["spread"] > 38:
+        return None
+    base = satmap_spec({"title": spec.get("title"), "pins": [{"name": p.get("name"), "lat": p["lat"], "lon": p["lon"]}
+                                                              for p in stops], "theme": spec.get("theme"),
+                        "countries": [], "rivers": [], "region": ""}, lang, extra_pts=pts)
+    base["fills"] = [[[q[0], q[1]] for q in ring] for c in found for ring in motion._main_rings(c)]
+    base["route"] = [[float(p["lon"]), float(p["lat"])] for p in route if p in stops]
+    for p in base["pins"]:
+        p["hero"] = False
+    return base
+
+
+def _num_ok(v) -> bool:
+    try:
+        return math.isfinite(float(v))
+    except (TypeError, ValueError):
+        return False
+
+
+def satmap_spec(spec: dict, lang: str, extra_pts: list | None = None) -> dict:
     """A region on the dark relief map: the box (16:9 at that latitude), rivers by name, railways inside the box,
     the chosen countries' outlines, the towns."""
     from . import motion
@@ -339,6 +385,7 @@ def satmap_spec(spec: dict, lang: str) -> dict:
             continue
         pins.append({"name": str(p.get("name") or "")[:30], "lat": lat, "lon": lon, "hero": i == 0})
         pts.append((lat, lon))
+    pts += list(extra_pts or [])
     if not pts:
         raise UserError("Для карты нет ни реки, ни страны, ни точки.")
     view = _view(pts)
@@ -388,6 +435,13 @@ def render_kind(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int,
     try:
         if kind == "satmap":
             render("satmap", satmap_spec(spec, lang), out, seconds, w, h, fps, poster, log)
+        elif kind == "map":
+            m = map_spec(spec, lang)
+            if m:
+                render("satmap", m, out, seconds, w, h, fps, poster, log)
+            else:  # spread over half the world: the globe, in the channel's style
+                render("globe3d" if str(spec.get("style") or "3d") != "2d" else "globe2d", globe_spec(spec, lang),
+                       out, seconds, w, h, fps, poster, log)
         elif kind == "globe":
             style = "globe2d" if str(spec.get("style") or "3d").lower() in ("2d", "globe2d", "flat") else "globe3d"
             render(style, globe_spec(spec, lang), out, seconds, w, h, fps, poster, log)

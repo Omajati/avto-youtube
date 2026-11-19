@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#cv{position:absolute;inset:0}
+.side{position:absolute;top:150px;font-family:Oswald;font-weight:700;font-size:64px;color:#fff;letter-spacing:.02em;opacity:0;text-transform:uppercase}
+#ln{left:150px} #rn{right:150px;text-align:right}
+#vs{position:absolute;left:0;right:0;top:162px;text-align:center;font-family:Montserrat;font-weight:600;font-size:26px;letter-spacing:.3em;color:var(--muted);opacity:0}
+.row{position:absolute;left:150px;right:150px;height:120px;opacity:0}
+.row .lbl{position:absolute;left:0;right:0;top:0;text-align:center;font-family:Montserrat;font-weight:600;font-size:24px;letter-spacing:.22em;text-transform:uppercase;color:#cdd6e2}
+.row .v{position:absolute;top:34px;font-family:Oswald;font-weight:700;font-size:62px;color:#fff;line-height:1}
+.row .vl{left:0} .row .vr{right:0}
+</style></head><body>
+<canvas id="bg"></canvas><canvas id="cv"></canvas><div id="tag"></div>
+<div class="side" id="ln"></div><div id="vs">VS</div><div class="side" id="rn"></div><div id="rows"></div>
+<script src="card_common.js"></script>
+<script>
+// Two sides head to head: for each measure, two bars grow towards the middle from both edges and the larger one
+// lights up in the accent colour; the numbers count up. SPEC: {tag, left_name, right_name, rows: [{label, left, right}], unit, lang, theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 240);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H; const cv = $("cv"); cv.width = W; cv.height = H; const x = cv.getContext("2d");
+  const rows = (S.rows || []).slice(0, 4);
+  $("ln").textContent = S.left_name || ""; $("rn").textContent = S.right_name || "";
+  const top = 300, gap = Math.min(170, (H - top - 110) / Math.max(rows.length, 1));
+  const els = rows.map((r, i) => { const d = document.createElement("div"); d.className = "row"; d.style.top = `${top + i * gap}px`;
+    d.innerHTML = `<div class="lbl"></div><div class="v vl"></div><div class="v vr"></div>`; d.querySelector(".lbl").textContent = r.label || "";
+    $("rows").appendChild(d); return d; });
+  const decOf = v => (String(v).split(/[.,]/)[1] || "").length, unit = S.unit ? " " + S.unit : "";
+  await C.ready();
+  const accent = C.rgb("--accent");
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N); x.clearRect(0, 0, W, H);
+    const h = C.ease(C.seg(f, 0.03 * N, 0.03 * N + 16));
+    C.blurIn($("ln"), h, 0); C.blurIn($("rn"), h, 0); $("vs").style.opacity = h;
+    rows.forEach((r, i) => {
+      const a0 = 0.14 * N + i * 0.12 * N, k = C.out3(C.seg(f, a0, a0 + 0.22 * N)), a = C.ease(C.seg(f, a0, a0 + 12));
+      els[i].style.opacity = a;
+      const l = +r.left || 0, rr = +r.right || 0, mx = Math.max(Math.abs(l), Math.abs(rr), 1e-9), half = (W - 300) / 2 - 60;
+      const y = top + i * gap + 108, lw = half * Math.abs(l) / mx * k, rw = half * Math.abs(rr) / mx * k, lwin = l >= rr;
+      x.fillStyle = "rgba(170,185,205,.12)"; x.fillRect(150, y, W - 300, 10);
+      for (const [x0, w, win] of [[150, lw, lwin], [W - 150 - rw, rw, !lwin]]) {
+        if (win) { x.save(); x.shadowColor = `rgba(${accent},.9)`; x.shadowBlur = 14; }
+        x.fillStyle = win ? `rgb(${accent})` : "rgba(170,195,225,.6)"; x.fillRect(x0, y, w, 10); if (win) x.restore();
+      }
+      els[i].querySelector(".vl").textContent = C.fmt(l * k, decOf(r.left), S.lang) + unit;
+      els[i].querySelector(".vr").textContent = C.fmt(rr * k, decOf(r.right), S.lang) + unit;
+      els[i].querySelector(".vl").style.color = lwin ? `rgb(${accent})` : "#fff"; els[i].querySelector(".vr").style.color = !lwin ? `rgb(${accent})` : "#fff";
+    });
+  };
+  window.renderFrame(0); window.READY = true;
+})();
+</script></body></html>

@@ -22,7 +22,7 @@ KINDS = {"map": "🗺 Карта", "timeline": "📅 Линия времени",
          "satmap": "🛰 Карта рельефа"}
 # drawn by the new engine (webmotion.py); the older kinds below move to it one by one
 WEB_KINDS = ("globe", "counter", "thermo", "calendar", "photonum", "place", "document", "scale", "layer", "chart",
-             "satmap")
+             "satmap", "map", "timeline", "compare", "quote", "list")  # every kind is now drawn by the new engine
 MODES = {"auto": "Авто: карты и даты там, где они к месту", "off": "Выключено"}
 
 OCEAN_TOP, OCEAN_BOTTOM = (12, 22, 40), (6, 12, 24)
@@ -988,15 +988,22 @@ def render(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int, lang
             pic = Image.open(prev).convert("RGB")
         except OSError:
             pic = None
-    if spec.get("type") == "map":
-        render_map(spec, out, seconds, w, h, fps, lang, poster, pic)
-    elif spec.get("type") == "timeline":
-        render_timeline(spec, out, seconds, w, h, fps, poster, pic)
-    elif spec.get("type") in WEB_KINDS:
-        # The new engine: a web page shot frame by frame (see webmotion.py).
+    kind = spec.get("type")
+    if kind in WEB_KINDS:
+        # The new engine: a web page shot frame by frame (see webmotion.py). If it cannot draw (no browser yet,
+        # an error), the kinds the old engine knows are drawn the old way, so the insert is not lost.
         from . import webmotion
-        webmotion.render_kind(spec, out, seconds, w, h, fps, lang, poster, photo=photo)
-    elif spec.get("type") in DRAW:
+        try:
+            webmotion.render_kind(spec, out, seconds, w, h, fps, lang, poster, photo=photo)
+            return
+        except UserError:
+            if kind not in ("map", "timeline") and kind not in DRAW:
+                raise
+    if kind == "map":
+        render_map(spec, out, seconds, w, h, fps, lang, poster, pic)
+    elif kind == "timeline":
+        render_timeline(spec, out, seconds, w, h, fps, poster, pic)
+    elif kind in DRAW:
         DRAW[spec["type"]](spec, out, seconds, w, h, fps, poster, pic)
     else:
         raise UserError(f"Неизвестный вид моушена: {spec.get('type')}")
@@ -1007,28 +1014,15 @@ def cues(spec: dict, seconds: float) -> list:
     and pins, ticks for list items and rows. Kept to the renderers' own timing."""
     kind, out = spec.get("type"), []
     if kind == "map":
+        # the relief map: fills ~0.1, the route draws 0.3–0.78, pins at 0.33
         route = _points(spec, "route")
-        has_hl = any(find_country(x) for x in spec.get("countries") or [])
-        t_b1 = 0.5 if len(route) > 1 else 0.65
-        t_r0 = (t_b1 - 0.12) if has_hl else 0.2
         if len(route) > 1:
-            out += [(t_r0 + (0.74 - t_r0) * k / (len(route) - 1), "pop") for k in range(len(route))]
-        out += [(0.5 + 0.08 * k + 0.02, "pop") for k in range(len(_points(spec, "pins")))]
+            out += [(0.3 + 0.48 * k / (len(route) - 1), "pop") for k in range(len(route))]
+        out += [(0.34 + 0.05 * k, "pop") for k in range(len(_points(spec, "pins")))]
     elif kind == "timeline":
-        ev = [e for e in spec.get("events") or [] if isinstance(e, dict) and str(e.get("label") or "").strip()][:7]
+        ev = [e for e in spec.get("events") or [] if isinstance(e, dict) and str(e.get("label") or "").strip()][:6]
         m = len(ev)
-        if m:
-            try:
-                cur = max(0, min(m - 1, int(spec.get("current", m - 1))))
-            except (TypeError, ValueError):
-                cur = m - 1
-            line_end = 0.12 + 0.5 * (cur + 1) / m
-            for k in range(m):
-                if k <= cur:
-                    reach = (k + 0.5) / (cur + 0.5) if cur else 1.0
-                    out.append((0.05 + (line_end - 0.05) * reach, "pop"))
-                else:
-                    out.append((line_end + 0.1 + (0.85 - line_end) * (k - cur) / max(1, m - cur), "pop"))
+        out += [(0.12 + 0.6 * (k / (m - 1) if m > 1 else 0) + 0.02, "pop") for k in range(m)]
     elif kind == "chart":
         m = len(_chart_points(spec))
         bars = spec.get("chart_style") == "bar" or m <= 3
@@ -1037,10 +1031,10 @@ def cues(spec: dict, seconds: float) -> list:
         if not bars and m > 1:
             out.append((0.68, "tick"))
     elif kind == "compare":
-        out += [(0.15 + 0.12 * k, "tick") for k in range(len(_rows(spec)))]
+        out += [(0.14 + 0.12 * k + 0.2, "tick") for k in range(len(_rows(spec)))]
     elif kind == "list":
         m = len(_lines(spec))
-        out += [(0.1 + 0.7 * k / m, "tick") for k in range(m)]
+        out += [(0.1 + 0.7 * k / max(m, 1) + 0.02, "tick") for k in range(m)]
     elif kind == "globe":
         # the same timing as globe_common.js: the first stop at 35 %, the others as the route reaches them, pins after
         route = [p for p in spec.get("route") or [] if isinstance(p, dict)][:6]
@@ -1070,7 +1064,7 @@ def cues(spec: dict, seconds: float) -> list:
     elif kind == "document":
         out += [(0.1, "tick")] + ([(0.42, "tick")] if str(spec.get("highlight") or "").strip() else [])
     elif kind == "quote" and str(spec.get("author") or "").strip():
-        out.append((0.72, "tick"))
+        out.append((0.71, "tick"))
     # Never two sounds closer than a fifth of a second, and none in the first half second (the whoosh).
     res = []
     for f, name in sorted(out):

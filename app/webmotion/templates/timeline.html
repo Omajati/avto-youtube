@@ -1,0 +1,47 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#cv{position:absolute;inset:0}
+.ev{position:absolute;width:300px;margin-left:-150px;text-align:center;opacity:0}
+.ev .d{font-family:Oswald;font-weight:700;font-size:56px;color:#fff;line-height:1}
+.ev .t{font-family:Montserrat;font-weight:500;font-size:22px;color:#c9d4e2;margin-top:12px;line-height:1.35}
+.ev.cur .d{color:var(--accent);font-size:78px}
+.ev.cur .t{color:#fff;font-weight:600;font-size:25px}
+</style></head><body>
+<canvas id="bg"></canvas><canvas id="cv"></canvas><div id="tag"></div><div id="evs"></div>
+<script src="card_common.js"></script>
+<script>
+// A line of time: it draws itself from left to right, the dates come one by one above and below it, the date this
+// moment is about stands out in the accent colour. SPEC: {tag, events: [{label, text}], current, theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 240);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H; const cv = $("cv"); cv.width = W; cv.height = H; const x = cv.getContext("2d");
+  const ev = (S.events || []).slice(0, 6), m = ev.length, cur = Math.max(0, Math.min(m - 1, S.current != null ? +S.current : m - 1));
+  const L = 180, R = W - 180, Y = H / 2 + 20;
+  const xs = ev.map((_, i) => m > 1 ? L + 90 + (R - L - 180) * i / (m - 1) : W / 2);
+  const els = ev.map((e, i) => { const d = document.createElement("div"); d.className = "ev" + (i === cur ? " cur" : "");
+    d.innerHTML = `<div class="d"></div><div class="t"></div>`; d.querySelector(".d").textContent = e.label || ""; d.querySelector(".t").textContent = e.text || "";
+    $("evs").appendChild(d); return d; });
+  const at = ev.map((_, i) => 0.12 * N + 0.6 * N * (m > 1 ? i / (m - 1) : 0));
+  await C.ready();
+  els.forEach((d, i) => { const up = i % 2 === 0; d.style.left = `${xs[i]}px`; d.style.top = up ? `${Y - 40 - d.offsetHeight}px` : `${Y + 40}px`; d.dataset.up = up ? 1 : 0; });
+  const accent = C.rgb("--accent");
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N); x.clearRect(0, 0, W, H);
+    const k = C.ease(C.seg(f, 0.06 * N, 0.78 * N)), end = L + (R - L) * k;
+    x.strokeStyle = "rgba(170,185,205,.22)"; x.lineWidth = 3; x.beginPath(); x.moveTo(L, Y); x.lineTo(R, Y); x.stroke();
+    x.save(); x.shadowColor = `rgba(${accent},.8)`; x.shadowBlur = 12; x.strokeStyle = `rgb(${accent})`; x.lineWidth = 4;
+    x.beginPath(); x.moveTo(L, Y); x.lineTo(end, Y); x.stroke(); x.restore();
+    ev.forEach((e, i) => {
+      const a = C.ease(C.seg(f, at[i], at[i] + 14)), big = i === cur;
+      if (a > 0) { x.fillStyle = big ? `rgba(${accent},${a})` : `rgba(240,244,250,${a})`; if (big) { x.save(); x.shadowColor = `rgba(${accent},1)`; x.shadowBlur = 22; }
+        x.beginPath(); x.arc(xs[i], Y, big ? 13 : 8, 0, 6.283); x.fill(); if (big) x.restore();
+        x.strokeStyle = `rgba(200,210,225,${.35 * a})`; x.lineWidth = 1.5; x.beginPath(); x.moveTo(xs[i], Y + (+els[i].dataset.up ? -14 : 14)); x.lineTo(xs[i], Y + (+els[i].dataset.up ? -36 : 36)); x.stroke(); }
+      C.blurIn(els[i], a, +els[i].dataset.up ? 14 : -14);
+    });
+  };
+  window.renderFrame(0); window.READY = true;
+})();
+</script></body></html>

@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#list{position:absolute;left:230px;right:200px;top:50%;transform:translateY(-50%)}
+.it{display:flex;align-items:center;gap:40px;margin:0 0 34px;opacity:0}
+.it .n{font-family:Oswald;font-weight:700;font-size:84px;color:var(--accent);width:90px;text-align:right;line-height:1}
+.it .t{font-family:Montserrat;font-weight:600;font-size:40px;color:#fff;line-height:1.25}
+.it .bar{position:absolute}
+</style></head><body>
+<canvas id="bg"></canvas><div id="tag"></div><div id="list"></div>
+<script src="card_common.js"></script>
+<script>
+// A list: numbered points come one by one from a soft blur, the number in the accent colour.
+// SPEC: {tag, lines: [..], theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 240);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H;
+  const lines = (S.lines || []).slice(0, 6);
+  if (lines.length > 4) document.styleSheets[0];
+  const els = lines.map((l, i) => { const d = document.createElement("div"); d.className = "it";
+    d.innerHTML = `<div class="n"></div><div class="t"></div>`; d.querySelector(".n").textContent = i + 1; d.querySelector(".t").textContent = l;
+    if (lines.length > 4) { d.querySelector(".t").style.fontSize = "34px"; d.querySelector(".n").style.fontSize = "68px"; d.style.marginBottom = "22px"; }
+    $("list").appendChild(d); return d; });
+  await C.ready();
+  window.renderFrame = f => {
+    C.background(bg, f); C.tag(S, f, N);
+    els.forEach((d, i) => { const a0 = 0.1 * N + 0.7 * N * i / Math.max(els.length, 1); const a = C.ease(C.seg(f, a0, a0 + 14));
+      C.blurIn(d, a, 0); d.style.transform = `translateX(${-30 * (1 - a)}px)`; });
+  };
+  window.renderFrame(0); window.READY = true;
+})();
+</script></body></html>

@@ -33,6 +33,7 @@
   const lineLen = pts => { let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return L; };
   const rivers = (S.rivers || []).map(r => ({ ...r, lines: r.lines.map(l => l.map(P)) }));
   const rails = (S.rails || []).map(l => l.map(P)), borders = (S.borders || []).map(l => l.map(P));
+  const route = (S.route || []).map(P), fills = (S.fills || []).map(l => l.map(P));
   function partial(pts, k) {  // the first share k of a polyline (by length)
     const L = lineLen(pts) * k; let acc = 0; const out = [pts[0]];
     for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
@@ -74,7 +75,18 @@
     x.save(); x.translate(W / 2, H / 2); x.scale(z, z); x.translate(-W / 2, -H / 2);
     x.drawImage(base, 0, 0);
     const bk = C.ease(C.seg(f, 0.04 * N, 0.2 * N));
+    if (fills.length && bk > 0) {  // the countries of the story: a soft accent fill and a solid outline
+      x.save(); x.fillStyle = `rgba(${accent},${.2 * bk})`;
+      fills.forEach(l => { x.beginPath(); l.forEach(([px, py], i) => i ? x.lineTo(px, py) : x.moveTo(px, py)); x.closePath(); x.fill(); });
+      x.shadowColor = `rgba(${accent},.8)`; x.shadowBlur = 10; x.strokeStyle = `rgba(${accent},${.95 * bk})`; x.lineWidth = 2.4; fills.forEach(stroke); x.restore();
+    }
     if (borders.length && bk > 0) { x.setLineDash([3, 6]); x.strokeStyle = `rgba(235,240,246,${.55 * bk})`; x.lineWidth = 1.6; borders.forEach(stroke); x.setLineDash([]); }
+    const ok = C.ease(C.seg(f, 0.3 * N, 0.78 * N));
+    if (route.length > 1 && ok > 0) {  // the route: a bright line with an accent glow, drawn stop after stop
+      x.save(); x.lineJoin = x.lineCap = "round"; x.shadowColor = `rgba(${accent},1)`; x.shadowBlur = 16;
+      x.strokeStyle = `rgba(${accent},.6)`; x.lineWidth = 9; stroke(partial(route, ok));
+      x.shadowBlur = 0; x.strokeStyle = "#fff6e0"; x.lineWidth = 3.6; stroke(partial(route, ok)); x.restore();
+    }
     const rk = C.ease(C.seg(f, 0.12 * N, 0.62 * N));
     if (rk > 0) { x.save(); x.shadowColor = "rgba(150,220,255,.9)"; x.shadowBlur = 14; x.strokeStyle = "rgba(225,245,255,.95)"; x.lineWidth = 3.4; x.lineJoin = x.lineCap = "round";
       rivers.forEach(r => r.lines.forEach((l, i) => { x.globalAlpha = i ? .45 : 1; x.lineWidth = i ? 2 : 3.4; stroke(partial(l, rk)); })); x.restore(); }
