@@ -370,7 +370,44 @@ def _parse_plain_scenes(path: Path, text: str) -> tuple[list[dict], list[dict]]:
     return scenes, refs
 
 
+# The scriptwriter's own orders for motion inserts: a file «вставки.txt» next to the scenes, one line each:
+#   S012 | термометр | Климат Норильска: ≈ −26,5 °C средняя температура января; −53 °C рекордный минимум
+ORDER_KINDS = {
+    "цифра": "counter", "число": "counter", "цифра на фото": "photonum", "число на фото": "photonum",
+    "термометр": "thermo", "календарь": "calendar", "сетка": "calendar", "сетка-календарь": "calendar",
+    "проценты": "calendar", "шкала": "scale", "слой": "layer", "слой и человек": "layer", "график": "chart",
+    "столбцы": "chart", "сравнение": "compare", "против": "compare", "линия времени": "timeline", "даты": "timeline",
+    "карта": "map", "карта рельефа": "satmap", "глобус": "globe", "место": "place", "плашка места": "place",
+    "документ": "document", "цитата": "quote", "список": "list",
+}
+ORDER_LINE = re.compile(r"(?m)^\s*(S\d{3})\s*\|\s*([^|\n]+?)\s*\|\s*(.+?)\s*$")
+
+
+def _read_orders(scene_file: Path) -> dict[str, tuple[str, str, str]]:
+    """{scene id: (motion type, the kind as written, what to show)} from вставки.txt beside the scene file."""
+    out = {}
+    for f in [scene_file.parent / "вставки.txt", scene_file.parent.parent / "вставки.txt"]:
+        if not f.is_file():
+            continue
+        for m in ORDER_LINE.finditer(f.read_text("utf-8", errors="replace")):
+            kind = " ".join(m.group(2).lower().replace("ё", "е").split())
+            kind = {k.replace("ё", "е"): v for k, v in ORDER_KINDS.items()}.get(kind) or (kind if kind in motion.KINDS else "")
+            if kind:
+                out[m.group(1).upper()] = (kind, m.group(2).strip(), m.group(3).strip())
+        break
+    return out
+
+
 def _parse_scenes(path: Path) -> tuple[list[dict], list[dict]]:
+    scenes, refs = _parse_scenes_only(path)
+    orders = _read_orders(path)
+    for sc in scenes:
+        if sc["id"] in orders:
+            sc["insert"] = list(orders[sc["id"]])
+    return scenes, refs
+
+
+def _parse_scenes_only(path: Path) -> tuple[list[dict], list[dict]]:
     text = path.read_text("utf-8", errors="replace")
     matches = list(SCENE_HEAD.finditer(text))
     if not matches and SCENE_LINE.search(text):
@@ -2053,7 +2090,7 @@ def _package_chapters(root: Path, lang: str, scenes: list[dict], texts: list[str
 
 
 MOTION_KINDS = ("map", "timeline", "chart", "compare", "globe", "counter", "thermo", "calendar", "photonum", "place",
-                "document", "scale", "layer", "satmap")
+                "document", "scale", "layer", "satmap", "quote", "list")
 
 
 def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations: list[float], media_map: dict[str, Path],
@@ -2062,6 +2099,9 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
     the narration names places, dates or numbers. Returns {scene id: {"clip": Path, "spec": dict}}."""
     if not options.get("folder_motion_inserts", True) or not llm.has_key(settings) or len(scenes) < 6:
         return {}
+    # the scriptwriter's orders (вставки.txt): anywhere in the video, on any picture scene
+    ordered = [i for i, sc in enumerate(scenes) if sc.get("insert") and not sc.get("preview") and not sc.get("chapter")
+               and media_map.get(sc["id"]) and media_map[sc["id"]].suffix.lower() not in VIDEO_EXT and durations[i] >= 2.5]
     total = sum(durations) or 1
     half, elapsed, candidates = total / 2, 0.0, []
     for i, (scene, duration) in enumerate(zip(scenes, durations)):
@@ -2075,20 +2115,29 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
         if not 4.0 <= duration <= 18.0 or len(texts[i].split()) < 6:
             continue
         candidates.append(i)
+    candidates = sorted(set(candidates) | set(ordered))
     if not candidates:
         return {}
     limit = max(1, min(4, round(half / 150)))
     plan_path = cache / "motion.json"
-    mark = hashlib.sha256(json.dumps([lang, limit, [texts[i] for i in candidates]], ensure_ascii=False).encode()).hexdigest()
+    orders = {i: scenes[i]["insert"] for i in ordered}
+    mark = hashlib.sha256(json.dumps([lang, limit, [texts[i] for i in candidates], sorted(orders.items())],
+                                     ensure_ascii=False).encode()).hexdigest()
     saved = _read_json(plan_path, {})
     if saved.get("mark") == mark:
         items = saved.get("items") or []
     else:
         _update(job_id, progress=progress, step=f"[{lang.upper()}] Ищу места для карт и линий времени в первой половине…")
-        rows = [{"text": texts[i]} for i in candidates]
+        rows = [{"text": texts[i] + (f"  [SCRIPTWRITER ORDER — kind «{orders[i][0]}» ({orders[i][1]}): {orders[i][2]}]"
+                                     if i in orders else "")} for i in candidates]
         prompt = motion.PLAN_PROMPT.format(limit=limit, language=LANG_NAMES[lang],
                                            scenes="\n".join(f"{k}. {r['text']}" for k, r in enumerate(rows)))
-        prompt += ("\n\nOnly use the kinds map, globe, timeline, chart, compare, counter, thermo, calendar, photonum, place, document, scale, layer and satmap. These scenes are only some of the video, "
+        if orders:
+            prompt += ("\n\nScenes marked SCRIPTWRITER ORDER must EACH get an item of exactly the ordered kind, built from "
+                       "the order's content (take its numbers, names, dates and words as written; «столбцы» = a chart with "
+                       "chart_style bar, «проценты» = a calendar with total 100). They are not counted in the limit and "
+                       "may stand next to other chosen scenes.")
+        prompt += ("\n\nOnly use the kinds map, globe, timeline, chart, compare, counter, thermo, calendar, photonum, place, document, scale, layer, satmap, quote and list. These scenes are only some of the video, "
                    "so the rule about the first and the last scene does not apply; choose fewer rather than weak ones.")
         from .pipeline import _helper_settings
         try:
@@ -2101,7 +2150,17 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
                     g["index"] = int(g.get("index")) + 1
                 except (TypeError, ValueError):
                     g["index"] = -1
-            items = [dict(g, index=candidates[g["index"] - 1]) for g in motion.clean_plan(raw, len(candidates) + 2)][:limit]
+            pos = {k + 1: i for k, i in enumerate(candidates)}
+            mine = [g for g in raw if pos.get(g["index"]) in orders]
+            free = [g for g in raw if g["index"] in pos and pos[g["index"]] not in orders]
+            items = [dict(g, index=candidates[g["index"] - 1]) for g in motion.clean_plan(free, len(candidates) + 2)
+                     if candidates[g["index"] - 1] not in orders][:limit]
+            # the ordered ones: kept if they can be drawn and are the kind that was ordered
+            for g in mine:
+                i = pos[g["index"]]
+                if g.get("type") == orders[i][0] and motion.CHECK[g["type"]](g) and i not in [x["index"] for x in items]:
+                    items.append({k: g.get(k) for k in motion.FIELDS} | {"index": i, "ordered": True})
+            items.sort(key=lambda g: g["index"])
         except UserError:
             items = []
         _write_json(plan_path, {"mark": mark, "items": items})
