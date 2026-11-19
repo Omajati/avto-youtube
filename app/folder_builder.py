@@ -1492,7 +1492,9 @@ IMAGE_RETRY_PAUSES = (20, 60, 120)    # seconds between attempts of one picture
 IMAGE_SECOND_ROUND_WAIT = 5 * 60      # before the failed pictures get a second round
 JOB_AUTO_RETRIES = 2                  # a failed project is put back in the queue this many times
 JOB_RETRY_WAIT = 15 * 60
-_FATAL_HINTS = ("не указан ключ", "ключ не подходит", "неверный ключ", "invalid api key", "unauthorized")
+_FATAL_HINTS = ("не указан ключ", "ключ не подходит", "неверный ключ", "invalid api key", "unauthorized",
+                # the video already sits in Studio as a draft: a retry would upload a second copy
+                "не опубликован", "черновиком")
 
 
 def _fatal(exc: Exception) -> bool:

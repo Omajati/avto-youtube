@@ -399,6 +399,42 @@ CHECKS_FOUND = re.compile(r"(found|detected|обнаруж|найден|выяв
                           re.I)
 
 
+# Studio's own words that the file is up: only after one of them (or a whole minute without any upload percentage)
+# the upload counts as finished.
+UPLOAD_DONE = re.compile(r"(Upload complete|Uploaded|Загрузка завершена|Видео загружено|Загружено полностью|"
+                         r"Subida completada|Se ha subido|Hochladen abgeschlossen|Upload abgeschlossen|Carregamento conclu|"
+                         r"Importation termin|Processing|Обработка|Обрабатывается|Procesando|Verarbeitung|Wird verarbeitet|"
+                         r"Processando|Traitement|Checks complete|Проверка завершена|Проверки завершены|Comprobaciones completadas|"
+                         r"Überprüfungen abgeschlossen|Checking|Проверка|Comprobando|Wird überprüft)", re.I)
+
+
+def _wait_upload(page, log, cancelled, max_s: int = 6 * 3600):
+    """Waits until the file is fully up: Studio says so in words, or no upload percentage for a whole minute."""
+    log("Жду, пока файл загрузится целиком…")
+    started, shown, quiet = time.time(), None, 0
+    time.sleep(3)
+    while True:
+        if cancelled():
+            raise _Stop()
+        if time.time() - started > max_s:
+            raise UserError("Видео загружается дольше шести часов. Ролик НЕ опубликован. Проверьте интернет в профиле Octo.")
+        pct = _upload_percent(page)
+        if pct is not None or _uploading(page):
+            quiet = 0
+            if pct is not None and pct != shown:
+                shown = pct
+                log(f"Файл загружается на YouTube: {pct}%")
+        else:
+            quiet += 1
+            if UPLOAD_DONE.search(_status_text(page)) and quiet >= 2:
+                log("Файл загружен целиком")
+                return
+            if quiet >= 12:  # a whole minute with no upload going on
+                log("Файл загружен (загрузка больше не идёт)")
+                return
+        time.sleep(5)
+
+
 def _status_text(page) -> str:
     """All the short status lines visible in the upload window (the footer and the Checks step)."""
     try:
@@ -413,27 +449,36 @@ def _status_text(page) -> str:
 
 
 def _wait_checks(page, log, cancelled, max_s: int = 3 * 3600):
-    """After the upload: waits until YouTube has finished its checks. «No issues found» -> True; a copyright or
-    rules problem -> UserError (the video stays a draft, not published); no verdict in time -> False."""
-    log("Файл загружен. Жду проверку YouTube (авторские права и правила)…")
-    started, last_log = time.time(), 0
+    """After the upload: waits until YouTube has finished its checks. «No issues found», seen twice 10 s apart with
+    no upload going on -> True. A copyright or rules problem, or no verdict in time -> UserError: the video is NOT
+    published or scheduled, it stays a draft in Studio for the owner to decide."""
+    log("Жду проверку YouTube (авторские права и правила)…")
+    started, last_log, ok_seen = time.time(), 0, 0
     while time.time() - started < max_s:
         if cancelled():
             raise _Stop()
         text = _status_text(page)
-        if CHECKS_OK.search(text) or any(CHECKS_BAD.search(l) and CHECKS_NONE.search(l) for l in text.splitlines()):
-            log("Проверка YouTube пройдена: проблем не найдено")
-            return True
         line = next((l for l in text.splitlines() if CHECKS_BAD.search(l) and CHECKS_FOUND.search(l)
                      and not CHECKS_OK.search(l) and not CHECKS_NONE.search(l)), "")
         if line:
             raise UserError(f"YouTube при проверке нашёл проблему: «{line[:160]}». Ролик загружен, но НЕ опубликован "
                             "(лежит черновиком в Studio): посмотрите шаг «Checks» и решите сами.")
+        good = CHECKS_OK.search(text) or any(CHECKS_BAD.search(l) and CHECKS_NONE.search(l) for l in text.splitlines())
+        if good and not _uploading(page):
+            ok_seen += 1
+            if ok_seen >= 2:
+                said = next((l for l in text.splitlines() if CHECKS_OK.search(l) or
+                             (CHECKS_BAD.search(l) and CHECKS_NONE.search(l))), "")
+                log(f"Проверка YouTube пройдена: «{said[:80]}»")
+                return True
+        else:
+            ok_seen = 0
         if time.time() - last_log > 300:
             last_log = time.time()
             log(f"Жду проверку YouTube… ({int((time.time() - started) // 60)} мин)")
         time.sleep(10)
-    return False
+    raise UserError("YouTube не закончил проверку за 3 часа. Ролик загружен, но НЕ опубликован и не запланирован "
+                    "(лежит черновиком в Studio): когда проверка закончится, опубликуйте его там сами.")
 
 
 def _upload_percent(page):
@@ -913,23 +958,14 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
                     "href", timeout=15_000) or ""
             except PWTimeout:
                 link = ""
-            log("Жду, пока файл загрузится целиком…")
-            started, shown = time.time(), None
-            time.sleep(3)
-            while _uploading(page):
-                if cancelled():
-                    raise _Stop()
-                if time.time() - started > 6 * 3600:
-                    raise UserError("Видео загружается дольше шести часов. Проверьте интернет в профиле Octo.")
-                pct = _upload_percent(page)
-                if pct is not None and pct != shown:
-                    shown = pct
-                    log(f"Файл загружается на YouTube: {pct}%")
-                time.sleep(5)
-            if not _wait_checks(page, log, cancelled):
-                log("YouTube не закончил проверку за 3 часа — публикую, проверка продолжится на YouTube")
+            # The Publish / Schedule button is pressed only after BOTH: the file is fully up and YouTube's checks
+            # said «no issues». Any doubt -> an error, and the video stays an unpublished draft.
+            _wait_upload(page, log, cancelled)
+            _wait_checks(page, log, cancelled)
+            if _uploading(page):
+                raise UserError("Studio снова показывает загрузку файла — ролик НЕ опубликован. Нажмите «Повторить».")
             _check_channel(page, want, log, quiet=True)
-            log("Публикую…")
+            log("Все проверки пройдены. " + ("Ставлю в расписание…" if scheduled else "Публикую…"))
             done = _publish_button(page)
             for _ in range(120):
                 try:
