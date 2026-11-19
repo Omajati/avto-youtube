@@ -160,7 +160,6 @@ DEFAULTS = {
     "folder_fast": False,  # «Быстрая сборка»: static frames, no effects, one encoding pass
     "folder_music": True,
     "folder_music_volume": 0.12,
-    "folder_auto_graphics": True,
     "folder_edit_style": "auto",
     "folder_edit_tempo": "balanced",
     "folder_effect_level": "normal",
@@ -231,3 +230,4 @@ def public_settings() -> dict:
         v = s.get(k) or ""
         s[k] = ("••••" + v[-4:]) if v else ""
     return s
+

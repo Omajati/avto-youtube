@@ -24,7 +24,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from . import captions, editing_styles, effects, graphics, local_whisper, media, tts
+from . import captions, editing_styles, effects, local_whisper, media, tts
 from .config import DATA_DIR, load_settings
 from .net import UserError
 
@@ -40,7 +40,9 @@ FILE_ID = re.compile(r"[0-9a-f]{12}\.[a-z0-9]{2,6}")
 _lock = threading.RLock()
 _rendering: set[str] = set()
 _transcribing: set[str] = set()
-LOCAL_GRAPHICS = {"none", "counter", "money", "percent", "bar", "timer", "stopwatch", "up", "down", "date", "rank", "keyword", "warning", "people", "location", "idea", "trophy", "name", "quote", "chapter", "document", "secret", "news", "timeline"}
+# Only the chapter card is left (drawn by the new engine, webmotion.py); the old data animations over the pictures
+# (counters, money, dates, names…) were removed — the owner, 19.11.2026. Motion now goes in as whole inserts.
+LOCAL_GRAPHICS = {"none", "chapter"}
 GRAPHIC_STYLES = {"classic", "glass", "neon", "minimal", "cinematic", "broadcast"}
 GRAPHIC_ANIMATIONS = {"pop", "slide", "pulse", "fade"}
 SUBTITLE_PRESETS = {"documentary", "karaoke", "words", "shorts", "clean", "box"}
@@ -729,146 +731,15 @@ def sync_scenes(project_id: str):
     return _public(_write(project))
 
 
-def _graphic_suggestions(project: dict) -> list[tuple[int, dict]]:
-    """Find facts and visual cues in the local Whisper transcript. No model or network call is used."""
-    words = project.get("transcript", {}).get("words", [])
-    scenes = project.get("scenes", [])
-    if not words or not scenes:
-        raise UserError("Сначала расшифруйте озвучку Whisper и добавьте сцены.")
-    ends, total = [], 0.0
-    for scene in scenes:
-        total += float(scene.get("duration") or 0)
-        ends.append(total)
-    suggestions, used_scenes, last_time = [], set(), -99.0
-    limit = 4 if project.get("format") == "short" else min(16, max(5, len(scenes) // 2))
-    for wi, raw in enumerate(words):
-        token = str(raw[0]).strip()
-        match = re.search(r"(?<!\w)([+−-]?[€$₽]?\d+(?:[.,]\d+)?[%€$₽]?)(?!\w)", token)
-        if not match:
-            continue
-        at = float(raw[1])
-        if at - last_time < (4 if project.get("format") == "short" else 8):
-            continue
-        scene_i = next((i for i, end in enumerate(ends) if at < end), len(scenes) - 1)
-        if scene_i in used_scenes:
-            continue
-        shown = match.group(1).replace("−", "-")
-        clean = re.sub(r"[^\d.,+-]", "", shown).replace(",", ".")
-        try:
-            number = float(clean)
-        except ValueError:
-            continue
-        following = []
-        for next_word in words[wi + 1:wi + 4]:
-            raw_next = str(next_word[0])
-            cleaned_next = re.sub(r"^[\W_]+|[\W_]+$", "", raw_next)
-            if cleaned_next and not re.search(r"\d", cleaned_next):
-                following.append(cleaned_next)
-            if re.search(r"[.!?…]", raw_next):
-                break
-        context = " ".join(following[:2])[:40]
-        low = (token + " " + context).lower()
-        if "%" in shown or "процент" in low or "percent" in low:
-            kind, unit = "percent", "%"
-        elif any(x in shown for x in ("₽", "$", "€")) or any(x in low for x in ("рубл", "доллар", "евро")):
-            kind = "money"
-            unit = next((x for x in ("₽", "$", "€") if x in shown), "₽" if "рубл" in low else "$" if "доллар" in low else "€")
-        elif number.is_integer() and 1000 <= number <= 2100:
-            kind, unit = "date", ""
-        elif any(x in low for x in ("место", "топ", "place", "rank", "top")):
-            kind, unit = "rank", ""
-        else:
-            kind, unit = "counter", ""
-        start = sum(float(s.get("duration") or 0) for s in scenes[:scene_i])
-        graphic = {"type": kind, "value": clean, "unit": unit, "label": context,
-                   "start": round(min(max(at - start - .15, 0), max(float(scenes[scene_i].get("duration") or 0) - .2, 0)), 2),
-                   "style": ("glass", "neon", "minimal", "classic")[scene_i % 4],
-                   "animation": ("pop", "slide", "pulse", "fade")[scene_i % 4], "auto": True}
-        suggestions.append((scene_i, graphic))
-        used_scenes.add(scene_i)
-        last_time = at
-        if len(suggestions) >= limit:
-            break
-    semantic_last = -99.0
-    rules = [
-        (r"опас|угроз|предупр|риск|danger|threat|warning|risk|gefahr|bedroh|warnung|risiko|peligr|amenaz|advert|riesgo", "warning"),
-        (r"вырос|рост|увелич|поднял|подорож|grow|grew|increase|rise|rose|wuchs|wachs|stieg|steig|creci|aument|subi", "up"),
-        (r"упал|паден|сниз|уменьш|сократ|подешев|fall|fell|drop|decrease|decline|fiel|sank|sink|cay|cae|baj|dismin", "down"),
-        (r"люд|человек|жител|населен|аудитор|people|person|population|resident|menschen|bevölker|einwohner|gente|personas|poblaci|habitant", "people"),
-        (r"город|страна|остров|место|регион|континент|city|country|island|place|region|continent|river|ocean|stadt|land|insel|fluss|ciudad|país|pais|isla|río|rio", "location"),
-        (r"иде|открыт|изобрел|придум|idea|discover|invent|entdeck|erfand|erfind|descubr|invent", "idea"),
-        (r"побед|достижен|чемпион|награ|winner|champion|award|achievement|sieg|gewann|meister|victori|gan[oó]|campe", "trophy"),
-        (r"архив|документ|доклад|письмо|записк|archive|document|report|letter|record|dokument|bericht|brief|archivo|documento|informe|carta", "document"),
-        (r"секрет|засекреч|тайн|secret|classified|mystery|geheim|rätsel|secreto|misterio", "secret"),
-        (r"новост|сообщил|данным|news|reported|according|nachricht|berichtet|noticia|inform[oó]", "news"),
-        (r"спустя|позже|затем|later|afterward|meanwhile|then|später|danach|después|luego", "timeline"),
-        (r"главн|важн|впервые|никогда|important|first|never|key|wichtig|erstmals|niemals|importante|nunca|primera", "keyword"),
-    ]
-    for wi, raw in enumerate(words):
-        at = float(raw[1])
-        if at - semantic_last < (5 if project.get("format") == "short" else 9):
-            continue
-        token = re.sub(r"^[\W_]+|[\W_]+$", "", str(raw[0])).lower().replace("ё", "е")
-        phrase_start, phrase_count, unit = wi, 3, ""
-        if token in ("звали", "имени", "называли", "named", "called", "name", "hieß", "namens", "llamaba", "llamado") and wi + 1 < len(words):
-            kind, phrase_start, phrase_count, unit = "name", wi + 1, 2, graphics.word("hero", project.get("language") or project.get("transcript", {}).get("language") or "ru")
-        elif re.search(r"сказал|сказала|говорил|заявил|ответил|said|says|stated|replied|sagte|erklärte|dijo|declaró", token) and wi + 1 < len(words):
-            kind, phrase_start, phrase_count = "quote", wi + 1, 5
-        elif re.search(r"глава|часть|далее|тем временем|chapter|part|next|meanwhile|kapitel|capítulo", token):
-            kind, phrase_start, phrase_count, unit = "chapter", wi + 1, 3, token
-        else:
-            kind = next((kind for pattern, kind in rules if re.search(pattern, token)), "")
-        if not kind:
-            continue
-        if kind == "location":
-            phrase_start, phrase_count, unit = wi + 1, 2, token
-        scene_i = next((i for i, end in enumerate(ends) if at < end), len(scenes) - 1)
-        if scene_i in used_scenes:
-            continue
-        phrase = []
-        for item in words[phrase_start:phrase_start + phrase_count]:
-            cleaned = re.sub(r"^[\W_]+|[\W_]+$", "", str(item[0]))
-            if cleaned:
-                phrase.append(cleaned)
-            if re.search(r"[.!?…]", str(item[0])):
-                break
-        start = sum(float(s.get("duration") or 0) for s in scenes[:scene_i])
-        special = kind in ("name", "location", "quote", "chapter", "document", "secret", "news", "timeline")
-        graphic = {"type": kind, "value": "", "unit": unit, "label": " ".join(phrase)[:40],
-                   "start": round(min(max(at - start - .1, 0), max(float(scenes[scene_i].get("duration") or 0) - .2, 0)), 2),
-                   "style": ("cinematic", "broadcast")[scene_i % 2] if special else ("glass", "neon", "minimal", "classic")[scene_i % 4],
-                   "animation": {"name": "slide", "location": "fade", "quote": "fade", "chapter": "pop", "document": "slide", "secret": "pop", "news": "slide", "timeline": "fade"}.get(kind, ("pop", "slide", "pulse", "fade")[scene_i % 4]), "auto": True}
-        suggestions.append((scene_i, graphic))
-        used_scenes.add(scene_i)
-        semantic_last = at
-        if len(suggestions) >= limit:
-            break
-    return suggestions
-
-
 def _apply_graphic_suggestions(project: dict) -> int:
-    added = 0
-    for scene_i, graphic in _graphic_suggestions(project):
-        scene = project["scenes"][scene_i]
-        current = scene.get("graphic") or {}
-        if current.get("type") not in (None, "", "none") and not current.get("auto"):
-            continue
-        scene["graphic"] = graphic
-        added += 1
-    return added
+    """The automatic data animations were removed (19.11.2026): nothing is added any more."""
+    return 0
 
 
 @router.post("/{project_id}/suggest-graphics")
 def suggest_graphics(project_id: str):
-    project = _read(project_id)
-    added = _apply_graphic_suggestions(project)
-    if not added:
-        raise UserError("Подходящих фактов или визуальных акцентов не найдено. Моушен можно настроить вручную.")
-    project["graphics_enabled"] = True
-    project["render"] = {"status": "idle", "progress": 0, "quality": "", "error": ""}
-    out = _public(_write(project))
-    out["graphics_added"] = added
-    return out
+    raise UserError("Автоматические надписи и цифры поверх картинок убраны: теперь моушен — это отдельные вставки "
+                    "нового движка (Сборка из папок).")
 
 
 def _editing_history() -> list[dict]:
@@ -1037,7 +908,7 @@ def _video_filter(scene: dict, width: int, height: int, fps: int, look: str) -> 
 
 
 def _clip_cache_key(project_dir: Path, scene: dict, width: int, height: int, fps: int,
-                    graphics_enabled: bool, color_look: str, fast: bool, lang: str = "ru") -> str:
+                    graphics_enabled: bool, color_look: str, fast: bool, lang: str = "ru", theme: str = "navy") -> str:
     source = project_dir / "media" / str(scene.get("source") or "")
     try:
         stat = source.stat()
@@ -1048,22 +919,31 @@ def _clip_cache_key(project_dir: Path, scene: dict, width: int, height: int, fps
         "source", "kind", "duration", "fit", "motion", "transition", "trim_start", "trim_end", "focus_x", "focus_y")}
     if graphics_enabled:
         visual["graphic"] = scene.get("graphic")
+        visual["theme"] = theme
         visual["lang"] = lang
     visual["motion"] = editing_styles.smooth_motion(str(visual.get("motion") or "none"))
     # 4: clips cached with the old shaking zooms are rendered again as smooth pans.
-    payload = [4, visual, source_state, width, height, fps, graphics_enabled, color_look, fast]
+    # 5: chapter cards drawn by the new engine (the old graphics overlays were removed)
+    payload = [5, visual, source_state, width, height, fps, graphics_enabled, color_look, fast]
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:24]
 
 
 def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: int, fps: int,
-                 graphics_enabled: bool = False, color_look: str = "natural", fast: bool = False, lang: str = "ru"):
+                 graphics_enabled: bool = False, color_look: str = "natural", fast: bool = False, lang: str = "ru",
+                 theme: str = "navy"):
     source = project_dir / "media" / scene["source"]
     duration = float(scene["duration"])
     frames = max(round(duration * fps), 1)
     graphic = deepcopy(scene.get("graphic") or {})
-    active_graphic = graphics_enabled and graphic.get("type") in LOCAL_GRAPHICS - {"none"}
-    base = out.with_name(f".{out.stem}.base.mp4") if active_graphic else out
+    if graphics_enabled and graphic.get("type") == "chapter":
+        # the chapter card: the new engine draws it over this scene's picture (no old overlay any more)
+        from . import webmotion
+        webmotion.render_chapter(graphic.get("label") or graphic.get("value") or "", out, duration, width, height, fps,
+                                 photo=source if scene["kind"] == "image" else None, theme=theme)
+        return
+    active_graphic = False
+    base = out
     if scene["kind"] == "image":
         image_look = color_look
         if True:
@@ -1091,19 +971,6 @@ def _render_clip(project_dir: Path, scene: dict, out: Path, width: int, height: 
                    "-crf", 21 if fast else 22, "-threads", 2 if fast else 0]
     media.run([*args, "-an", "-r", fps, *encode_args,
                "-pix_fmt", "yuv420p", base], "Фрагмент локального монтажа")
-    if active_graphic:
-        work = out.parent / f".{out.stem}-graphics"
-        if graphic["type"] == "date":
-            caption = graphic.get("label", "")
-            graphic["label"] = graphic.get("value", "")
-            graphic["unit"] = caption
-        graphic["start"] = min(max(float(graphic.get("start") or 0), 0), max(duration - .1, 0))
-        try:
-            overlay_args = ["-c:v", "libx264", "-preset", "superfast", "-crf", 18, "-threads", 2] if fast else None
-            graphics.overlay(base, out, [{**graphic, "lang": lang}], width, height, work, fps=fps, encode_args=overlay_args)
-        finally:
-            base.unlink(missing_ok=True)
-            shutil.rmtree(work, ignore_errors=True)
 
 
 def _mix(project_dir: Path, project: dict, video: Path, out: Path, total: float, sfx_path: Path | None = None,
@@ -1230,8 +1097,9 @@ def _render_worker(project_id: str, quality: str, cancel_check=None):
         if color_look == "auto" or color_look not in editing_styles.COLOR_LOOKS:
             color_look = "natural"
         graphics_enabled = bool(project.get("graphics_enabled"))
+        theme = project.get("motion_theme") if project.get("motion_theme") in ("navy", "graphite") else "navy"
         lang = project.get("language") or (project.get("transcript") or {}).get("language") or "ru"
-        cache_keys = [_clip_cache_key(project_dir, scene, width, height, fps, graphics_enabled, color_look, fast, lang)
+        cache_keys = [_clip_cache_key(project_dir, scene, width, height, fps, graphics_enabled, color_look, fast, lang, theme)
                       for scene in scenes]
         def render_one(index: int):
             check_cancel()
@@ -1243,7 +1111,7 @@ def _render_worker(project_id: str, quality: str, cancel_check=None):
                     shutil.copy2(cached, clips[index])
                 return index, True
             _render_clip(project_dir, scenes[index], clips[index], width, height, fps,
-                         graphics_enabled, color_look, fast, lang)
+                         graphics_enabled, color_look, fast, lang, theme)
             check_cancel()
             cache_tmp = cache_dir / f".{cache_keys[index]}-{index}.tmp.mp4"
             cache_tmp.unlink(missing_ok=True)

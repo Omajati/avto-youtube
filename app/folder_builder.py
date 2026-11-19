@@ -23,7 +23,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body
 
 from . import folder_inbox
-from . import captions, editing_styles, fast_render, net, graphics, images, llm, local_editor, media, motion, music, octo, tts, upload_package
+from . import captions, editing_styles, fast_render, net, images, llm, local_editor, media, motion, music, octo, tts, upload_package
 from .config import DATA_DIR, load_settings, save_settings
 from .net import UserError
 
@@ -56,7 +56,7 @@ FOLDER_OPTION_KEYS = (
     "folder_voice_es_id", "folder_voice_es_name",
     "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
     "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
-    "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo",
+    "folder_music", "folder_music_volume", "folder_edit_style", "folder_edit_tempo",
     "folder_effect_level", "folder_render_speed", "folder_fast", "folder_jobs_parallel", "image_parallel", "folder_image_parallel", "render_parallel",
     "folder_inbox_dir", "folder_work_dir", "folder_inbox_autostart", "folder_github_repo", "folder_github_branch",
 )
@@ -70,7 +70,7 @@ CHANNEL_OPTION_KEYS = (
     "folder_voice_es_id", "folder_voice_es_name", "folder_voice_en_id", "folder_voice_en_name",
     "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
     "folder_subtitle_preset", "folder_subtitle_font", "folder_subtitle_size", "folder_subtitles_position",
-    "folder_music", "folder_music_volume", "folder_auto_graphics", "folder_edit_style", "folder_edit_tempo", "folder_effect_level",
+    "folder_music", "folder_music_volume", "folder_edit_style", "folder_edit_tempo", "folder_effect_level",
 )
 INBOX_STATE_FILE = ROOT / "inbox_state.json"
 INBOX_INTERVAL = 60
@@ -2267,11 +2267,11 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
             try:
                 clip.parent.mkdir(parents=True, exist_ok=True)
                 tmp = clip.with_suffix(".tmp.mp4")
-                before = len(motion.FALLBACKS)
+                before = len(motion.FAILURES)
                 try:
                     motion.render(g, tmp, seconds, 1920, 1080, fps, lang, prev=prev, photo=media_map.get(scene["id"]))
                 finally:
-                    failed = motion.FALLBACKS[before:]
+                    failed = motion.FAILURES[before:]
                     if failed:  # the owner must see it: the insert was drawn the old, flat way (or not at all)
                         job = _jobs.get(job_id) or {}
                         note = (f"[{lang.upper()}] Вставка «{motion.KINDS.get(g['type'], g['type'])}» в сцене {scene['id']} "
@@ -2385,8 +2385,8 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
         "effect_level": options.get("folder_effect_level") or "normal", "render_speed": options.get("folder_render_speed") or "fast",
         "subtitles": bool(options.get("folder_subtitles", True)), "subtitles_position": options.get("folder_subtitles_position") or "mid_low",
         "subtitle_preset": options.get("folder_subtitle_preset") or "karaoke", "subtitle_font": options.get("folder_subtitle_font") or "auto",
-        "subtitle_size": options.get("folder_subtitle_size") or "medium", "graphics_enabled": bool(options.get("folder_auto_graphics", True) or options.get("folder_chapters", True)),
-        "graphics_auto": bool(options.get("folder_auto_graphics", True)), "auto_sfx": True,
+        "subtitle_size": options.get("folder_subtitle_size") or "medium", "graphics_enabled": bool(options.get("folder_chapters", True)),  # only the chapter cards (new engine)
+        "graphics_auto": False, "motion_theme": options.get("folder_motion_theme") or "navy", "auto_sfx": True,
         "render_parallel": max(1, min(int(options.get("render_parallel") or 3), 4)),
     })
     local_scenes = []
@@ -2459,15 +2459,6 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
             _link_or_copy(picked, media_dir / local_music)
             project["music"] = {"source": local_music, "name": picked.name, "duration": media.video_duration(picked)}
     project["subtitle_preset"] = options.get("folder_subtitle_preset") or "karaoke"
-    if options.get("folder_auto_graphics", True):
-        try:
-            local_editor._apply_graphic_suggestions(project)
-        except UserError:
-            pass
-        for target in project["scenes"]:
-            if target.get("motion_insert") and (target.get("graphic") or {}).get("auto"):
-                target["graphic"] = {"type": "none", "value": "", "unit": "", "label": "", "start": .2,
-                                     "style": "classic", "animation": "pop", "auto": False}
     chapters = chapters or {}
     if options.get("folder_chapters", True):
         for source in scenes:

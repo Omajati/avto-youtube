@@ -393,7 +393,6 @@ async function viewNew() {
     <label class="check"><input type="checkbox" id="subs-v" ${s.subtitles_long ? "checked" : ""}> <span id="subs-v-l">Субтитры на длинном видео</span></label>
     <label class="check long-only"><input type="checkbox" id="subs-s" ${s.subtitles_short ? "checked" : ""}> Субтитры на шортсе</label>
     <label class="check"><input type="checkbox" id="subs-smart" checked> Субтитры в свободном месте кадра <span class="muted small">(если внизу кадра лицо, надпись или много деталей, строка переносится в спокойное место кадра)</span></label>
-    <label class="check"><input type="checkbox" id="gfx" checked> Анимации данных <span class="muted small">(счётчики, деньги, проценты, таймеры, сравнения, галочки, стрелки, ключевые слова в момент, когда голос их называет; бесплатно, один короткий запрос к ИИ на ролик)</span></label>
     <label class="check"><input type="checkbox" id="ideapause" ${lsGet("ay_ideapause", "1") === "1" ? "checked" : ""} onchange="lsSet('ay_ideapause', this.checked ? '1' : '0')"> Выбирать тему вручную: показать лучшие темы и подождать, пока я отмечу одну <span class="muted small">(до сценария, почти бесплатно)</span></label>
     <label class="check"><input type="checkbox" id="pause" ${lsGet("ay_pause", "1") === "1" ? "checked" : ""} onchange="lsSet('ay_pause', this.checked ? '1' : '0')"> Ручная правка текста: остановиться сразу после проверки редактором, чтобы я прочитал и при желании исправил текст <span class="muted small">(дальше ничего не делается, пока вы не нажмёте «Продолжить»)</span></label>
     <div id="est" class="muted small"></div>
@@ -476,7 +475,6 @@ async function viewNew() {
     $("#itemsel").querySelectorAll("[data-item]").forEach(b => b.classList.toggle("on", wantI.has(b.dataset.item)));
     syncItems();
     $("#fx").value = p ? p.fx_mode || "light" : (s.fx_mode || "light");
-    $("#gfx").checked = p ? p.graphics !== false : true;
     $("#subs-smart").checked = p ? p.subs_smart !== false : true;
     if (p && p.format === "short") $("#subs-v").checked = p.subs_short;
   };
@@ -498,7 +496,7 @@ async function viewNew() {
   };
   $("#go").onclick = async () => {
     if (!curProj && projs.length && !confirm("Проект не выбран. Ролик возьмёт общую нишу из настроек и общий голос, а не нишу и голос вашего проекта. Всё равно запустить?\n\nЧтобы взять настройки проекта, нажмите «Отмена» и выберите проект вверху страницы.")) return;
-    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, voice_off: $("#mute").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan") ? $("#chan").value : undefined, subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, anim_pause: $("#anim-p").checked, images_pause: $("#img-p").checked, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, graphics: $("#gfx").checked, subs_smart: $("#subs-smart").checked, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
+    const jobs = await api("/api/jobs", { json: { topic: $("#topic").value, duration_min: +$("#dur").value, short_seconds: +$("#sec").value, music_mode: $("#music").value, count: +$("#count").value, niche: $("#niche").value, make_short: $("#short").checked, voice_off: $("#mute").checked, review_pause: $("#pause").checked, idea_pause: $("#ideapause").checked, channel_id: $("#chan") ? $("#chan").value : undefined, subs_video: $("#subs-v").checked, subs_short: $("#subs-s").checked, anim_mode: $("#anim").value, anim_short: $("#anim-s").checked, anim_count: +$("#anim-n").value, anim_pause: $("#anim-p").checked, images_pause: $("#img-p").checked, project_id: curProj, language: $("#lang").value, format: fmt, fx_mode: $("#fx").value, subs_smart: $("#subs-smart").checked, characters: [...main.querySelectorAll("[data-char].on")].map(b => b.dataset.char), items: [...main.querySelectorAll("[data-item].on")].map(b => b.dataset.item) } });
     draftClear(); toast("Запущено"); location.hash = jobs.length === 1 ? `#/job/${jobs[0].id}` : "#/jobs";
   };
   $("#demo").onclick = async () => {
@@ -1077,7 +1075,6 @@ async function viewProject(id) {
       <label class="check pj-long"><input type="checkbox" data-q="subs_video" ${p.subs_video ? "checked" : ""}> Субтитры на длинном видео</label>
       <label class="check"><input type="checkbox" data-q="subs_short" ${p.subs_short ? "checked" : ""}> <span id="pj-subs-l">Субтитры на шортсе</span></label>
       <label class="check"><input type="checkbox" data-q="subs_smart" ${p.subs_smart !== false ? "checked" : ""}> Субтитры в свободном месте кадра <span class="muted small">(если внизу кадра лицо, надпись или много деталей, строка переносится в спокойное место кадра)</span></label>
-      <label class="check"><input type="checkbox" data-q="graphics" ${p.graphics !== false ? "checked" : ""}> Анимации данных на видео <span class="muted small">(счётчики, деньги, проценты, таймеры, сравнения, галочки, стрелки, ключевые слова в момент, когда голос их называет; бесплатно, один короткий запрос к ИИ на ролик)</span></label>
       <label class="check"><input type="checkbox" data-q="made_for_kids" ${p.made_for_kids ? "checked" : ""}> Ролики для детей <span class="muted small">(сказочный добрый тон; на YouTube ставится отметка «для детей», по закону это обязательно для детского контента)</span></label>
       <label class="check"><input type="checkbox" data-q="same_place" ${p.same_place !== false ? "checked" : ""}> Каждое место выглядит одинаково во всех своих кадрах <span class="muted small">(сначала рисуется каждое место действия, и все сцены там рисуются по этому образцу; нужен ключ fal.ai; дороже: каждая сцена рисуется по образцу, ~$0.04 с Nano Banana или ~$0.02 с FLUX.2 Dev Edit (выбор в Настройках → Картинки) вместо ~$0.003 у Flux Schnell; в экономном режиме крупные планы и детали без персонажей рисуются без образца)</span></label>
       <label class="check" style="margin-left:24px"><input type="checkbox" data-q="keep_places" ${p.keep_places ? "checked" : ""}> Сохранять локации <span class="muted small">(для сериалов: место, нарисованное в одной серии, сохраняется в проекте, и следующие серии берут его готовым, бесплатно и в том же виде)</span></label>
@@ -2277,7 +2274,6 @@ function revoiceBox(d) {
 function fxRow(d) {
   const busy = d.job.status === "running", o = d.job.options;
   return `<div class="row" style="margin-top:8px">
-    <label class="check" style="margin:0"><input type="checkbox" class="asm-opt" data-k="graphics" ${o.graphics ? "checked" : ""} ${busy ? "disabled" : ""}> Анимации данных</label>
     <label class="check" style="margin:0"><input type="checkbox" class="asm-opt" data-k="subs_smart" ${o.subs_smart ? "checked" : ""} ${busy ? "disabled" : ""}> Субтитры в свободном месте</label>
     <span class="muted small">видео пересоберётся</span></div>
   <div class="row" style="margin-top:8px"><span>Эффекты:</span>
@@ -3732,7 +3728,6 @@ async function viewFolderBuilder() {
     ["folder_chapters", "Названия глав", "Текст главы автоматически появляется на сценах «КАРТОЧКА ГЛАВЫ»."],
     ["folder_subtitles", "Субтитры на видео", "Идут точно за озвучкой. В быстрой сборке — обычные строки, в полной — в стиле, выбранном ниже (караоке, документальные и т. д.)."],
     ["folder_music", "Музыка из библиотеки", "Подходящий трек выбирается автоматически, зацикливается и приглушается под голос."],
-    ["folder_auto_graphics", "Автоматический моушен", "Названия, даты, числа и смысловые акценты появляются там, где подходят."],
     ["folder_thumbs", "Превью вместе с роликом", "Для каждого языка рисуется превью_EN.png (и т. п.) рядом с видео: картинка по промпту из раздела «2. Превью» файла загрузки, надпись — по тексту оттуда же. Своё превью_XX.png в папке языка не трогается."],
     ["folder_motion_inserts", "Карты, глобус, линии времени и графики", "По всему ролику, гуще в первой половине: где текст называет цифры, места, даты, документы, цитаты, вместо картинки рисуется анимированная вставка (до 12 секунд). Плюс вставки, которые заказал сценарист (вставки.txt). Нужен ключ Claude или OpenAI. В «Быстрой сборке» вставок нет."],
   ];
@@ -3907,7 +3902,7 @@ async function viewFolderBuilder() {
     drawChannelOcto();
     main.querySelectorAll("[data-fb-lang]").forEach(x => x.addEventListener("change", drawChannelOcto));
   }
-  const fastOff = ["folder_subtitle_preset", "folder_music", "folder_music_source", "folder_music_volume", "folder_edit_style", "folder_edit_tempo", "folder_effect_level", "folder_chapters", "folder_auto_graphics", "folder_motion_inserts", "folder_render_speed", "render_parallel"];
+  const fastOff = ["folder_subtitle_preset", "folder_music", "folder_music_source", "folder_music_volume", "folder_edit_style", "folder_edit_tempo", "folder_effect_level", "folder_chapters", "folder_motion_inserts", "folder_render_speed", "render_parallel"];
   const markFast = () => {
     const on = $("#fb-fast").checked;
     fastOff.forEach(k => { const el = main.querySelector(`[data-fbo="${k}"]`); const box = el && (el.closest("label.check") || el); if (box) box.classList.toggle("fb-fast-off", on); });
@@ -4075,7 +4070,7 @@ async function viewLocalEditor(id) {
   let saveTimer = null, saving = false;
   const motionOptions = [["none", "Без движения"], ["pan_left", "Панорама влево"], ["pan_right", "Панорама вправо"]]; // наезды и вертикальные панорамы дёргались — убраны
   const transitionOptions = [["cut", "Обычный стык"], ["fade", "Через затемнение"], ["dissolve", "Мягкий наплыв"], ["flash", "Белая вспышка"], ["light_leak", "Световая засветка"], ["film", "Плёночная склейка"]];
-  const graphicOptions = [["none", "Без моушен-графики"], ["counter", "Крупная цифра / счётчик"], ["money", "Деньги"], ["percent", "Процент в круге"], ["bar", "Шкала заполнения"], ["timer", "Обратный отсчёт"], ["stopwatch", "Секундомер"], ["up", "Стрелка роста"], ["down", "Стрелка падения"], ["date", "Дата"], ["rank", "Место в рейтинге"], ["keyword", "Крупная надпись"], ["warning", "Предупреждение"], ["people", "Люди / аудитория"], ["location", "Кинематографическая локация"], ["name", "Имя / нижняя треть"], ["quote", "Цитата"], ["chapter", "Глава / раздел"], ["document", "Архивный документ"], ["secret", "Печать «Секретно»"], ["news", "Новостная плашка"], ["timeline", "Временная линия"], ["idea", "Идея / открытие"], ["trophy", "Достижение / рекорд"]];
+  const graphicOptions = [["none", "Без карточки"], ["chapter", "Карточка главы (новый движок)"]];
   const graphicStyles = [["classic", "Классический"], ["glass", "Стекло"], ["neon", "Неон"], ["minimal", "Минимальный"], ["cinematic", "Кинематографический"], ["broadcast", "Эфирный"]];
   const graphicAnimations = [["pop", "Пружина"], ["slide", "Выезд сбоку"], ["pulse", "Пульс"], ["fade", "Плавное появление"]];
   const subtitlePresets = [["documentary", "Документальный"], ["karaoke", "Караоке с заливкой"], ["words", "Слово за словом"], ["shorts", "Крупный Shorts"], ["clean", "Чистый статичный"], ["box", "На полупрозрачной плашке"]];
@@ -4196,8 +4191,8 @@ async function viewLocalEditor(id) {
       <select id="le-subs-size">${options([["small", "Мелкие"], ["medium", "Средние"], ["large", "Крупные"]], p.subtitle_size || "medium")}</select>
       <select id="le-subs-pos">${options([["low", "Внизу"], ["mid_low", "Ниже середины"], ["mid", "Чуть ниже центра"], ["center", "По центру"]], p.subtitles_position || "mid_low")}</select>
       ${tr.status === "done" ? `<a class="btn sm" href="${tr.srt_url || `/api/local-editor/${p.id}/output/subtitles`}">Скачать SRT</a>` : `<span class="muted small">Появятся после расшифровки голоса Whisper.</span>`}</div></div>
-    <div class="card le-graphics-master"><div class="row"><h2 class="grow">Моушен-графика</h2><label class="check le-mastercheck"><input id="le-gfx-auto" type="checkbox" ${p.graphics_auto ? "checked" : ""}> Определять автоматически</label><label class="check le-mastercheck"><input id="le-gfx-enabled" type="checkbox" ${p.graphics_enabled ? "checked" : ""}> Использовать в ролике</label></div>
-      <div class="row"><button id="le-gfx-detect" ${p.transcript?.status !== "done" || !p.scenes.length || busy() ? "disabled" : ""}>Обновить автоподбор</button><span class="muted small">Whisper распознаёт цифры, имена, локации, цитаты, главы, деньги, даты, рост и предупреждения. 6 стилей и 4 варианта появления. Никаких API.</span></div></div>
+    <div class="card le-graphics-master"><div class="row"><h2 class="grow">Карточки глав</h2><label class="check le-mastercheck"><input id="le-gfx-enabled" type="checkbox" ${p.graphics_enabled ? "checked" : ""}> Использовать в ролике</label></div>
+      <div class="muted small">Старые надписи и цифры поверх картинок убраны. Моушен теперь — отдельные вставки нового движка (в «Сборке из папок»).</div></div>
     <div class="row le-timeline-head"><h2 class="grow">Таймлайн</h2><span class="muted small">Перетаскивайте сцены за ⋮⋮ или используйте стрелки</span></div>
     <details class="card le-bulk-tools le-advanced"><summary><b>Точная настройка</b> — массовые движения, переходы и подмена фото видео</summary><div class="row"><b>Видео вместо фото</b>
       <button id="le-match-media" class="sm" ${busy() || !imageCount || !videoCount ? "disabled" : ""}>Сопоставить по имени или номеру</button>
@@ -4282,8 +4277,6 @@ async function viewLocalEditor(id) {
     $("#le-subs-size")?.addEventListener("change", e => { p.subtitle_size = e.target.value; saveSoon(); });
     $("#le-subs-pos")?.addEventListener("change", e => { p.subtitles_position = e.target.value; saveSoon(); });
     $("#le-gfx-enabled")?.addEventListener("change", e => { p.graphics_enabled = e.target.checked; saveSoon(); });
-    $("#le-gfx-auto")?.addEventListener("change", async e => { p.graphics_auto = e.target.checked; if (e.target.checked) p.graphics_enabled = true; await save(true); if (e.target.checked && p.transcript?.status === "done" && p.scenes.length) { try { p = await api(`/api/local-editor/${id}/suggest-graphics`, { method: "POST" }); } catch (x) { } } draw(); toast(e.target.checked ? "Автоподбор моушена включён" : "Автоподбор моушена выключен"); });
-    $("#le-gfx-detect")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/suggest-graphics`, { method: "POST" }); draw(); toast(`Добавлено анимаций: ${p.graphics_added || 0}`); } catch (e) { toast(e.message, true); } });
     $("#le-match-media")?.addEventListener("click", async () => { try { p = await api(`/api/local-editor/${id}/match-media`, { method: "POST" }); const count = p.media_replaced || 0; if (p.transcript?.status === "done") p = await api(`/api/local-editor/${id}/sync-scenes`, { method: "POST" }); draw(); toast(`Видео поставлено вместо фото: ${count}`); } catch (e) { toast(e.message, true); } });
     $("#le-apply-motion")?.addEventListener("click", async () => { const value = $("#le-motion-all").value, cycle = ["pan_left", "pan_right"]; let i = 0; p.scenes.forEach(s => { if (s.kind === "image") s.motion = value === "auto" ? cycle[i++ % cycle.length] : value; }); await save(true); draw(); toast(value === "auto" ? "Движения камеры автоматически чередуются" : "Движение применено ко всем фотографиям"); });
     $("#le-apply-transition")?.addEventListener("click", async () => { const value = $("#le-transition-all").value, cycle = ["cut", "cut", "cut", "fade", "cut", "dissolve"]; p.scenes.forEach((s, i) => { s.transition = value === "auto" ? cycle[i % cycle.length] : value; }); await save(true); draw(); toast(value === "auto" ? "Переходы расставлены: обычные склейки преобладают" : "Переход применён ко всем сценам"); });
@@ -4381,7 +4374,6 @@ async function viewMontage() {
         <label class="f">Эффекты и звуки</label><select id="mt-fx">${opt(Object.entries(META.fx_modes), p.fx_mode || s.fx_mode || "light")}</select>
         <label class="f">Скорость готового ролика <span class="hint">голос и картинка вместе, тон голоса не меняется</span></label>
         <select id="mt-speed">${opt([1, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.4, 1.5].map(x => [x, x === 1 ? "Обычная" : `×${x}`]), 1)}</select>
-        <label class="check"><input type="checkbox" id="mt-gfx" ${p.graphics !== false ? "checked" : ""}> Анимации данных <span class="hint">цифры, таймеры, стрелки, галочки</span></label>
         <label class="check"><input type="checkbox" id="mt-smart" ${p.subs_smart !== false ? "checked" : ""}> Субтитры в свободном месте кадра</label>
         <label class="check"><input type="checkbox" id="mt-subs" ${(fmt === "short" ? p.subs_short ?? s.subtitles_short : p.subs_video ?? s.subtitles_long) ? "checked" : ""}> Субтитры на видео</label>
       </div><div>
@@ -4422,7 +4414,7 @@ async function viewMontage() {
         const up = async (url, file, what) => { toast(`Загружаю ${what}…`); const r = await fetch(url, { method: "POST", body: file }); let d = {}; try { d = await r.json(); } catch (e) {} if (!r.ok) throw new Error(d.error || d.detail || `Не удалось загрузить ${what}`); return d; };
         try {
           const body = { polish: true, topic: $("#mt-title").value, project_id: cur, format: $("#mt-fmt").value, language: $("#mt-lang").value,
-            images_pause: true, review_pause: false, idea_pause: false, music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, atmos_mode: $("#mt-atm").value, graphics: $("#mt-gfx").checked,
+            images_pause: true, review_pause: false, idea_pause: false, music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, atmos_mode: $("#mt-atm").value,
             subs_smart: $("#mt-smart").checked, subs_video: $("#mt-subs").checked, subs_short: $("#mt-subs").checked, cta_short: $("#mt-cta").value, cta_lang: $("#mt-cta-lang").value, anim_mode: "off" };
           if ($("#mt-polishtext").value.trim()) body.montage_script = $("#mt-polishtext").value;
           body.own_video_upload = (await up(`/api/uploads?name=${encodeURIComponent(pf.name)}`, pf, "ролик")).id;
@@ -4442,7 +4434,7 @@ async function viewMontage() {
         images_pause: imgMode !== "ai", review_pause: false, idea_pause: false,
         voice_id: v.value || undefined, voice_name: v.value ? (vo.dataset.name || vo.textContent) : undefined,
         voice_stability: $("#mt-voice_stability").value, voice_similarity: $("#mt-voice_similarity").value, voice_style: $("#mt-voice_style").value, voice_speed: $("#mt-voice_speed").value,
-        music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, atmos_mode: $("#mt-atm").value, graphics: $("#mt-gfx").checked, subs_smart: $("#mt-smart").checked, speed_video: +$("#mt-speed").value,
+        music_mode: $("#mt-music").value, fx_mode: $("#mt-fx").value, atmos_mode: $("#mt-atm").value, subs_smart: $("#mt-smart").checked, speed_video: +$("#mt-speed").value,
         subs_video: $("#mt-subs").checked, subs_short: $("#mt-subs").checked, cta_short: $("#mt-cta").value, cta_lang: $("#mt-cta-lang").value,
         anim_mode: $("#mt-anim").value, anim_count: +$("#mt-anim-n").value, anim_pause: $("#mt-anim-p").checked };
       $("#mt-go").disabled = true;

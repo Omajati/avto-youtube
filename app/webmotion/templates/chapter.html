@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#veil{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,.45) 0%,rgba(0,0,0,.72) 100%)}
+#box{position:absolute;left:8%;right:8%;top:50%;transform:translateY(-50%);text-align:center}
+#cnum{font-family:Montserrat;font-weight:600;font-size:28px;letter-spacing:.5em;text-transform:uppercase;color:var(--accent);opacity:0}
+#line{width:90px;height:4px;border-radius:2px;background:var(--accent);margin:26px auto 30px;transform-origin:50% 50%}
+#ctitle{font-family:Oswald;font-weight:700;font-size:104px;line-height:1.05;color:#fff;text-transform:uppercase;letter-spacing:.02em;text-shadow:0 6px 40px rgba(0,0,0,.6)}
+</style></head><body>
+<canvas id="bg"></canvas><img id="photo" alt=""><div id="veil"></div>
+<div id="box"><div id="cnum"></div><div id="line"></div><div id="ctitle"></div></div>
+<script src="card_common.js"></script>
+<script>
+// A chapter card over the scene's picture: «ГЛАВА 2», an accent line, the chapter's title in large letters.
+// SPEC: {photo, number ("Глава 2"), title, theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 120);
+  const $ = id => document.getElementById(id);
+  const bg = $("bg"); bg.width = W; bg.height = H;
+  const has = await C.loadPhoto($("photo"), S.photo);
+  if (!has) $("photo").style.display = "none";
+  $("cnum").textContent = S.number || ""; $("ctitle").textContent = S.title || "";
+  if (!S.number) $("cnum").style.display = "none";
+  await C.ready();
+  const fit = Math.min(1, 1500 / Math.max($("ctitle").scrollWidth, 1), 380 / Math.max($("ctitle").offsetHeight, 1));
+  if (fit < 1) $("ctitle").style.fontSize = `${104 * fit}px`;
+  window.renderFrame = f => {
+    if (has) C.photo($("photo"), f, N); else C.background(bg, f);
+    C.blurIn($("cnum"), C.ease(C.seg(f, 0.04 * N, 0.04 * N + 14)), 0);
+    const l = C.out3(C.seg(f, 0.08 * N, 0.08 * N + 18)); $("line").style.transform = `scaleX(${l})`;
+    C.blurIn($("ctitle"), C.ease(C.seg(f, 0.12 * N, 0.12 * N + 18)), 16);
+  };
+  window.renderFrame(0); window.READY = true;
+})();
+</script></body></html>

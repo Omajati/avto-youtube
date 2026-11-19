@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -505,6 +506,21 @@ def render_kind(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int,
         raise
     except Exception as e:  # noqa: BLE001 - the browser's own errors
         raise UserError(f"Моушен «{kind}» не нарисовался: {str(e).splitlines()[0][:200] if str(e) else type(e).__name__}")
+
+
+def render_chapter(title: str, out: Path, seconds: float, w: int, h: int, fps: int, photo: Path | None = None,
+                   theme: str = "navy"):
+    """A chapter card over the scene's picture. «Глава 2. Очередь» → «ГЛАВА 2» above, «Очередь» large."""
+    t = " ".join(str(title or "").split())
+    m = re.match(r"(?i)^((?:глава|часть|chapter|part|capítulo|parte|kapitel|teil)\s+[\w\dIVXLC]+)[.:—–-]?\s*(.*)$", t)
+    number, name = (m.group(1), m.group(2)) if m and m.group(2) else ("", t)
+    try:
+        render("chapter", {"number": number[:30], "title": name[:90], "theme": theme if theme in ("navy", "graphite") else "navy"},
+               out, seconds, w, h, fps, photo=photo if photo and Path(photo).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") else None)
+    except UserError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise UserError(f"Карточка главы не нарисовалась: {str(e).splitlines()[0][:200] if str(e) else type(e).__name__}")
 
 
 def globe_ok(spec: dict) -> bool:

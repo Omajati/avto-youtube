@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import animate, atmos, balance, captions, cta, db, effects, graphics, images, llm, local_whisper, media, motion, music as musiclib, take, thumb, tts
+from . import animate, atmos, balance, captions, cta, db, effects, images, llm, local_whisper, media, motion, music as musiclib, take, thumb, tts
 from .config import JOBS_DIR, MUSIC_DIR, PROMPTS_DIR, PROMPTS_DEFAULT_DIR, load_settings
 from .net import Cancelled, UserError
 
@@ -3904,18 +3904,7 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     blocked = {}  # caption places taken at some moments by an animation or the subscribe buttons
     opts = (db.get(c.id) or {}).get("options") or c.opts
     parts = list(clips)
-    if opts.get("graphics"):
-        shown = [g for g in _graphics_for(c, prefix, scenes, durations, total, height > width)
-                 if int(g.get("index", -1)) not in moving]  # a map or a timeline already shows its own data
-        if shown:
-            try:
-                parts = _graphics_on_clips(clips, shown, bounds, width, height, fps, clips_dir)
-                c.log(f"Анимации данных: {len(shown)} ({', '.join(graphics.TEMPLATES[g['type']][0].lower() for g in shown)}).")
-                if height <= width:  # on a wide video the animations sit at the top, where captions could go
-                    blocked["top"] = [(g["start"], g["start"] + graphics.DUR) for g in shown]
-            except Exception as e:  # noqa: BLE001
-                parts = list(clips)
-                c.log(f"Анимации данных добавить не получилось: {e}")
+    # (the old data animations over the clips were removed on 19.11.2026: motion goes in as whole inserts)
     media.concat_clips(parts, joined)
     for p_ in parts:
         if p_.name.startswith("gfx_"):
@@ -3968,61 +3957,6 @@ def _render(c: Ctx, prefix: str, scenes: list, durations: list, narration: Path,
     sfx_file.unlink(missing_ok=True)
     return {"file": str(out.relative_to(c.dir)), "duration": total, "music": music.name if music else "",
             "subtitles": subs}
-
-
-def _graphics_on_clips(clips: list, shown: list, bounds: list, width: int, height: int, fps: int,
-                       work: Path) -> list:
-    """Draws the data animations only over the scene clips they fall on, into copies, instead of re-encoding the
-    whole video for a few seconds of animation. Returns the clip list to join, with those copies in place."""
-    parts = list(clips)
-    drawn = work / "gfx_frames"
-    try:
-        for i, clip in enumerate(clips):
-            a, b = bounds[i][0] / fps, bounds[i][1] / fps  # the clip's own place in the joined video, in whole frames
-            here = []
-            for k, g in enumerate(shown):
-                if g["start"] < b and g["start"] + graphics.DUR > a and g.get("type") in graphics.TEMPLATES:
-                    folder = drawn / f"{k:02d}"
-                    if not folder.exists():
-                        graphics._frames(g, folder)
-                    here.append({**g, "start": round(g["start"] - a, 3), "_frames": folder / "f%03d.png"})
-            if not here:
-                continue
-            out = work / f"gfx_{i:03d}.mp4"
-            graphics.overlay(clip, out, here, width, height, work, fps=fps)
-            parts[i] = out
-    finally:
-        shutil.rmtree(drawn, ignore_errors=True)
-    return parts
-
-
-def _graphics_for(c: Ctx, prefix: str, scenes: list, durations: list, total: float, vertical: bool) -> list:
-    """Data animations of this video with their start times. The plan (which scene, which template, what text)
-    is asked once and kept, so a new assembly costs nothing."""
-    path = c.dir / f"graphics_{prefix}.json"
-    plan = read_json(path)
-    if plan is None:
-        if c.demo:
-            plan = {"items": []}
-        elif not llm.has_key(_check_settings(c.settings)):
-            c.log("Ключа Claude нет: анимации цифр и надписей пропущены.")
-            return []
-        else:
-            c.log("Ищу в тексте цифры и важные моменты для анимаций…")
-            try:
-                plan = llm.call_json(_check_settings(c.settings), "You plan on-screen data animations. Answer only with JSON.",
-                                     graphics.plan_prompt(scenes, vertical, c.lang), graphics.SCHEMA, c.usage, 6000)
-                c.save_usage()
-            except Exception as e:  # noqa: BLE001 - animations are an extra, never a reason to lose the video
-                c.log(f"Подобрать анимации не получилось ({e}), ролик собирается без них.")
-                return []
-        write_json(path, plan)
-    try:
-        words = captions.timeline(c.dir, prefix, scenes, durations)
-        return graphics.place(plan.get("items") or [], words, durations, total, vertical)
-    except Exception as e:  # noqa: BLE001
-        c.log(f"Расставить анимации не получилось ({e}), ролик собирается без них.")
-        return []
 
 
 SCHEMA_MUSIC = {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}
