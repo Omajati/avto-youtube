@@ -28,7 +28,7 @@ from .net import UserError
 PIC_EXT = (".png", ".jpg", ".jpeg", ".webp")
 RED, BLACK, WHITE = (220, 32, 38), (12, 12, 12), (255, 255, 255)
 YELLOW = (255, 212, 0)
-LAYOUTS = "ABCDEFGH"
+LAYOUTS = "ABCDEFGHI"
 FONTS = ["/System/Library/Fonts/Supplemental/Arial Black.ttf", "/System/Library/Fonts/Supplemental/Impact.ttf",
          "/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/Library/Fonts/Arial Bold.ttf",
          "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
@@ -89,7 +89,7 @@ def parse_thumb_spec(path: Path) -> dict:
 
     prompt = " ".join(x.strip() for x in (sec("промт", "без") or sec("промпт", "без") or sec("промт") or "").splitlines()
                       if x.strip())
-    lines, line_pos = [], []
+    lines, line_pos, underline = [], [], []
     for raw in (sec("текст", start=True) or sec("строк", start=True)).splitlines():
         if not raw.strip() or "—" not in raw and " - " not in raw:
             continue
@@ -106,6 +106,11 @@ def parse_thumb_spec(path: Path) -> dict:
         base = _color(spec.split(",")[0]) or WHITE
         parts = [(words, base)]
         for phrase, how in re.findall(r"«([^»]+)»\s*([^,«]+)", spec):
+            if re.search(r"подч[её]рк|underline", how, re.I):
+                # «УТИЛЬ» подчеркнуть красным: the word keeps its colour and gets a brush stroke under it
+                if phrase.upper() in words.upper():
+                    underline.append((len(lines), phrase, _color(how.split("подч")[-1]) or RED))
+                continue
             rgb = _color(how)
             i = words.upper().find(phrase.upper())
             if rgb and i >= 0:
@@ -130,7 +135,7 @@ def parse_thumb_spec(path: Path) -> dict:
     layout = (m.group(1).upper().translate(str.maketrans("АВСЕНВ", "ABCEHB")) if m else "A")
     if layout not in LAYOUTS:
         layout = "A"
-    return {"prompt": prompt, "lines": lines, "line_pos": line_pos, "plate": plate, "plate_bg": plate_bg,
+    return {"prompt": prompt, "lines": lines, "line_pos": line_pos, "underline": underline, "plate": plate, "plate_bg": plate_bg,
             "plate_fg": plate_fg, "layout": layout, "file": str(path)}
 
 
@@ -314,6 +319,19 @@ def _condensed(size: int, text: str):
     return _font(size, text)
 
 
+OSWALD = Path(__file__).with_name("fonts") / "Oswald.ttf"
+
+
+def _bold(size: int, text: str):
+    """Oswald Bold (bundled, Latin and Cyrillic): the tall condensed caps of the 3D layout; Impact etc. if missing."""
+    try:
+        f = ImageFont.truetype(str(OSWALD), size)
+        f.set_variation_by_name("Bold")
+        return f
+    except (OSError, ValueError):
+        return _condensed(size, text)
+
+
 def _save(im: Image.Image, out: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     im.save(out, "PNG", optimize=True)
@@ -430,18 +448,19 @@ def _vignette(strength: int = 200) -> Image.Image:
     return m
 
 
-def _fit(d: ImageDraw.ImageDraw, lines: list, max_w: int, room: int, start: int = 160):
+def _fit(d: ImageDraw.ImageDraw, lines: list, max_w: int, room: int, start: int = 160, font=None):
+    font = font or _condensed
     all_text = "".join(t for parts in lines for t, _ in parts) or "A"
     size = start
     while size > 28:
-        f = _condensed(size, all_text)
+        f = font(size, all_text)
         widths = [sum(d.textlength(t, font=f) for t, _ in parts) for parts in lines] or [0]
         asc, desc = f.getmetrics()
         step = asc + desc + size // 8
         if max(widths) <= max_w and step * len(lines) <= room:
             return f, step
         size -= 3
-    f = _condensed(size, all_text)
+    f = font(size, all_text)
     asc, desc = f.getmetrics()
     return f, asc + desc + size // 8
 
@@ -527,6 +546,52 @@ def _split(spec: dict, want: tuple[str, str]) -> tuple[list, list]:
     return a + free[:half], b + free[half:]
 
 
+def _lines3d(im: Image.Image, lines: list, f, step: int, x: int, y: int, width: int, align: str,
+             underline: list) -> None:
+    """Big caps with depth (the YouTube «3D» look of the sample 19.11.2026): a soft shadow, a dark extrusion down
+    and to the right, a black outline, and a red brush stroke under the underlined words."""
+    from PIL import ImageFilter
+    asc, desc = f.getmetrics()
+    depth = max(5, step // 11)
+    stroke = max(3, step // 40)
+    shadow = Image.new("L", im.size, 0)
+    sd = ImageDraw.Draw(shadow)
+    places, yy = [], y
+    for parts in lines:
+        lw = sum(sd.textlength(t, font=f) for t, _ in parts)
+        lx = x if align == "left" else x + width - lw if align == "right" else x + (width - lw) / 2
+        places.append((lx, yy, lw))
+        sd.text((lx + depth * 1.5, yy + depth * 2), "".join(t for t, _ in parts), font=f, fill=200,
+                stroke_width=stroke * 2, stroke_fill=200)
+        yy += step
+    _shade(im, shadow.filter(ImageFilter.GaussianBlur(depth * 1.6)))
+    d = ImageDraw.Draw(im)
+    for i, (parts, (lx, ly, lw)) in enumerate(zip(lines, places)):
+        text = "".join(t for t, _ in parts)
+        for k in range(depth, 0, -1):  # the extrusion
+            shade = 25 + 45 * (depth - k) // depth
+            d.text((lx + k * .6, ly + k), text, font=f, fill=(shade, shade, shade + 6), stroke_width=stroke,
+                   stroke_fill=BLACK)
+        cx = lx
+        for t, rgb in parts:
+            d.text((cx, ly), t, font=f, fill=rgb, stroke_width=stroke, stroke_fill=BLACK)
+            cx += d.textlength(t, font=f)
+        for line, phrase, rgb in underline:
+            if line != i:
+                continue
+            at = text.upper().find(phrase.upper())
+            if at < 0:
+                continue
+            x0 = lx + d.textlength(text[:at], font=f) - step * .04
+            x1 = lx + d.textlength(text[:at + len(phrase)], font=f) + step * .06
+            th = max(12, step // 7)
+            yb = ly + asc + depth * 1.2 + th * .3
+            brush = [(x0, yb + th * .35), (x0 + th * .4, yb - th * .15), (x1, yb - th * .45), (x1 + th * .2, yb + th * .1),
+                     (x1 - th * .3, yb + th * .55), (x0 + th * .6, yb + th * .75)]
+            d.polygon([(px + 3, py + 4) for px, py in brush], fill=BLACK)
+            d.polygon(brush, fill=rgb)
+
+
 def compose_layout(base: Path, out: Path, spec: dict) -> Path:
     """The thumbnail in the layout the file asks for (РАСКЛАДКА: A–H); A is the old black wall on the left."""
     layout = spec.get("layout") or "A"
@@ -591,6 +656,22 @@ def compose_layout(base: Path, out: Path, spec: dict) -> Path:
         _lines(d, left, f, step, m, 40, "center", half)
         _lines(d, right, f, step, W // 2 + m, 40, "center", half)
         _plate(d, spec, W // 2, H - 50, "cb", int(W * .5), 80)
+    elif layout == "I":  # the sample of 19.11.2026: the whole picture, huge 3D caps beside the person, a red brush
+        # stroke under one word, no dark band; the plate (if any) small at the bottom on the same side
+        side = next((p for p in spec.get("line_pos") or [] if "left" in p or "right" in p), "right")
+        side = "left" if "left" in side else "right"
+        max_w = int(W * .62)
+        x = m if side == "left" else W - m - max_w
+        _shade(im, _corner(0 if side == "left" else W, 0, 1100, 90))
+        d = ImageDraw.Draw(im)
+        f, step = _fit(d, lines[:3], max_w, int(H * .50), 260, _bold)
+        step = int(step * .86)  # tall caps sit close, as in the sample
+        _lines3d(im, lines[:3], f, step, x, 30, max_w, "center", spec.get("underline") or [])
+        d = ImageDraw.Draw(im)
+        if (spec.get("plate") or "").strip():
+            _shade(im, _corner(0 if side == "left" else W, H, 600, 170))
+            d = ImageDraw.Draw(im)
+            _plate(d, spec, m if side == "left" else W - m, H - 50, "lb" if side == "left" else "rb", int(W * .42), 72)
     elif layout == "H":  # the document: dimmed picture, lines in red frames like stamps, plate as a slanted stamp
         _shade(im, Image.new("L", (W, H), 120))
         d = ImageDraw.Draw(im)

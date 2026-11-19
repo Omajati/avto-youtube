@@ -1,0 +1,2 @@
+Oswald.ttf — Oswald (Vernon Adams et al.), SIL Open Font License 1.1, from github.com/google/fonts (ofl/oswald).
+Used for the thumbnail layout I (3D caps).
