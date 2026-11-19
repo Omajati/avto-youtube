@@ -99,8 +99,60 @@ UPLOAD_TEXT = r"(Upload videos?|Загрузить видео|Subir v[íi]deos?|
 SELECT_TEXT = r"(Select files|Выбрать файлы|Seleccionar archivos|Dateien auswählen|Selecionar arquivos|Sélectionner des fichiers)"
 
 
+UPLOAD_DIALOG = "ytcp-uploads-dialog"
+POPUP = ("tp-yt-iron-dropdown:visible, tp-yt-paper-listbox:visible, ytcp-text-menu:visible, "
+         "ytcp-date-picker tp-yt-paper-dialog:visible, tp-yt-paper-dialog:has(ytcp-date-picker):visible")
+CANCEL_UPLOAD_TEXT = re.compile(r"(Cancel upload|Отменить загрузку|Отмена загрузки|Cancelar (la )?subida|Upload abbrechen|"
+                                r"Hochladen abbrechen|Cancelar (o )?(upload|carregamento)|Annuler l.importation)", re.I)
+KEEP_TEXT = re.compile(r"^\s*(Close|Закрыть|Cerrar|Schließen|Fechar|Fermer|Keep|Продолжить|Continue)\s*$", re.I)
+
+
+def _upload_dialog_open(page) -> bool:
+    try:
+        return page.locator(UPLOAD_DIALOG).first.is_visible()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _keep_upload(page, log=lambda s: None) -> bool:
+    """If Studio asks «Cancel upload? Any details you added will be deleted», answers «Close» (keep the upload).
+    Such a question appears after a stray Escape or a click on the window's cross. True if it was answered."""
+    try:
+        dialogs = page.locator("ytcp-confirmation-dialog:visible, tp-yt-paper-dialog:visible, ytcp-dialog:visible")
+        for i in range(min(dialogs.count(), 5)):
+            d = dialogs.nth(i)
+            if not CANCEL_UPLOAD_TEXT.search(d.inner_text(timeout=2000) or ""):
+                continue
+            keep = d.locator("#cancel-button, ytcp-button#cancel-button").first
+            if not (keep.count() and keep.is_visible()):
+                keep = d.get_by_role("button", name=KEEP_TEXT).first
+            keep.click(timeout=5000)
+            time.sleep(1)
+            log("Studio спросил «Отменить загрузку?» — ответил «Закрыть», загрузка продолжается")
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def _close_popup(page):
+    """Escape only when a drop-down list or a calendar is really open: inside the upload window a stray Escape
+    makes Studio ask «Cancel upload?»."""
+    try:
+        if page.locator(POPUP).count():
+            page.keyboard.press("Escape")
+            time.sleep(.5)
+    except Exception:  # noqa: BLE001
+        pass
+    _keep_upload(page)
+
+
 def _dismiss(page):
-    """Closes the welcome / news / «what's new» windows Studio sometimes shows over everything."""
+    """Closes the welcome / news / «what's new» windows Studio sometimes shows over everything. Never while the
+    upload window is open: its own cross and Escape would cancel the upload."""
+    if _upload_dialog_open(page):
+        _keep_upload(page)
+        return
     for sel in ("ytcp-warm-welcome-dialog #dismiss-button", "#dismiss-button", "ytcp-button#close-button",
                 "#close-button", "tp-yt-paper-dialog #close-icon-button", "ytcp-dialog #close-button"):
         try:
@@ -110,10 +162,11 @@ def _dismiss(page):
                 time.sleep(1)
         except Exception:  # noqa: BLE001
             pass
-    try:
-        page.keyboard.press("Escape")
-    except Exception:  # noqa: BLE001
-        pass
+    if not _upload_dialog_open(page):
+        try:
+            page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _picker_ready(page, wait_s: int):
@@ -318,8 +371,9 @@ def _set_category(page, cid: str, log):
             if text and any(text == n or text.startswith(n) for n in names):
                 item.click()
                 return True
-        page.keyboard.press("Escape")
+        _close_popup(page)
     except Exception as e:  # noqa: BLE001
+        _close_popup(page)
         log(f"Категорию поставить не получилось ({str(e).splitlines()[0][:120]}) — оставляю как есть")
         return False
     log("Категорию в списке Studio не нашёл — оставляю как есть")
@@ -418,6 +472,7 @@ def _wait_upload(page, log, cancelled, max_s: int = 6 * 3600):
             raise _Stop()
         if time.time() - started > max_s:
             raise UserError("Видео загружается дольше шести часов. Ролик НЕ опубликован. Проверьте интернет в профиле Octo.")
+        _keep_upload(page, log)
         pct = _upload_percent(page)
         if pct is not None or _uploading(page):
             quiet = 0
@@ -457,6 +512,7 @@ def _wait_checks(page, log, cancelled, max_s: int = 3 * 3600):
     while time.time() - started < max_s:
         if cancelled():
             raise _Stop()
+        _keep_upload(page, log)
         text = _status_text(page)
         line = next((l for l in text.splitlines() if CHECKS_BAD.search(l) and CHECKS_FOUND.search(l)
                      and not CHECKS_OK.search(l) and not CHECKS_NONE.search(l)), "")
@@ -607,10 +663,7 @@ def _set_schedule(page, when, log) -> bool:
                 break
         except Exception:  # noqa: BLE001
             pass
-        try:
-            page.keyboard.press("Escape")
-        except Exception:  # noqa: BLE001
-            pass
+        _close_popup(page)
     if not date_ok:
         log("Studio не принял дату публикации")
         return False
@@ -632,10 +685,7 @@ def _set_schedule(page, when, log) -> bool:
                 break
         except Exception:  # noqa: BLE001
             pass
-    try:
-        page.keyboard.press("Escape")  # a list of times may stay open over the buttons
-    except Exception:  # noqa: BLE001
-        pass
+    _close_popup(page)  # a list of times may stay open over the buttons
     if not time_ok:
         log("Studio не принял время публикации")
         return False
@@ -937,10 +987,13 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
             for _ in range(3):
                 if cancelled():
                     raise _Stop()
+                _close_popup(page)
+                _keep_upload(page, log)
                 nxt = page.locator("#next-button").first
                 nxt.wait_for(state="visible", timeout=60_000)
                 nxt.click()
                 time.sleep(2)
+            _keep_upload(page, log)
             scheduled = None
             if schedule is not None:
                 log("Ставлю отложенную публикацию…")
@@ -964,6 +1017,7 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
             _wait_checks(page, log, cancelled)
             if _uploading(page):
                 raise UserError("Studio снова показывает загрузку файла — ролик НЕ опубликован. Нажмите «Повторить».")
+            _keep_upload(page, log)
             _check_channel(page, want, log, quiet=True)
             log("Все проверки пройдены. " + ("Ставлю в расписание…" if scheduled else "Публикую…"))
             done = _publish_button(page)
