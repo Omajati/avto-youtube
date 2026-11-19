@@ -50,7 +50,7 @@ LANG_RU = {"en": "английский", "ru": "русский", "de": "неме
 NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech", "vertonung", "текст")
 
 FOLDER_OPTION_KEYS = (
-    "folder_languages", "folder_motion_inserts", "folder_globe_style", "folder_motion_theme", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
+    "folder_languages", "folder_motion_inserts", "folder_globe_style", "folder_motion_theme", "folder_pause_paragraph", "folder_pause_sentence", "folder_voice_tempo", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
     "folder_schedule", "folder_schedule_time", "folder_schedule_from", "folder_schedule_studio", "folder_mp4_forever",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
@@ -63,7 +63,7 @@ FOLDER_OPTION_KEYS = (
 # What may differ from channel to channel (niche): the look and sound of the video and where it goes.
 # Folders, threads and speed stay common for the whole Mac.
 CHANNEL_OPTION_KEYS = (
-    "folder_languages", "folder_fast", "folder_motion_inserts", "folder_globe_style", "folder_motion_theme", "folder_music_source", "folder_thumbs", "folder_upload",
+    "folder_languages", "folder_fast", "folder_motion_inserts", "folder_globe_style", "folder_motion_theme", "folder_pause_paragraph", "folder_pause_sentence", "folder_voice_tempo", "folder_music_source", "folder_thumbs", "folder_upload",
     "folder_upload_privacy", "folder_thumb_review", "folder_schedule", "folder_schedule_time",
     "folder_schedule_from", "folder_schedule_studio",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
@@ -1851,6 +1851,57 @@ def _voice_chunks(text: str, limit: int = 9000) -> list[str]:
     return chunks
 
 
+SENTENCE_END = re.compile(r"[.!?…](?:[»\"'”’)\]]*)$")
+
+
+def _pace(spoken: Path, words: list, narration: str, out: Path, paragraph: float, sentence: float,
+          tempo: float) -> tuple[Path, list]:
+    """Breathing room in a narration read in one go: silence added where a paragraph ends (to `paragraph` seconds)
+    and where a sentence ends (to `sentence` seconds), then the whole read slowed down to `tempo` (pitch kept).
+    The word timings move with the sound, so subtitles and scene cuts stay on the voice."""
+    import wave
+    tokens = []
+    for para in re.split(r"\n\s*\n", narration.strip()):
+        toks = para.split()
+        for k, tok in enumerate(toks):
+            tokens.append(paragraph if k == len(toks) - 1 else (sentence if SENTENCE_END.search(tok) else 0.0))
+    n = len(words)
+    if not n or not tokens:
+        return spoken, words
+    gaps = [0.0] * n  # the wanted pause after each spoken word
+    for i, want in enumerate(tokens):
+        if want:
+            j = i if len(tokens) == n else min(n - 1, round((i + 1) * n / len(tokens)) - 1)
+            gaps[j] = max(gaps[j], want)
+    with wave.open(str(spoken), "rb") as src:
+        rate, width, ch = src.getframerate(), src.getsampwidth(), src.getnchannels()
+        frames = src.readframes(src.getnframes())
+    step = width * ch
+    pieces, new_words, shift, last = [], [], 0.0, 0
+    for i, (w, a, b) in enumerate(words):
+        new_words.append((w, a + shift, b + shift))
+        if i + 1 < n and gaps[i] > 0:
+            nxt = words[i + 1][1]
+            add = gaps[i] - max(0.0, nxt - b)
+            if add > 0.02:
+                cut = int(round((b + max(0.0, nxt - b) / 2) * rate))
+                pieces.append(frames[last * step:cut * step])
+                pieces.append(b"\x00" * (int(round(add * rate)) * step))
+                last, shift = cut, shift + add
+    pieces.append(frames[last * step:])
+    tmp = out.with_suffix(".pauses.wav")
+    with wave.open(str(tmp), "wb") as dst:
+        dst.setnchannels(ch); dst.setsampwidth(width); dst.setframerate(rate)
+        dst.writeframes(b"".join(pieces))
+    if abs(tempo - 1) > 0.005:
+        media.to_wav(tmp, out, tempo=tempo)
+        tmp.unlink(missing_ok=True)
+        new_words = [(w, a / tempo, b / tempo) for w, a, b in new_words]
+    else:
+        tmp.replace(out)
+    return out, new_words
+
+
 def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: str,
                 settings: dict, options: dict, cache: Path, lang: str = "en", span: tuple = (.49, .67),
                 keep_dir: Path | None = None):
@@ -1941,6 +1992,19 @@ def _make_voice(job_id: str, scenes: list[dict], texts: list[str], narration: st
             spoken_words = captions._scene_words(narration, mp3.with_suffix(".json"), speech_duration)
     if keep_mp3 and spoken_words and (kept.get("narration") != signature or not keep_mp3.is_file()):
         _keep_voice(audio, len(chunks), spoken, keep_mp3, keep_json, signature, spoken_words)
+    # Pauses and pace (the channel's settings): made here from the word timings, free, for any voice service.
+    def _num(key, default, lo, hi):
+        try:
+            return min(hi, max(lo, float(options.get(key, settings.get(key, default)))))
+        except (TypeError, ValueError):
+            return default
+    pause_p = _num("folder_pause_paragraph", 0.8, 0.0, 3.0)
+    pause_s = _num("folder_pause_sentence", 0.3, 0.0, 1.5)
+    tempo = _num("folder_voice_tempo", 1.0, 0.8, 1.15)
+    if spoken_words and (pause_p > 0 or pause_s > 0 or abs(tempo - 1) > 0.005):
+        _update(job_id, step=f"[{lang.upper()}] Расставляю паузы между абзацами и предложениями…")
+        spoken, spoken_words = _pace(spoken, spoken_words, narration, audio / "narration_paced.wav", pause_p, pause_s, tempo)
+        speech_duration = media.wav_duration(spoken)
     intro = 3.0 if scenes and scenes[0].get("preview") else 0.0
     parts = []
     if intro:
