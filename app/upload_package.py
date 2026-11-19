@@ -95,6 +95,12 @@ def parse_thumb_spec(path: Path) -> dict:
             continue
         words, _, spec = raw.rpartition("—") if "—" in raw else raw.rpartition(" - ")
         words = words.strip()
+        # «ВСЕГО, сверху по центру — белый»: where the line goes may stand before the dash too — it is a note for the
+        # layout, never a part of the text on the picture
+        where = re.match(r"^(.*?)\s*,\s*([^,]*?(?:сверх|сниз|слев|справ|центр|вверх|вниз|посередин|\btop\b|"
+                         r"\bbottom\b|\bleft\b|\bright\b|\bcent(?:er|re)\b|\bupper\b|\blower\b)[^,]*)$", words, re.I)
+        if where and where.group(1).strip():
+            words, spec = where.group(1).strip(), f"{spec}, {where.group(2)}"
         if not words:
             continue
         base = _color(spec.split(",")[0]) or WHITE
