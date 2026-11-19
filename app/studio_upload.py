@@ -777,6 +777,80 @@ def _studio_channel(page) -> tuple[str, str]:
     return (m.group(1) if m else ""), name
 
 
+# The days already taken on the channel: Studio's «Content» list shows a scheduled video with its date and the word
+# «Scheduled» in the interface language. Videos the owner scheduled by hand count too, so the program never puts
+# a second video on a day that already has one.
+SCHEDULED_WORD = re.compile(r"(Scheduled|Запланировано|Programado|Programada|Geplant|Programmée?|Agendado|Pianificato)", re.I)
+MONTHS = [  # (start of the month's name in Studio's languages, month)
+    ("янв", 1), ("фев", 2), ("мар", 3), ("апр", 4), ("мая", 5), ("май", 5), ("июн", 6), ("июл", 7), ("авг", 8),
+    ("сен", 9), ("окт", 10), ("ноя", 11), ("дек", 12),
+    ("jan", 1), ("ene", 1), ("janv", 1), ("feb", 2), ("fev", 2), ("fév", 2), ("févr", 2), ("mar", 3), ("mär", 3),
+    ("mrz", 3), ("apr", 4), ("abr", 4), ("avr", 4), ("may", 5), ("mai", 5), ("jun", 6), ("juin", 6), ("jul", 7),
+    ("juil", 7), ("aug", 8), ("ago", 8), ("aoû", 8), ("sep", 9), ("set", 9), ("oct", 10), ("okt", 10), ("out", 10),
+    ("nov", 11), ("dec", 12), ("dic", 12), ("dez", 12), ("déc", 12),
+]
+_DAY_MONTH_YEAR = re.compile(r"(\d{1,2})\.?\s+([^\W\d_]{3,})\.?,?\s+(\d{4})")    # 20 нояб. 2026 · 20 nov 2026
+_MONTH_DAY_YEAR = re.compile(r"([^\W\d_]{3,})\.?\s+(\d{1,2}),?\s+(\d{4})")       # Nov 20, 2026
+_NUMERIC = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{4})")                              # 20.11.2026
+
+
+def _month(word: str) -> int:
+    w = word.lower()
+    best = max(((len(k), m) for k, m in MONTHS if w.startswith(k)), default=(0, 0))
+    return best[1]
+
+
+def parse_studio_date(text: str):
+    """The first date in a piece of Studio text, in any of its languages; None if there is none."""
+    from datetime import date
+    for rx, order in ((_NUMERIC, "dmy"), (_DAY_MONTH_YEAR, "dMy"), (_MONTH_DAY_YEAR, "Mdy")):
+        for m in rx.finditer(text or ""):
+            a, b, y = m.groups()
+            if order == "dmy":
+                d, mo = int(a), int(b)
+            elif order == "dMy":
+                d, mo = int(a), _month(b)
+            else:
+                mo, d = _month(a), int(b)
+            try:
+                return date(int(y), mo, d)
+            except ValueError:
+                continue
+    return None
+
+
+def scheduled_days(page, want: str, log) -> set[str]:
+    """The days (ISO dates) on which this channel already has a scheduled video, read from Studio's «Content» list
+    (the newest videos come first, so the scheduled ones are on the first page). Empty if the list did not open."""
+    days: set[str] = set()
+    try:
+        page.goto(f"{STUDIO}/channel/{want}/videos/upload" if want else f"{STUDIO}/videos/upload",
+                  wait_until="domcontentloaded", timeout=120_000)
+        _check_url(page)
+        if not _first_visible(page.locator("ytcp-video-row"), 30):
+            log("Список роликов в Studio пуст или не открылся — даты беру из памяти программы")
+            return days
+        time.sleep(2)
+        rows = page.locator("ytcp-video-row")
+        for i in range(min(rows.count(), 50)):
+            row = rows.nth(i)
+            text = row.inner_text(timeout=5_000)
+            if not SCHEDULED_WORD.search(text):
+                continue
+            cell = row.locator(".tablecell-date, [class*=tablecell-date]")
+            day = parse_studio_date(cell.first.inner_text(timeout=3_000) if cell.count() else "") or \
+                parse_studio_date(text[SCHEDULED_WORD.search(text).start() - 60:] if SCHEDULED_WORD.search(text) else text)
+            if day:
+                days.add(day.isoformat())
+        log("В Studio уже запланировано: " + (", ".join(sorted(days)) if days else "ничего"))
+    except UserError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log(f"Запланированные ролики в Studio прочитать не получилось ({str(e).splitlines()[0][:100]}) — "
+            "даты беру из памяти программы")
+    return days
+
+
 def _check_channel(page, want: str, log, quiet: bool = False) -> str:
     """Stops BEFORE anything goes to the wrong channel: Studio must be on the wanted one. Returns its name."""
     have, name = _studio_channel(page)
@@ -916,10 +990,12 @@ def _verify(page, link: str, title: str, log) -> bool:
 
 def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privacy: str = "public",
            log=lambda s: None, cancelled=lambda: False, result: dict | None = None, channel_ref: str = "",
-           schedule=None) -> str:
+           schedule=None, pick_schedule=None) -> str:
     """Uploads and publishes; returns the video link. meta: {title, description, tags, kids, category, altered}.
     channel_ref: the YouTube channel it must go to (UC… id, a link or @handle); empty = the one open in the profile.
     schedule: an aware datetime — the video goes up now and YouTube itself makes it public then.
+    pick_schedule: instead of schedule, a function that gets the days already scheduled on the channel in Studio
+    (a set of ISO dates) and returns the datetime to schedule at; it is called once the right channel is open.
     result gets video_id, verified, thumb_ok, channel_id, channel_name and scheduled (True/False/None)."""
     from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 
@@ -944,6 +1020,13 @@ def upload(ws_endpoint: str, video: Path, meta: dict, thumb: Path | None, privac
                 raise UserError("В этом профиле Octo не выполнен вход в YouTube. Откройте профиль, войдите в канал "
                                 "и нажмите «Повторить выкладку».")
             channel_name = _check_channel(page, want, log)
+            if pick_schedule is not None:
+                log("Смотрю, какие дни на канале уже заняты…")
+                schedule = pick_schedule(scheduled_days(page, want, log))
+                page.goto(f"{STUDIO}/channel/{want}" if want else STUDIO, wait_until="domcontentloaded",
+                          timeout=120_000)
+                time.sleep(4)
+                _check_channel(page, want, log, quiet=True)
             picker = _open_upload(page, video, log)
             _check_channel(page, want, log, quiet=True)
             log("Загружаю файл видео…")

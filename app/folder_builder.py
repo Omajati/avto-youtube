@@ -51,7 +51,7 @@ NARRATION_WORDS = ("озвуч", "voice", "narration", "voz", "locuc", "sprech",
 
 FOLDER_OPTION_KEYS = (
     "folder_languages", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_clean_frames", "folder_upload", "folder_upload_privacy", "folder_thumb_review", "folder_trash_mp4",
-    "folder_schedule", "folder_schedule_time", "folder_mp4_forever",
+    "folder_schedule", "folder_schedule_time", "folder_schedule_from", "folder_schedule_studio", "folder_mp4_forever",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name",
     "folder_voice_en_id", "folder_voice_en_name", "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
@@ -65,6 +65,7 @@ FOLDER_OPTION_KEYS = (
 CHANNEL_OPTION_KEYS = (
     "folder_languages", "folder_fast", "folder_motion_inserts", "folder_music_source", "folder_thumbs", "folder_upload",
     "folder_upload_privacy", "folder_thumb_review", "folder_schedule", "folder_schedule_time",
+    "folder_schedule_from", "folder_schedule_studio",
     "folder_voice_ru_id", "folder_voice_ru_name", "folder_voice_de_id", "folder_voice_de_name",
     "folder_voice_es_id", "folder_voice_es_name", "folder_voice_en_id", "folder_voice_en_name",
     "folder_smart_mapping", "folder_scene_binding", "folder_references", "folder_chapters", "folder_subtitles",
@@ -2700,10 +2701,26 @@ def _slot_time(text: str) -> tuple[int, int]:
     return (h if 0 <= h < 24 else 15), (mi - mi % 15 if 0 <= mi < 60 else 0)  # Studio offers times every 15 minutes
 
 
-def _reserve_slot(key: str, lang: str, at: str):
+def _not_before(text: str):
+    """«Следующий выпуск не раньше»: the date the owner set for the channel (2026-11-21 or 21.11.2026), else None."""
+    from datetime import date
+    t = str(text or "").strip()
+    m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})$", t) or re.match(r"(\d{1,2})\.(\d{1,2})\.(\d{4})$", t)
+    if not m:
+        return None
+    a, b, c = (int(x) for x in m.groups())
+    try:
+        return date(a, b, c) if a > 31 else date(c, b, a)
+    except ValueError:
+        return None
+
+
+def _reserve_slot(key: str, lang: str, at: str, busy=(), not_before: str = ""):
     """One video a day per YouTube channel: the first day from today whose «at» (viewers' time) is still at least
     two hours away and has no video of this channel yet. The day is written down at once, so two videos built side
-    by side never get the same day; _release_slot gives it back if the upload fails."""
+    by side never get the same day; _release_slot gives it back if the upload fails.
+    busy: the days Studio already shows as scheduled on the channel (also the ones the owner set by hand);
+    not_before: the owner's «не раньше» date for the channel — no day before it is taken."""
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
     zone = ZoneInfo(SCHEDULE_ZONES.get(lang, ("UTC", ""))[0])
@@ -2711,15 +2728,15 @@ def _reserve_slot(key: str, lang: str, at: str):
     now = datetime.now(zone)
     with _slot_lock:
         slots = dict(load_settings().get("upload_slots") or {})
-        taken = set(slots.get(key) or [])
-        day = now.date()
+        taken = set(slots.get(key) or []) | set(busy or ())
+        day = max(now.date(), _not_before(not_before) or now.date())
         while True:
             when = datetime(day.year, day.month, day.day, hour, minute, tzinfo=zone)
             if when - now >= timedelta(hours=2) and day.isoformat() not in taken:
                 break
             day += timedelta(days=1)
         keep = sorted(d for d in taken if d >= (now.date() - timedelta(days=3)).isoformat())
-        slots[key] = keep + [day.isoformat()]
+        slots[key] = sorted(set(keep) | {day.isoformat()})
         save_settings({"upload_slots": slots})
     return when
 
@@ -2806,20 +2823,32 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
                 check: dict = {}
                 yt_key = f"{channel}|{lang}|{uuid}"
                 yt = (load_settings().get("octo_yt_channels") or {}).get(yt_key) or {}
+                picked: dict = {}
                 when = None
+                pick = None
                 if privacy == "public" and options.get("folder_schedule", True):
-                    when = _reserve_slot(yt_key, lang, options.get("folder_schedule_time") or "15:00")
                     city = SCHEDULE_ZONES.get(lang, ("", "UTC"))[1]
-                    _update(job_id, step=f"{tag} Выйдет {when.strftime('%d.%m')} в {when.strftime('%H:%M')} по {city}")
+
+                    def pick(busy=(), _key=yt_key, _lang=lang, _tag=tag, _city=city):
+                        # The day is chosen with Studio open: the days already scheduled there count as taken.
+                        w = _reserve_slot(_key, _lang, options.get("folder_schedule_time") or "15:00", busy,
+                                          options.get("folder_schedule_from") or "")
+                        picked["when"] = w
+                        _update(job_id, step=f"{_tag} Выйдет {w.strftime('%d.%m')} в {w.strftime('%H:%M')} по {_city}")
+                        return w
+
+                    if not options.get("folder_schedule_studio", True):
+                        when, pick = pick(), None
                 try:
                     link = studio_upload.upload(
                         ws, Path(outputs[lang]), package, thumb, privacy,
                         log=lambda m, t=tag: _update(job_id, step=f"{t} {m}"),
                         cancelled=lambda: (_jobs.get(job_id) or {}).get("status") in ("pausing", "stopping"),
-                        result=check, channel_ref=yt.get("id") or yt.get("ref") or "", schedule=when)
+                        result=check, channel_ref=yt.get("id") or yt.get("ref") or "", schedule=when,
+                        pick_schedule=pick)
                 except BaseException:
-                    if when is not None:
-                        _release_slot(yt_key, when)
+                    if picked.get("when") is not None:
+                        _release_slot(yt_key, picked["when"])
                     raise
                 finally:
                     # The program closes the profile it used, so profiles do not pile up open; the owner can mark
@@ -2827,6 +2856,7 @@ def _publish(job_id: str, analysis: dict, outputs: dict, settings: dict, options
                     if uuid not in (load_settings().get("octo_keep_open") or []):
                         _update(job_id, step=f"{tag} Закрываю профиль Octo…")
                         octo.stop(uuid)
+            when = picked.get("when") or when
             uploaded[lang] = link or "опубликовано"
             _update(job_id, uploaded=uploaded)
             if when is not None:
