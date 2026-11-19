@@ -56,7 +56,12 @@
       el.querySelector(".v").textContent = p.note || "";
       box.appendChild(el);
       const w = el.offsetWidth, h = el.offsetHeight;
-      const left = p.x + 46 + w > W - 40;
+      // a stop of the route takes the side away from its neighbour, so the label never covers the arc
+      const route = list.filter(q => q.kind === "route"), i = route.indexOf(p);
+      const near = i < 0 ? null : (route[i + 1] || route[i - 1]);
+      const fitsLeft = p.x - 46 - w > 40, fitsRight = p.x + 46 + w < W - 40;
+      let left = !fitsRight;
+      if (near && Math.abs(near.x - p.x) > 30) left = near.x > p.x ? fitsLeft : !fitsRight;
       if (left) el.classList.add("left");
       return { p, el, w, h, left, x: left ? p.x - 46 - w : p.x + 46, y: p.y - h / 2 };
     });

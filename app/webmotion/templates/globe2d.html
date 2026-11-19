@@ -75,7 +75,9 @@ window.renderFrame = f => {
     if (k <= 0) continue;
     const pts = d3.range(0, 61).map(j => l.i(k * j / 60));
     ctx.save(); ctx.beginPath(); path({ type: "LineString", coordinates: pts });
-    ctx.shadowColor = GOLD; ctx.shadowBlur = 14; ctx.strokeStyle = GOLD; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.stroke(); ctx.restore();
+    ctx.lineCap = "round"; ctx.shadowColor = "#ffb340"; ctx.shadowBlur = 16;
+    ctx.strokeStyle = "rgba(255,179,64,.55)"; ctx.lineWidth = 11; ctx.stroke();
+    ctx.shadowBlur = 0; ctx.strokeStyle = "#fff6e0"; ctx.lineWidth = 4.5; ctx.stroke(); ctx.restore();
     if (k < 1) { const q = project({ lon: l.i(k)[0], lat: l.i(k)[1] }); if (q.facing) { ctx.beginPath(); ctx.arc(q.x, q.y, 7, 0, 2 * Math.PI); ctx.fillStyle = "#fff"; ctx.fill(); } }
   }
   for (const p of plan.places) {

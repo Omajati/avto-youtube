@@ -117,8 +117,11 @@ const arcs = plan.legs.map(leg => {
     v.multiplyScalar(1.003 + lift * Math.sin(Math.PI * s)); pts.push(v.x, v.y, v.z);
   }
   const geom = new LineGeometry(); geom.setPositions(pts);
-  const line = new Line2(geom, new LineMaterial({ color: 0xffc861, linewidth: 4.5, transparent: true, opacity: 0.95, resolution: res }));
-  line.computeLineDistances(); scene.add(line);
+  // a light core over a wide gold glow: the route reads over the sea and over a gold country alike
+  const glowLine = new Line2(geom, new LineMaterial({ color: 0xffb340, linewidth: 11, transparent: true, opacity: 0.45, resolution: res, depthWrite: false }));
+  const line = new Line2(geom, new LineMaterial({ color: 0xfff6e0, linewidth: 4.5, transparent: true, opacity: 1, resolution: res }));
+  line.computeLineDistances(); glowLine.computeLineDistances(); scene.add(glowLine); scene.add(line);
+  line.userData.glow = glowLine;
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.008 * plan.scale, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
   scene.add(head);
   return { leg, pts, steps, line, head };
@@ -148,7 +151,7 @@ window.renderFrame = f => {
   markers.forEach(m => m.set(f));
   arcs.forEach(a => {
     const k = G.ease2(G.seg(f, a.leg.from, a.leg.to));
-    a.line.geometry.instanceCount = Math.max(1, Math.round(a.steps * k)); a.line.visible = k > 0;
+    a.line.geometry.instanceCount = Math.max(1, Math.round(a.steps * k)); a.line.visible = k > 0; a.line.userData.glow.visible = k > 0;
     const i = Math.min(Math.round(a.steps * k), a.steps) * 3; a.head.position.set(a.pts[i], a.pts[i + 1], a.pts[i + 2]);
     a.head.visible = k > 0 && k < 1;
   });
