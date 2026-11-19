@@ -398,12 +398,26 @@ def _read_orders(scene_file: Path) -> dict[str, tuple[str, str, str]]:
     return out
 
 
+# Where each scene starts in the narration: a file «привязка.txt» next to the scenes, one line each, the first words
+# the voice says on that scene («S014 | Инструктор поднимает руку»). It keeps the scene file clean for the picture
+# generator and lets the scriptwriter change pictures on every sentence (a dynamic start).
+def _read_binding(scene_file: Path) -> dict[str, str]:
+    for f in [scene_file.parent / "привязка.txt", scene_file.parent.parent / "привязка.txt"]:
+        if f.is_file():
+            return {m.group(1).upper(): m.group(2).strip()
+                    for m in re.finditer(r"(?m)^\s*(S\d{3})\s*\|\s*(.+?)\s*$", f.read_text("utf-8", errors="replace"))}
+    return {}
+
+
 def _parse_scenes(path: Path) -> tuple[list[dict], list[dict]]:
     scenes, refs = _parse_scenes_only(path)
     orders = _read_orders(path)
+    binding = _read_binding(path)
     for sc in scenes:
         if sc["id"] in orders:
             sc["insert"] = list(orders[sc["id"]])
+        if binding.get(sc["id"]) and not (sc.get("voice_hint") or "").strip():
+            sc["voice_hint"] = binding[sc["id"]]
     return scenes, refs
 
 
@@ -1396,6 +1410,8 @@ def _mapping(job_id: str, scenes: list[dict], narration: str, settings: dict, ca
     saved = _read_json(cache / "mapping.json", {})
     if saved.get("fingerprint") == fingerprint and len(saved.get("texts") or []) == len(scenes):
         return saved["texts"]
+    if mode == "even" and sum(bool((s.get("voice_hint") or "").strip()) for s in scenes) >= len(scenes) * .8:
+        mode, smart = "hints", False  # the scriptwriter tied the scenes to the words (привязка.txt): that wins
     if mode == "even":
         _update(job_id, progress=progress, step="Раскладываю сцены равномерно по тексту…")
         texts = _even_mapping(scenes, narration)
