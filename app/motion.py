@@ -18,9 +18,11 @@ GEO = Path(__file__).parent / "geo" / "countries.json"
 KINDS = {"map": "🗺 Карта", "timeline": "📅 Линия времени", "chart": "📈 График", "compare": "⚖️ Сравнение",
          "quote": "💬 Цитата", "list": "📋 Список", "globe": "🌍 Глобус", "counter": "🔢 Цифра",
          "thermo": "🌡 Термометр", "calendar": "🟦 Сетка-календарь", "photonum": "🖼 Цифра поверх фото",
-         "place": "📍 Плашка места", "document": "📄 Документ", "scale": "📏 Шкала", "layer": "🧍 Слой и человек"}
+         "place": "📍 Плашка места", "document": "📄 Документ", "scale": "📏 Шкала", "layer": "🧍 Слой и человек",
+         "satmap": "🛰 Карта рельефа"}
 # drawn by the new engine (webmotion.py); the older kinds below move to it one by one
-WEB_KINDS = ("globe", "counter", "thermo", "calendar", "photonum", "place", "document", "scale", "layer", "chart")
+WEB_KINDS = ("globe", "counter", "thermo", "calendar", "photonum", "place", "document", "scale", "layer", "chart",
+             "satmap")
 MODES = {"auto": "Авто: карты и даты там, где они к месту", "off": "Выключено"}
 
 OCEAN_TOP, OCEAN_BOTTOM = (12, 22, 40), (6, 12, 24)
@@ -1061,6 +1063,8 @@ def cues(spec: dict, seconds: float) -> list:
         out += [(0.26 + k * 0.34 / max(n, 1) + 0.02, "tick") for k in range(n)] + [(0.68, "pop")]
     elif kind == "layer":
         out.append((0.45, "pop"))
+    elif kind == "satmap":
+        out += [(0.33, "pop")] + ([(0.53, "pop")] if spec.get("pins") else [])
     elif kind == "place":
         out.append((0.12, "tick"))
     elif kind == "document":
@@ -1126,7 +1130,14 @@ def layer_ok(spec: dict) -> bool:
     return v is not None and 0 < v <= 2000 and bool(str(spec.get("caption") or "").strip())
 
 
-CHECK = {"scale": scale_ok, "layer": layer_ok, "photonum": photonum_ok, "place": place_ok, "document": document_ok, "map": map_ok, "timeline": timeline_ok, "chart": chart_ok, "compare": compare_ok, "quote": quote_ok,
+def satmap_ok(spec: dict) -> bool:
+    from . import webmotion
+    rivers = [r for r in spec.get("rivers") or [] if webmotion.find_river(r.get("name") if isinstance(r, dict) else r)[1]]
+    pins = [p for p in spec.get("pins") or [] if isinstance(p, dict) and _num(p.get("lat")) is not None]
+    return bool(rivers or pins or any(find_country(n) for n in spec.get("countries") or []))
+
+
+CHECK = {"satmap": satmap_ok, "scale": scale_ok, "layer": layer_ok, "photonum": photonum_ok, "place": place_ok, "document": document_ok, "map": map_ok, "timeline": timeline_ok, "chart": chart_ok, "compare": compare_ok, "quote": quote_ok,
          "list": list_ok, "globe": globe_ok, "counter": counter_ok, "thermo": thermo_ok, "calendar": calendar_ok}
 
 
@@ -1145,7 +1156,8 @@ FIELDS = ("index", "type", "title", "countries", "route", "pins", "events", "cur
           "left_name", "right_name", "rows", "quote", "author", "lines",
           "value", "prefix", "suffix", "caption", "note", "tone", "steps", "total", "filled", "legend", "season",
           "org", "headline", "highlight", "when_label", "when",
-          "hero_name", "hero_value", "hero_note", "ref_value", "ref_label", "material", "layer_label", "below_label")
+          "hero_name", "hero_value", "hero_note", "ref_value", "ref_label", "material", "layer_label", "below_label",
+          "rivers", "show_rail", "region")
 _PLACE = {"type": "object", "properties": {"name": {"type": "string"}, "lat": {"type": "number"},
                                            "lon": {"type": "number"}}, "required": ["name", "lat", "lon"]}
 SCHEMA = {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
@@ -1180,7 +1192,10 @@ SCHEMA = {"type": "object", "properties": {"items": {"type": "array", "items": {
     "hero_name": {"type": "string"}, "hero_value": {"type": "number"}, "hero_note": {"type": "string"},
     "ref_value": {"type": "number"}, "ref_label": {"type": "string"},
     "material": {"type": "string", "enum": ["ice", "snow", "ground", "water"]},
-    "layer_label": {"type": "string"}, "below_label": {"type": "string"}},
+    "layer_label": {"type": "string"}, "below_label": {"type": "string"},
+    "rivers": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "label": {"type": "string"}},
+                                          "required": ["name", "label"]}},
+    "show_rail": {"type": "boolean"}, "region": {"type": "string"}},
     "required": list(FIELDS)}}},
     "required": ["items"]}
 
@@ -1199,6 +1214,7 @@ PLAN_PROMPT = """You are the motion designer of a narrated YouTube video. Some s
 - "document": an official decision, a court ruling, a letter, a will, a newspaper headline the narration retells or quotes.
 - "scale": where the hero stands on one measure among places or things everyone knows (latitude among known cities, the height of a dinosaur among animals, the depth of a sea among others), often with a famous line (the Arctic Circle, sea level).
 - "layer": the thickness or the depth of a layer next to a person for scale (ice 1.5 m thick, snow, permafrost, the depth of water).
+- "satmap": a region's land itself matters: a great river through it, its vastness, how remote it is, a railway that does not reach a city (a dark relief map: rivers draw themselves, railways as a dashed line).
 - "list": the narration counts points ("three reasons", "first... second... third...", a top).
 
 Choose up to {limit} scenes, mixing kinds where the story allows. Only where the animation is the point of that moment; never two such scenes in a row; never the first or the last scene. Choose none if nothing fits.
@@ -1219,6 +1235,7 @@ Fill only the fields of the chosen kind; leave the others empty ("" / [] / 0, ch
 - document: org = who issued or wrote it (max 4 words, in {language}, or ""); headline = its gist, max 8 words, in {language}; highlight = the exact words the narration quotes from it, max 14 words, or ""; when_label = the word "When" in {language}; when = the date as said, or "".
 - scale: points = 2-5 known items (label = name in {language}, max 3 words; value = the real number); hero_name, hero_value, hero_note (e.g. "69° с. ш.", max 3 words) = the hero; unit = "°", "м", "км" or ""; ref_value and ref_label = a famous line on that scale (66.56 and "Полярный круг"), or 0 and ""; title = the measure ("Северная широта").
 - layer: value = the thickness in metres; unit = "м"/"m"; caption = what it is ("толщина льда"); material = ice, snow, ground or water; layer_label = the layer's name ("лёд"), below_label = what is under it ("вода"); title = the topic.
+- satmap: countries = 0-2 countries for the outline (English names); rivers = 0-2 rivers, name = the English name ("Lena"), label = the name in {language}; show_rail = true only if the narration is about railways or their absence; pins = 1-4 towns with real coordinates, the most important first; region = the region's name in {language} in capitals-worthy form ("Якутия") or ""; title = the topic.
 - calendar: total = M (365 for "a year", 100 for a percentage), filled = N; suffix "+" if "more than"; caption = what is counted, max 5 words, in {language}; legend = "= " + one cell's meaning, max 4 words; season = "winter" if those days are in winter, "summer" if in summer, else "even"; tone; title = the topic in 1-3 words.
 Never invent facts or numbers: only what the narration says or certain common knowledge. If the numbers are not known for sure, do not make a chart or a comparison.
 

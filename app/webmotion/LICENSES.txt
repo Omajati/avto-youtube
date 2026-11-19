@@ -8,3 +8,4 @@ Third-party files bundled for the motion-design engine (webmotion):
 - img/earth-blue-marble.jpg, earth-topology.png, earth-water.png — NASA Visible Earth (public domain),
   as packaged in the three-globe examples (MIT License, (c) 2019 Vasco Asturiano).
 - Country shapes come from app/geo/countries.json (Natural Earth, public domain).
+- img/relief.jpg — Natural Earth I with Shaded Relief and Water, 1:50m (public domain), naturalearthdata.com.

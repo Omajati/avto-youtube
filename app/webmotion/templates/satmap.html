@@ -1,0 +1,108 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="common.css"><link rel="stylesheet" href="card.css">
+<style>
+#cv{position:absolute;inset:0}
+#region{position:absolute;font-family:Montserrat;font-weight:500;font-size:46px;letter-spacing:.42em;text-transform:uppercase;color:rgba(235,240,246,.85);white-space:nowrap;opacity:0;text-shadow:0 2px 18px rgba(0,0,0,.6)}
+.pin{position:absolute;left:0;top:0;white-space:nowrap;font-family:Montserrat;font-weight:600;font-size:26px;color:#f2f5f9;opacity:0;text-shadow:0 2px 14px rgba(0,0,0,.8)}
+.pin.hero{font-weight:700;font-size:34px}
+.rl{position:absolute;font-family:Montserrat;font-style:italic;font-weight:500;font-size:24px;color:rgba(190,225,240,.85);opacity:0;white-space:nowrap;text-shadow:0 2px 12px rgba(0,0,0,.8)}
+#vig{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,0) 50%,rgba(0,0,0,.55) 100%)}
+</style></head><body>
+<canvas id="cv"></canvas><div id="vig"></div><div id="region"></div><div id="labels"></div><div id="tag"></div>
+<script src="card_common.js"></script>
+<script>
+// A dark relief map of a region: rivers draw themselves as glowing lines, railways as an accent dashed line,
+// the region's name in wide letters, the towns as dots (the hero one in the accent colour). A slow push-in.
+// SPEC: {tag, box: {w, e, s, n}, region: {name, lat, lon}, rivers: [{name, label, lines: [[[lon, lat]…]…]}],
+//        rails: [[[lon, lat]…]…], borders: [[[lon, lat]…]…], pins: [{name, lat, lon, hero}], theme}
+(async () => {
+  const S = window.SPEC, C = window.CARD, W = S.w || 1920, H = S.h || 1080, N = Math.max(2, S.frames || 240);
+  const $ = id => document.getElementById(id);
+  const cv = $("cv"); cv.width = W; cv.height = H; const x = cv.getContext("2d");
+  const img = new Image(); img.src = "../img/relief.jpg"; await img.decode();
+  const IW = img.naturalWidth, IH = img.naturalHeight;
+  const box = S.box;
+  // the relief pre-graded once into a dark, slightly cold «satellite at night» look
+  const sx = (box.w + 180) / 360 * IW, sy = (90 - box.n) / 180 * IH, sw = (box.e - box.w) / 360 * IW, sh = (box.n - box.s) / 180 * IH;
+  const base = document.createElement("canvas"); base.width = W; base.height = H; const b = base.getContext("2d");
+  b.filter = "brightness(.52) saturate(.62) contrast(1.22) hue-rotate(-12deg)";
+  b.drawImage(img, sx, sy, sw, sh, 0, 0, W, H); b.filter = "none";
+  b.fillStyle = "rgba(8,22,40,.28)"; b.fillRect(0, 0, W, H);
+  const P = ([lon, lat]) => [(lon - box.w) / (box.e - box.w) * W, (box.n - lat) / (box.n - box.s) * H];
+  const lineLen = pts => { let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return L; };
+  const rivers = (S.rivers || []).map(r => ({ ...r, lines: r.lines.map(l => l.map(P)) }));
+  const rails = (S.rails || []).map(l => l.map(P)), borders = (S.borders || []).map(l => l.map(P));
+  function partial(pts, k) {  // the first share k of a polyline (by length)
+    const L = lineLen(pts) * k; let acc = 0; const out = [pts[0]];
+    for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      if (acc + d >= L) { const t = (L - acc) / (d || 1); out.push([pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t]); return out; }
+      acc += d; out.push(pts[i]); }
+    return out;
+  }
+  const stroke = pts => { x.beginPath(); pts.forEach(([px, py], i) => i ? x.lineTo(px, py) : x.moveTo(px, py)); x.stroke(); };
+  // labels
+  const pins = (S.pins || []).map(p => { const el = document.createElement("div"); el.className = "pin" + (p.hero ? " hero" : ""); el.textContent = p.name || ""; $("labels").appendChild(el); return { ...p, xy: P([p.lon, p.lat]), el }; });
+  const rlabels = rivers.filter(r => r.label).map(r => { const el = document.createElement("div"); el.className = "rl"; el.textContent = r.label; $("labels").appendChild(el);
+    const longest = r.lines.slice().sort((a, b) => lineLen(b) - lineLen(a))[0] || [[0, 0]]; const mid = longest[Math.floor(longest.length * .45)] || longest[0]; return { el, xy: mid }; });
+  if (S.region && S.region.name) { $("region").textContent = S.region.name; }
+  await C.ready();
+  const accent = C.rgb("--accent");
+  {  // label places, laid out once at the final zoom: left of the dot, else right, below or above; the hero first
+    const zEnd = 1.07, placed = [];
+    const order = pins.slice().sort((a, b) => (b.hero ? 1 : 0) - (a.hero ? 1 : 0));
+    for (const p of order) {
+      const w = p.el.offsetWidth, h = p.el.offsetHeight, px = W / 2 + (p.xy[0] - W / 2) * zEnd, py = H / 2 + (p.xy[1] - H / 2) * zEnd;
+      const tries = [[-w - 18, -h / 2], [18, -h / 2], [-w / 2, 14], [-w / 2, -h - 14], [-w - 18, 18], [18, 18], [-w - 18, -h - 18],
+                     [18, -h - 18], [-w / 2, h + 20], [-w / 2, -2 * h - 20], [-w - 18, h + 20], [18, h + 20]];
+      const overlap = r => placed.reduce((acc, q) => acc + Math.max(0, Math.min(r.x + r.w + 10, q.x + q.w + 10) - Math.max(r.x, q.x)) *
+                                                  Math.max(0, Math.min(r.y + r.h + 6, q.y + q.h + 6) - Math.max(r.y, q.y)), 0);
+      let pick = tries[0], least = Infinity;
+      for (const t of tries) {  // the first free place; if none is free, the one that covers the others least
+        const r = { x: px + t[0], y: py + t[1], w, h };
+        if (r.x < 20 || r.x + w > W - 20 || r.y < 100 || r.y + h > H - 20) continue;
+        const o = overlap(r);
+        if (o < least) { least = o; pick = t; }
+        if (o === 0) break;
+      }
+      p.off = pick; placed.push({ x: px + pick[0], y: py + pick[1], w, h });
+    }
+  }
+  const reg = S.region && S.region.name ? P([S.region.lon, S.region.lat]) : null;
+  window.renderFrame = f => {
+    const t = f / (N - 1), z = 1 + 0.07 * C.ease(t);  // the slow push towards the centre
+    x.save(); x.translate(W / 2, H / 2); x.scale(z, z); x.translate(-W / 2, -H / 2);
+    x.drawImage(base, 0, 0);
+    const bk = C.ease(C.seg(f, 0.04 * N, 0.2 * N));
+    if (borders.length && bk > 0) { x.setLineDash([3, 6]); x.strokeStyle = `rgba(235,240,246,${.55 * bk})`; x.lineWidth = 1.6; borders.forEach(stroke); x.setLineDash([]); }
+    const rk = C.ease(C.seg(f, 0.12 * N, 0.62 * N));
+    if (rk > 0) { x.save(); x.shadowColor = "rgba(150,220,255,.9)"; x.shadowBlur = 14; x.strokeStyle = "rgba(225,245,255,.95)"; x.lineWidth = 3.4; x.lineJoin = x.lineCap = "round";
+      rivers.forEach(r => r.lines.forEach((l, i) => { x.globalAlpha = i ? .45 : 1; x.lineWidth = i ? 2 : 3.4; stroke(partial(l, rk)); })); x.restore(); }
+    const tk = C.ease(C.seg(f, 0.45 * N, 0.8 * N));
+    if (tk > 0) { x.save(); x.setLineDash([12, 8]); x.shadowColor = `rgba(${accent},.8)`; x.shadowBlur = 10; x.strokeStyle = `rgb(${accent})`; x.lineWidth = 3.2;
+      rails.forEach(l => stroke(partial(l, tk))); x.restore(); }
+    for (const p of pins) {
+      const a = C.ease(C.seg(f, p.hero ? 0.5 * N : 0.3 * N, (p.hero ? 0.5 * N : 0.3 * N) + 12));
+      if (a <= 0) continue;
+      const [px, py] = p.xy, r = p.hero ? 9 : 6;
+      x.fillStyle = p.hero ? `rgba(${accent},${a})` : `rgba(245,248,252,${a})`;
+      if (p.hero) { x.save(); x.shadowColor = `rgba(${accent},1)`; x.shadowBlur = 22; }
+      x.beginPath(); x.arc(px, py, r, 0, 6.283); x.fill(); if (p.hero) x.restore();
+      if (p.hero) { const q = ((f / 45) % 1); x.strokeStyle = `rgba(${accent},${.7 * (1 - q) * a})`; x.lineWidth = 2.5; x.beginPath(); x.arc(px, py, r + 26 * q, 0, 6.283); x.stroke(); }
+    }
+    x.restore();
+    const map = ([px, py]) => [W / 2 + (px - W / 2) * z, H / 2 + (py - H / 2) * z];
+    for (const p of pins) {
+      const a = C.ease(C.seg(f, p.hero ? 0.53 * N : 0.33 * N, (p.hero ? 0.53 * N : 0.33 * N) + 12)), [px, py] = map(p.xy);
+      const [dx, dy] = p.off || [-p.el.offsetWidth - 18, -p.el.offsetHeight / 2];
+      p.el.style.opacity = a; p.el.style.transform = `translate(${px + dx}px, ${py + dy}px)`;
+    }
+    for (const l of rlabels) { const [px, py] = map(l.xy); l.el.style.opacity = C.ease(C.seg(f, 0.4 * N, 0.4 * N + 14)); l.el.style.transform = `translate(${px + 14}px, ${py + 8}px)`; }
+    if (reg) { const [px, py] = map(reg), el = $("region"); el.style.left = `${px - el.offsetWidth / 2}px`; el.style.top = `${py - 30}px`;
+      C.blurIn(el, C.ease(C.seg(f, 0.22 * N, 0.22 * N + 18)), 0); el.style.transform = `translate(0, 0)`; }
+    C.tag(S, f, N);
+  };
+  window.renderFrame(0);
+  window.READY = true;
+})();
+</script></body></html>

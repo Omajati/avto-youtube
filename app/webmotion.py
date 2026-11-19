@@ -255,12 +255,140 @@ def card_spec(spec: dict, lang: str) -> dict:
     raise UserError(f"Неизвестный вид моушена: {kind}")
 
 
+_GEO_CACHE: dict = {}
+
+
+def _geo(name: str):
+    if name not in _GEO_CACHE:
+        _GEO_CACHE[name] = json.loads((GEO / name).read_text("utf-8"))
+    return _GEO_CACHE[name]
+
+
+def find_river(name: str):
+    """Natural Earth rivers by their English name: «Lena», «the Lena River», «Yenisei» (a few spellings)."""
+    rivers = _geo("rivers.json")
+    n = " ".join(str(name or "").lower().replace("river", "").replace("the ", " ").split())
+    alias = {"yenisei": "yenisey", "enisei": "yenisey", "amur": "amur", "dnieper": "dnepr", "danube": "danube"}
+    n = alias.get(n, n)
+    for k in rivers:
+        if k.lower() == n or k.lower().replace(" ", "") == n.replace(" ", ""):
+            return k, rivers[k]
+    for k in rivers:
+        if k.lower().startswith(n + " ") or k.lower().endswith(" " + n):
+            return k, rivers[k]
+    return None, None
+
+
+def _chain(lines: list, start_far_from=None) -> tuple[list, list]:
+    """Joins a river's pieces end to end into one line (the others — branches, deltas — come back apart).
+    The line is turned to start at its end farther from start_far_from (lat, lon): it then «flows» to the hero."""
+    rest = [list(l) for l in lines if len(l) >= 2]
+    if not rest:
+        return [], []
+    rest.sort(key=len, reverse=True)
+    chain = rest.pop(0)
+    near = lambda a, b: abs(a[0] - b[0]) < 0.2 and abs(a[1] - b[1]) < 0.2
+    grew = True
+    while grew:
+        grew = False
+        for i, l in enumerate(rest):
+            if near(chain[-1], l[0]):
+                chain += l[1:]
+            elif near(chain[-1], l[-1]):
+                chain += l[::-1][1:]
+            elif near(chain[0], l[-1]):
+                chain = l[:-1] + chain
+            elif near(chain[0], l[0]):
+                chain = l[::-1][:-1] + chain
+            else:
+                continue
+            rest.pop(i)
+            grew = True
+            break
+    if start_far_from:
+        la, lo = start_far_from
+        d = lambda p: (p[1] - la) ** 2 + ((p[0] - lo) * math.cos(math.radians(la))) ** 2
+        if d(chain[-1]) > d(chain[0]):
+            chain = chain[::-1]
+    return chain, rest
+
+
+def satmap_spec(spec: dict, lang: str) -> dict:
+    """A region on the dark relief map: the box (16:9 at that latitude), rivers by name, railways inside the box,
+    the chosen countries' outlines, the towns."""
+    from . import motion
+    pts, borders = [], []
+    found = [c for c in (motion.find_country(n) for n in spec.get("countries") or []) if c][:3]
+    for c in found:
+        for ring in motion._main_rings(c):
+            borders.append([[p[0], p[1]] for p in ring])
+            pts += [(p[1], p[0]) for p in ring[::max(1, len(ring) // 40)]]
+    rivers = []
+    for r in (spec.get("rivers") or [])[:3]:
+        key = r.get("name") if isinstance(r, dict) else r
+        label = (r.get("label") if isinstance(r, dict) else "") or ""
+        k, lines = find_river(key)
+        if lines:
+            rivers.append({"name": k, "label": str(label)[:20], "raw": lines})
+            pts += [(p[1], p[0]) for ln in lines for p in ln[::4]]
+    pins = []
+    for i, p in enumerate((spec.get("pins") or [])[:5]):
+        try:
+            lat, lon = float(p.get("lat")), float(p.get("lon"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        pins.append({"name": str(p.get("name") or "")[:30], "lat": lat, "lon": lon, "hero": i == 0})
+        pts.append((lat, lon))
+    if not pts:
+        raise UserError("Для карты нет ни реки, ни страны, ни точки.")
+    view = _view(pts)
+    lat0, lon0 = view["lat"], view["lon"]
+    lons = [((lo - lon0 + 540) % 360) - 180 for _, lo in pts]
+    lats = [la for la, _ in pts]
+    w_deg = (max(lons) - min(lons)) * 1.18 + 2
+    h_deg = (max(lats) - min(lats)) * 1.25 + 2
+    cosl = max(0.2, math.cos(math.radians(lat0)))
+    if w_deg * cosl / h_deg < 16 / 9:  # keep 16:9 on screen at this latitude
+        w_deg = h_deg * 16 / 9 / cosl
+    else:
+        h_deg = w_deg * cosl * 9 / 16
+    cx = lon0 + (max(lons) + min(lons)) / 2
+    cy = min(84 - h_deg / 2, max(-84 + h_deg / 2, (max(lats) + min(lats)) / 2))
+    box = {"w": cx - w_deg / 2, "e": cx + w_deg / 2, "s": cy - h_deg / 2, "n": cy + h_deg / 2}
+    hero = (pins[0]["lat"], pins[0]["lon"]) if pins else (cy, cx)
+    for r in rivers:  # one flowing line (towards the hero), the branches apart
+        main, rest = _chain(r.pop("raw"), hero)
+        r["lines"] = [main] + rest
+    rails = []
+    if spec.get("show_rail"):
+        # only the railways around the hero (within about a third of the map): «the line ends before the river»
+        cosh = max(0.2, math.cos(math.radians(hero[0])))
+        reach = 0.34 * w_deg * cosh
+        dist = lambda p: math.hypot((p[0] - hero[1]) * cosh, p[1] - hero[0])
+        near = [(min(dist(p) for p in ln), ln) for ln in _geo("railroads.json")
+                if box["w"] <= max(p[0] for p in ln) and min(p[0] for p in ln) <= box["e"]
+                and box["s"] <= max(p[1] for p in ln) and min(p[1] for p in ln) <= box["n"]]
+        rails = [ln for d, ln in sorted(near, key=lambda x: x[0]) if d <= reach][:80]
+    region = None
+    name = str(spec.get("region") or "").strip()
+    if name:
+        if found:
+            region = {"name": name[:30], "lat": found[0]["ly"], "lon": found[0]["lx"]}
+        else:
+            region = {"name": name[:30], "lat": cy + h_deg * 0.12, "lon": cx - w_deg * 0.15}
+    t = str(spec.get("title") or "").strip()[:60]
+    return {"tag": t, "box": box, "region": region, "rivers": rivers, "rails": rails[:4000], "borders": borders,
+            "pins": pins, "theme": spec.get("theme") if spec.get("theme") in ("navy", "graphite") else "navy"}
+
+
 def render_kind(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int, lang: str = "en",
                 poster: Path | None = None, log=lambda s: None, photo: Path | None = None):
     """Any insert of the new engine by its motion type; every failure becomes a UserError (the scene keeps its picture)."""
     kind = spec.get("type")
     try:
-        if kind == "globe":
+        if kind == "satmap":
+            render("satmap", satmap_spec(spec, lang), out, seconds, w, h, fps, poster, log)
+        elif kind == "globe":
             style = "globe2d" if str(spec.get("style") or "3d").lower() in ("2d", "globe2d", "flat") else "globe3d"
             render(style, globe_spec(spec, lang), out, seconds, w, h, fps, poster, log)
         else:
