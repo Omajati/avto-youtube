@@ -1020,6 +1020,11 @@ def control_job(job_id: str, data: dict = Body(...)):
                 base.unlink(missing_ok=True)
             job.update(thumbs_generated={}, thumbs={}, approved={}, status="queued",
                        step="Перерисовываю превью…", error="")
+        elif action == "retry_now":
+            # The owner fixed the cause (topped up a balance, freed the disk): try again now, not at the planned time.
+            if status != "queued" or not job.get("retry_at"):
+                raise UserError("Этот проект сейчас не ждёт повтора.")
+            job.update(retry_at=0, step="Повторяю сейчас…", error="")
         elif action == "resume":
             if status not in ("paused", "stopped", "error"):
                 raise UserError("Этот проект сейчас нельзя продолжить.")
@@ -1028,7 +1033,7 @@ def control_job(job_id: str, data: dict = Body(...)):
             raise UserError("Неизвестная команда управления проектом.")
         job["updated"] = _now()
         _save_queue()
-    if action in ("stop", "resume", "publish", "redraw", "upload"):
+    if action in ("stop", "resume", "publish", "redraw", "upload", "retry_now"):
         _kick_scheduler()
     return {"ok": True, "status": job.get("status")}
 
@@ -1558,6 +1563,7 @@ def _generation_estimate(settings: dict, analysis: dict) -> dict:
 IMAGE_RETRY_PAUSES = (20, 60, 120)    # seconds between attempts of one picture
 IMAGE_SECOND_ROUND_WAIT = 5 * 60      # before the failed pictures get a second round
 JOB_AUTO_RETRIES = 2                  # a failed project is put back in the queue this many times
+JOB_RETRY_FIRST = 5 * 60  # the first repeat comes soon: a balance or a network is often fixed in minutes
 JOB_RETRY_WAIT = 15 * 60
 _FATAL_HINTS = ("не указан ключ", "ключ не подходит", "неверный ключ", "invalid api key", "unauthorized",
                 # the video already sits in Studio as a draft: a retry would upload a second copy
@@ -2850,7 +2856,7 @@ def _build(job_id: str):
             _kick_scheduler()
         elif tries < JOB_AUTO_RETRIES and not _fatal(exc):
             # Night queue: the project goes back in line and is tried again later; finished stages are not redone.
-            at = _now() + JOB_RETRY_WAIT
+            at = _now() + (JOB_RETRY_FIRST if tries == 0 else JOB_RETRY_WAIT)
             _update(job_id, status="queued", auto_retries=tries + 1, retry_at=at, last_error=str(exc)[:400], error="",
                     step=f"Ошибка, повторю сам в {time.strftime('%H:%M', time.localtime(at))} (попытка {tries + 2} из {JOB_AUTO_RETRIES + 1})")
             _kick_scheduler()

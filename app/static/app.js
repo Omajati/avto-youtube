@@ -3571,6 +3571,7 @@ function folderJobHtml(job) {
       ${["done", "error", "stopped"].includes(status) && Object.keys(job.langs_done || job.outputs || {}).some(l => !(job.uploaded || {})[l] && !(job.trashed || {})[l]) ? `<button class="primary sm" data-fb-action="upload" title="Запустить профиль Octo и выложить этот ролик сейчас (даже если автовыкладка выключена)">🚀 Выложить</button>` : ""}
       ${status === "done" && (job.image_notes || []).length ? `<button class="primary sm" data-fb-one>🖼 Дорисовать сцены и пересобрать</button>` : ""}
       ${status === "error" || status === "ready" ? `<button class="sm ${status === "error" ? "primary" : ""}" data-fb-one ${job.problems?.length || job.scan_error ? "disabled" : ""}>${status === "error" ? "▶ Повторить" : "▶ Собрать этот проект"}</button>` : ""}
+      ${status === "queued" && job.retry_at ? `<button class="primary sm" data-fb-action="retry_now" title="Причину ошибки устранили (пополнили баланс и т. п.) — повторить сразу, не дожидаясь">🔁 Повторить сейчас</button>` : ""}
       ${["running", "queued"].includes(status) ? `<button class="sm" data-fb-action="pause">⏸ Пауза</button><button class="sm danger" data-fb-action="stop">⏹ Остановить</button>` : ""}
       ${status === "pausing" ? `<button class="sm danger" data-fb-action="stop">⏹ Остановить</button>` : ""}
       ${["paused", "stopped"].includes(status) ? `<button class="primary sm" data-fb-action="resume">▶ Продолжить</button>` : ""}
