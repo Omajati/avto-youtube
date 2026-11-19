@@ -2093,6 +2093,9 @@ MOTION_KINDS = ("map", "timeline", "chart", "compare", "globe", "counter", "ther
                 "document", "scale", "layer", "satmap", "quote", "list")
 
 
+INSERT_MAX = 12.0  # seconds: the longest a motion insert stays on screen
+
+
 def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations: list[float], media_map: dict[str, Path],
                     lang: str, settings: dict, options: dict, cache: Path, progress: float) -> dict[str, dict]:
     """A few maps, timelines and charts drawn in place of pictures, only in the first half of the video and only where
@@ -2174,7 +2177,9 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
             g = {**g, "style": options.get("folder_globe_style") or "3d"}  # the channel's look; part of the clip's name
         if g.get("type") in motion.WEB_KINDS:
             g = {**g, "theme": options.get("folder_motion_theme") or "navy"}
-        clip = cache / "motion" / f"{scene['id']}_{hashlib.sha256(json.dumps([g, durations[i]], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:10]}.mp4"
+        # an insert lasts at most INSERT_MAX seconds: a long scene (a drama's 30–40 s) keeps its picture after it
+        seconds = round(min(durations[i], INSERT_MAX), 3)
+        clip = cache / "motion" / f"{scene['id']}_{hashlib.sha256(json.dumps([g, seconds], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:10]}.mp4"
         if not clip.exists():
             _update(job_id, step=f"[{lang.upper()}] Рисую {motion.KINDS[g['type']].split(' ', 1)[1].lower()} для сцены {scene['id']}…")
             prev = media_map.get(scenes[i - 1]["id"]) if i else None
@@ -2182,11 +2187,11 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
             try:
                 clip.parent.mkdir(parents=True, exist_ok=True)
                 tmp = clip.with_suffix(".tmp.mp4")
-                motion.render(g, tmp, durations[i], 1920, 1080, fps, lang, prev=prev, photo=media_map.get(scene["id"]))
+                motion.render(g, tmp, seconds, 1920, 1080, fps, lang, prev=prev, photo=media_map.get(scene["id"]))
                 tmp.replace(clip)
             except Exception:  # noqa: BLE001 - a motion insert is an extra, never a reason to lose the video
                 continue
-        out[scene["id"]] = {"clip": clip, "spec": g}
+        out[scene["id"]] = {"clip": clip, "spec": g, "seconds": seconds}
     return out
 
 
@@ -2292,29 +2297,46 @@ def _local_project(job_id: str, analysis: dict, scenes: list[dict], texts: list[
     local_scenes = []
     for i, (scene, duration) in enumerate(zip(scenes, durations)):
         insert = inserts.get(scene["id"])
-        source = insert["clip"] if insert else media_map[scene["id"]]
-        ext = source.suffix.lower()
-        local_name = hashlib.sha256((scene["id"] + str(source)).encode()).hexdigest()[:12] + ext
-        _link_or_copy(source, media_dir / local_name)
-        kind = "video" if ext in VIDEO_EXT else "image"
-        source_duration = media.video_duration(source) if kind == "video" else duration
-        focus_x, focus_y = local_editor._image_focus(source) if kind == "image" else (.5, .5)
-        # A single still must never sit unchanged for 20–30 seconds: create virtual camera shots from it.
-        parts = max(1, math.ceil(duration / 11.0)) if kind == "image" else 1
-        used = 0.0
-        for part in range(parts):
-            part_duration = round(duration / parts, 3) if part + 1 < parts else round(duration - used, 3)
-            used += part_duration
-            local_scenes.append({
-                "id": hashlib.sha256(f"{scene['id']}:{part}".encode()).hexdigest()[:12],
-                "scene_code": scene["id"], "segment": part + 1, "segments": parts, "source": local_name,
-                "name": source.name, "kind": kind, "source_duration": round(source_duration, 3), "trim_start": 0,
-                "trim_end": round(min(source_duration, duration), 3), "focus_x": focus_x, "focus_y": focus_y,
-                "duration": part_duration, "fit": "cover", "motion": "none", "transition": "cut",
-                "effect": "none", "sfx": "none", "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2,
-                "style": "classic", "animation": "pop", "auto": False},
-                **({"motion_insert": insert["spec"].get("type")} if insert else {}),
-            })
+        # what fills the scene: the motion insert (at most INSERT_MAX s, at its start), then the picture for the rest
+        pieces = []
+        if insert:
+            ins = min(float(insert.get("seconds") or duration), duration)
+            rest = round(duration - ins, 3) if media_map.get(scene["id"]) else 0.0
+            if rest < 1.0:
+                ins, rest = duration, 0.0
+            pieces.append((insert["clip"], ins, True))
+            if rest:
+                pieces.append((media_map[scene["id"]], rest, False))
+        else:
+            pieces.append((media_map[scene["id"]], duration, False))
+        n_parts = []
+        for source, span, is_insert in pieces:
+            kind = "video" if source.suffix.lower() in VIDEO_EXT else "image"
+            # A single still must never sit unchanged for 20–30 seconds: create virtual camera shots from it.
+            n_parts.append(max(1, math.ceil(span / 11.0)) if kind == "image" else 1)
+        total_parts, k = sum(n_parts), 0
+        for (source, span, is_insert), parts in zip(pieces, n_parts):
+            ext = source.suffix.lower()
+            local_name = hashlib.sha256((scene["id"] + str(source)).encode()).hexdigest()[:12] + ext
+            _link_or_copy(source, media_dir / local_name)
+            kind = "video" if ext in VIDEO_EXT else "image"
+            source_duration = media.video_duration(source) if kind == "video" else span
+            focus_x, focus_y = local_editor._image_focus(source) if kind == "image" else (.5, .5)
+            used = 0.0
+            for part in range(parts):
+                part_duration = round(span / parts, 3) if part + 1 < parts else round(span - used, 3)
+                used += part_duration
+                local_scenes.append({
+                    "id": hashlib.sha256(f"{scene['id']}:{k}".encode()).hexdigest()[:12],
+                    "scene_code": scene["id"], "segment": k + 1, "segments": total_parts, "source": local_name,
+                    "name": source.name, "kind": kind, "source_duration": round(source_duration, 3), "trim_start": 0,
+                    "trim_end": round(min(source_duration, span), 3), "focus_x": focus_x, "focus_y": focus_y,
+                    "duration": part_duration, "fit": "cover", "motion": "none", "transition": "cut",
+                    "effect": "none", "sfx": "none", "graphic": {"type": "none", "value": "", "unit": "", "label": "", "start": .2,
+                    "style": "classic", "animation": "pop", "auto": False},
+                    **({"motion_insert": insert["spec"].get("type")} if is_insert else {}),
+                })
+                k += 1
     project["scenes"] = local_scenes
     project["scenes_synced"] = True
     project["transcript"] = {"status": "done", "text": " ".join(texts), "words": [[w, s, e] for w, s, e, *_ in words],
