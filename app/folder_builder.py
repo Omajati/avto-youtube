@@ -1081,6 +1081,19 @@ def octo_local_profile(data: dict = Body(...)):
     return _save_local(items)
 
 
+@router.post("/webmotion/test")
+def webmotion_test():
+    """«🧪 Проверить новый движок»: draws a 2-second test insert (downloads the browser the first time)."""
+    from . import webmotion
+    return {**webmotion.selftest(), "status": dict(webmotion.STATUS)}
+
+
+@router.get("/webmotion/status")
+def webmotion_status():
+    from . import webmotion
+    return dict(webmotion.STATUS)
+
+
 @router.post("/octo/keep")
 def octo_keep(data: dict = Body(...)):
     """Profiles the program must not close after uploading."""
@@ -2187,9 +2200,24 @@ def _motion_inserts(job_id: str, scenes: list[dict], texts: list[str], durations
             try:
                 clip.parent.mkdir(parents=True, exist_ok=True)
                 tmp = clip.with_suffix(".tmp.mp4")
-                motion.render(g, tmp, seconds, 1920, 1080, fps, lang, prev=prev, photo=media_map.get(scene["id"]))
+                before = len(motion.FALLBACKS)
+                try:
+                    motion.render(g, tmp, seconds, 1920, 1080, fps, lang, prev=prev, photo=media_map.get(scene["id"]))
+                finally:
+                    failed = motion.FALLBACKS[before:]
+                    if failed:  # the owner must see it: the insert was drawn the old, flat way (or not at all)
+                        job = _jobs.get(job_id) or {}
+                        note = (f"[{lang.upper()}] Вставка «{motion.KINDS.get(g['type'], g['type'])}» в сцене {scene['id']} "
+                                f"не нарисовалась — там осталась картинка: {failed[-1][1][:160]}. "
+                                "Проверьте движок кнопкой «🧪 Проверить новый движок вставок» в настройках.")
+                        if note not in (job.get("warnings") or []):
+                            _update(job_id, warnings=list(job.get("warnings") or []) + [note])
                 tmp.replace(clip)
-            except Exception:  # noqa: BLE001 - a motion insert is an extra, never a reason to lose the video
+            except Exception as exc:  # noqa: BLE001 - a motion insert is an extra, never a reason to lose the video
+                job = _jobs.get(job_id) or {}
+                note = f"[{lang.upper()}] Вставка в сцене {scene['id']} не нарисовалась ({str(exc)[:160]}): там картинка."
+                if not any(scene["id"] in w for w in job.get("warnings") or []):
+                    _update(job_id, warnings=list(job.get("warnings") or []) + [note])
                 continue
         out[scene["id"]] = {"clip": clip, "spec": g, "seconds": seconds}
     return out

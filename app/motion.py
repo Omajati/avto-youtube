@@ -21,6 +21,7 @@ KINDS = {"map": "🗺 Карта", "timeline": "📅 Линия времени",
          "place": "📍 Плашка места", "document": "📄 Документ", "scale": "📏 Шкала", "layer": "🧍 Слой и человек",
          "satmap": "🛰 Карта рельефа"}
 # drawn by the new engine (webmotion.py); the older kinds below move to it one by one
+FALLBACKS: list = []  # (kind, reason) each time the new engine failed and the old one drew instead
 WEB_KINDS = ("globe", "counter", "thermo", "calendar", "photonum", "place", "document", "scale", "layer", "chart",
              "satmap", "map", "timeline", "compare", "quote", "list")  # every kind is now drawn by the new engine
 MODES = {"auto": "Авто: карты и даты там, где они к месту", "off": "Выключено"}
@@ -990,15 +991,16 @@ def render(spec: dict, out: Path, seconds: float, w: int, h: int, fps: int, lang
             pic = None
     kind = spec.get("type")
     if kind in WEB_KINDS:
-        # The new engine: a web page shot frame by frame (see webmotion.py). If it cannot draw (no browser yet,
-        # an error), the kinds the old engine knows are drawn the old way, so the insert is not lost.
+        # Only the new engine (the owner's decision, 19.11.2026: never the old flat drawings). If it cannot draw, the
+        # error goes up: the scene keeps its picture and the project card says why.
         from . import webmotion
         try:
             webmotion.render_kind(spec, out, seconds, w, h, fps, lang, poster, photo=photo)
-            return
-        except UserError:
-            if kind not in ("map", "timeline") and kind not in DRAW:
-                raise
+        except UserError as e:
+            FALLBACKS.append((kind, str(e)))
+            webmotion.STATUS["last_failure"] = str(e)[:300]
+            raise
+        return
     if kind == "map":
         render_map(spec, out, seconds, w, h, fps, lang, poster, pic)
     elif kind == "timeline":

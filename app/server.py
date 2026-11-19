@@ -43,6 +43,8 @@ def _startup():
     worker.start()
     exporter.backfill()
     analytics.start()
+    from . import webmotion
+    webmotion.prepare_in_background()  # the browser for the motion inserts: downloaded once, before any build needs it
 
 
 @app.get("/")

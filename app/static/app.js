@@ -3781,6 +3781,7 @@ async function viewFolderBuilder() {
       <div class="muted small" id="fb-binding-help" style="margin:4px 0 10px">${esc(bindingHelp[binding])}</div>
       ${checks.map(([k,n,h,d=true])=>`<label class="check"><input type="checkbox" data-fbo="${k}" ${q(k,d)?"checked":""}><span><b>${n}</b><span class="muted small">${h}</span></span></label>`).join("")}
       <label class="f">Оформление вставок <span class="hint">Цвета цифр, термометра, сеток, документов.</span></label><select data-fbo="folder_motion_theme">${[["navy","Тёмно-синее (голубой и красный)"],["graphite","Графитовое с оранжевым"]].map(([v,n])=>`<option value="${v}" ${q("folder_motion_theme","navy")===v?"selected":""}>${n}</option>`).join("")}</select>
+      <div class="row" style="gap:8px;margin:10px 0 4px"><button class="sm" id="fb-wm-test">🧪 Проверить новый движок вставок</button><span class="muted small" id="fb-wm-r"></span></div>
       <label class="f">Глобус во вставках <span class="hint">Где речь о далёких местах или пути через полмира. Рисуется во встроенном браузере (в первый раз программа скачает его, ~150 МБ).</span></label><select data-fbo="folder_globe_style">${[["3d","3D — Земля из космоса (фото NASA)"],["2d","2D — плоская инфографика"]].map(([v,n])=>`<option value="${v}" ${q("folder_globe_style","3d")===v?"selected":""}>${n}</option>`).join("")}</select>
       <div class="grid2"><div><label class="f">Стиль субтитров</label><select data-fbo="folder_subtitle_preset">${[["karaoke","Караоке с подсветкой"],["documentary","Документальные"],["words","По одному слову"],["clean","Чистые"],["box","В плашке"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_preset","karaoke")===v?"selected":""}>${n}</option>`).join("")}</select></div>
       <div><label class="f">Размер субтитров</label><select data-fbo="folder_subtitle_size">${[["small","Небольшие"],["medium","Средние"],["large","Крупные"]].map(([v,n])=>`<option value="${v}" ${q("folder_subtitle_size","medium")===v?"selected":""}>${n}</option>`).join("")}</select></div></div>
@@ -4011,6 +4012,14 @@ async function viewFolderBuilder() {
     const v = $("#fb-octo-uuid").value.trim(); if (!v) return;
     try { octoLocalDone(await api("/api/folder-builder/octo/local-profile", { json: { uuid: v } }), "Профиль добавлен"); }
     catch (e) { toast(e.message, true); }
+  });
+  $("#fb-wm-test") && ($("#fb-wm-test").onclick = async () => {
+    const r = $("#fb-wm-r"), b = $("#fb-wm-test"); b.disabled = true;
+    r.textContent = "Рисую пробную вставку… В первый раз программа скачивает браузер (~150 МБ) — это может занять несколько минут.";
+    try { const d = await api("/api/folder-builder/webmotion/test", { method: "POST" });
+      r.textContent = d.ok ? `✅ Новый движок работает: пробная вставка нарисована за ${d.seconds} с.` : `❌ Не работает: ${d.error}`; }
+    catch (e) { r.textContent = "❌ " + e.message; }
+    b.disabled = false;
   });
   main.querySelector('[data-fbo="folder_upload"]').addEventListener("change", async e => { FB_UPLOAD_ON = e.target.checked; if (FB_UPLOAD_ON && !OCTO.profiles) await loadOcto(false); refreshFolderBuilder(); });
 

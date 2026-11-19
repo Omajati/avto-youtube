@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -57,6 +58,44 @@ def _install_browser(log):
         _installed = True
 
 
+STATUS = {"browser": "unknown", "error": "", "last_failure": ""}  # shown by «Проверить новый движок»
+
+
+def prepare_in_background():
+    """At start: make sure the browser for the inserts is there (downloads it once), so a build never waits for it."""
+    def run():
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as pw:
+                STATUS["browser"] = "checking"
+                b = _launch(pw, ARGS[-1], lambda s: STATUS.update(browser="downloading"))
+                b.close()
+            STATUS.update(browser="ready", error="")
+        except Exception as e:  # noqa: BLE001
+            STATUS.update(browser="failed", error=str(e).splitlines()[0][:300] if str(e) else type(e).__name__)
+    threading.Thread(target=run, daemon=True, name="webmotion-prepare").start()
+
+
+def selftest() -> dict:
+    """Draws a 2-second test insert; {"ok", "seconds", "error"} — the owner's way to see that the engine works."""
+    import tempfile
+    import time as _t
+    out = Path(tempfile.mkdtemp(prefix="webmotion-test-")) / "test.mp4"
+    t = _t.time()
+    try:
+        render_kind({"type": "counter", "title": "Проверка", "value": 245, "caption": "новый движок работает",
+                     "tone": "warm", "theme": "navy"}, out, 2.0, 1920, 1080, 30, "ru")
+        ok = out.is_file() and out.stat().st_size > 1000
+        STATUS.update(browser="ready", error="")
+        return {"ok": ok, "seconds": round(_t.time() - t, 1), "error": "" if ok else "файл не получился"}
+    except Exception as e:  # noqa: BLE001
+        msg = str(e).splitlines()[0][:400] if str(e) else type(e).__name__
+        STATUS.update(error=msg)
+        return {"ok": False, "seconds": round(_t.time() - t, 1), "error": msg}
+    finally:
+        shutil.rmtree(out.parent, ignore_errors=True)
+
+
 # Ways to start the browser, best first: the Mac's graphics card (Metal), then software drawing, which always works.
 ARGS = ([["--use-angle=metal", "--ignore-gpu-blocklist"]] if sys.platform == "darwin" else []) + \
        [["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"]]
@@ -67,7 +106,7 @@ def _launch(pw, args, log):
     try:
         return pw.chromium.launch(args=args, executable_path=exe)
     except Exception as e:  # noqa: BLE001
-        if "Executable doesn't exist" not in str(e) and "playwright install" not in str(e):
+        if "executable doesn't exist" not in str(e).lower() and "playwright install" not in str(e).lower():
             raise
     _install_browser(log)
     return pw.chromium.launch(args=args, executable_path=exe)
@@ -93,7 +132,13 @@ def render(template: str, spec: dict, out: Path, seconds: float, w: int = 1920, 
     with sync_playwright() as pw:
         last = None
         for args in ARGS:
-            browser = _launch(pw, args, log)
+            try:
+                browser = _launch(pw, args, log)
+            except UserError:
+                raise  # the browser could not be downloaded: no other way helps
+            except Exception as e:  # noqa: BLE001 - this way of starting failed (e.g. the graphics card): try the next
+                last = UserError(f"Браузер не запустился ({args[0]}): {str(e).splitlines()[0][:200] if str(e) else type(e).__name__}")
+                continue
             try:
                 page = browser.new_page(viewport={"width": w, "height": h}, device_scale_factor=1)
                 errors: list[str] = []
